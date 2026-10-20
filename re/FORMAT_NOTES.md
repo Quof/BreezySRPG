@@ -232,6 +232,13 @@ Records 0–79 are weapon/cast animations, used by CLASS anim_* and ITEM wpn_ani
 
 Whether hit_frame is 0-based like the sound frames is also unconfirmed. It probably is.
 
+**Battle bitmaps (confirmed by file names):**
+- Weapon and cast animations: `CA{animation index + 1:00}_{CLASS.unit_graphic:000}.BMP`. The same animation is drawn with each class's own sprite sheet. Every animation the game's classes use resolves to an existing file (85 of 86; the missing one belongs to class 26 透明, "transparent").
+- Spell animations: `MAGA_{animation index − 79:000}.BMP` (records 80+). All 99 spells resolve.
+- Each sheet is a horizontal strip of 192×192 cells (`cell` = index into the strip), palette index 0 transparent.
+- `preview_graphic` is only the editor's preview choice; it is not part of the file name.
+- The CA sprites face left. A weapon animation's frame 0 shows the attacker standing at (480, 208), presumably the cell centre, which puts its feet near y 296 on the 640×320 `BACK_nnn` background.
+
 ## 8. Name tables — WORD / MAPNAME / VARNAME / SWNAME
 
 Each is an array of 32-byte strings (confirmed).
@@ -647,6 +654,8 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Description window | green panel (80,32) 480×48 while a list is open: "name：" at (+16,+10), the description at (+16,+26), white 12 px | measured (T21) |
 | Aiming overlays | spell range and the area around the aim tile in blue stripes (SYSTEM range tile 3, odd rows). Each affected unit's tile is solid blue (all rows). Medicine range: salmon stripes (tile 1) | confirmed (T21b/e screenshots). The spell-range colour for spells reaching beyond the caster is inferred: 剣の舞 only aims at its caster |
 | Result messages | no name, full-width digits: 「ＨＰが８ポイント回復した」 (WORD 2+64+n+65+66). The client builds 攻撃力/防御 changes the same way with 上昇した/下降した. The 「〜は〜を使います」 line before an item is a guess | heal message confirmed (T21e). The popup sat at x 160 there and the EXP popup at x 200, so its position rule is unknown |
+| Battle scene | every attack and spell plays a full-screen scene: `BACK_{terrain.battle_background:000}` (the defender's terrain) at the top, 640×320. The unit that started the fight stands on the right and its target on the left. Weapon animations play as authored when the right-hand unit acts and mirrored for a counter. Spells: the caster's class cast animation (magic-to-enemy / magic-to-ally), then the spell animation on each target, one scene per target. Idle pose = frame 0 of the unit's weapon animation (mirrored on the left). Damage / recovery numbers use SYSTEM.BMP digits (24×32; red row y 160, blue y 128). The target blinks for `flash_time` frames at `hit_frame`, and the hit/miss sounds play at their frames. Below the background: two HP panels (red = enemy, blue = ally) | file mapping confirmed. Everything else is a guess (T22): sides, timing (3 game frames per animation frame), panels, numbers, background choice |
+| Battle music | map BGM slot 3 (player-battle) when an ally starts the fight, 4 (enemy-battle) when an enemy does, 5 (boss-battle) when an enemy leader takes part; the phase music returns afterwards | battle music confirmed to start (T20b); slot choice inferred from the map header's slot names |
 | Enemy spells | an enemy casts a known, affordable damage spell when its predicted total damage beats its best weapon attack, and a heal when it restores ≥ ⅓ of someone's HP | guess |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
@@ -969,7 +978,22 @@ From save slot 6, on map 2 (screenshots 37–43; layout numbers in §15):
 
 ## Active tests
 
-None right now.
+### Phase 5, round 1 — instructions (T22: the battle scene)
+
+The client now has a first battle scene, built from the data alone. These checks fix its layout and timing. Map 1 in `えるまに - Save testplay` is enough: slot 3, or a new game. Screenshots are the most useful thing. A short screen recording also works, because I can pull frames out of it once ffmpeg is installed.
+
+- **T22a — the first moment.** Attack a minion with ジュナ. Screenshot the scene as soon as it appears, before anyone moves:
+  - Which side is ジュナ on?
+  - Is there any transition into the scene (fade, flash, wipe)?
+- **T22b — the hit.** Screenshot the moment the damage number appears. Then:
+  - Where does it appear?
+  - What colour is it?
+  - Does it move?
+- **T22c — the counter.** If the minion survives and hits back, does that happen inside the same scene? Does the minion stay on its side, or do they swap?
+- **T22d — timing.** Roughly how long is ジュナ's whole attack, in seconds, from her first move until she's standing still again? (Her animation is 23 frames.)
+- **T22e — enemy attacks.** In the enemy turn, when a minion attacks ジュナ or ルーティ, which side is the attacker on?
+- **T22f — the bottom of the screen.** Screenshot the area under the background during a battle (names, HP, anything else).
+- **T22g — after the battle.** Does the EXP message appear inside the battle scene or back on the map?
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

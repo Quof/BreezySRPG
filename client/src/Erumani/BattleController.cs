@@ -21,7 +21,7 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
-        SpellList, ItemList, Aiming, MedicineTarget }
+        SpellList, ItemList, Aiming, MedicineTarget, Scene }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -59,7 +59,46 @@ public sealed class BattleController
         string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
     public int? NextMap => _runner.NextMap;
     public bool EventRunning => _state_ == State.Events && _runner.Running;
-    public bool Busy => _telop is not null || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase;
+    public bool Busy => _telop is not null || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene;
+    /// <summary>Asks the game to play a sound effect (EFS wav).</summary>
+    public Action<string>? PlaySound { get; set; }
+
+    // ---------------- battle scenes ----------------
+
+    readonly Queue<BattleScene> _scenes = new();
+    BattleScene? _scene;
+    State _afterScenes;
+    public bool SceneShowing => _scene is not null;
+    /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
+    public bool ShowScenes { get; set; } = true;
+
+    /// <summary>Battle music while a scene plays: map BGM slot 3 (player attacks), 4 (enemy attacks), 5 (a leader is involved).</summary>
+    void BattleMusic(BattleUnit actor, BattleUnit other)
+    {
+        bool boss = (actor.Leader && actor.Side == Side.Enemy) || (other.Leader && other.Side == Side.Enemy);
+        PlayMapBgm?.Invoke(boss ? 5 : actor.Side == Side.Ally ? 3 : 4);
+    }
+
+    void RunScenes()
+    {
+        if (_scenes.Count == 0) { NextPopup(); return; }
+        _scene = _scenes.Dequeue();
+        _scene.PlaySound = PlaySound;
+        _state_ = State.Scene;
+    }
+
+    void UpdateScene(BattleInput i)
+    {
+        _scene!.Update(i.FastForward, i.Confirm || i.Click);
+        if (!_scene.Done) return;
+        _scene = null;
+        if (_scenes.Count > 0) { RunScenes(); return; }
+        PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);   // back to the phase music
+        NextPopup();
+    }
+
+    Dictionary<BattleUnit, int> HpSnapshot(IEnumerable<BattleUnit> units) => units.Distinct().ToDictionary(u => u, u => u.Hp);
+
     /// <summary>Asks the game to play one of the map's BGM slots (1 player turn, 2 enemy turn, 6 victory...).</summary>
     public Action<int>? PlayMapBgm { get; set; }
 
@@ -270,6 +309,7 @@ public sealed class BattleController
             case State.ItemList: UpdateItemList(input); break;
             case State.Aiming: UpdateAiming(input); break;
             case State.MedicineTarget: UpdateMedicineTarget(input); break;
+            case State.Scene: UpdateScene(input); break;
         }
     }
 
@@ -516,9 +556,10 @@ public sealed class BattleController
         var hostiles = _s.Field.SpellTargets(caster, m, aim.X, aim.Y).Where(t => Battlefield.Hostile(caster, t)).ToList();
         foreach (var t in hostiles) AttackTriggers(caster, t, 10);
         if (item is not null) { _state.AddItem(item.Index, -1); Popup($"{caster.Name}は{item.Name}{Word(58)}"); }   // "を使います"
-        else Popup($"{caster.Name}：{m.Name}");
+        var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
         var r = _s.Field.Cast(caster, m, aim.X, aim.Y, fromItem: item is not null);
-        ShowResult(caster, r);
+        if (ShowScenes && r.Effects.Count > 0) QueueSpellScenes(caster, m, r, before);
+        ShowResult(caster, r, numbersShown: ShowScenes);
         foreach (var t in hostiles) AttackTriggers(caster, t, 11);
         Finish(caster);
     }
@@ -535,14 +576,42 @@ public sealed class BattleController
     {
         _afterShow = actor.Side == Side.Ally ? State.Idle : State.EnemyPhase;
         if (actor.Side == Side.Ally) AfterAction(actor);
-        NextPopup();
+        RunScenes();
+    }
+
+    /// <summary>
+    /// Spell scenes: the caster's class cast animation (magic-to-enemy for harmful spells, magic-to-ally
+    /// otherwise), then the spell's own animation (ANIME 80 + Magic.Animation) on each affected unit in turn.
+    /// One scene per target (provisional).
+    /// </summary>
+    void QueueSpellScenes(BattleUnit caster, Magic m, ExchangeResult r, Dictionary<BattleUnit, int> before)
+    {
+        var cls = _s.Field.Class(caster);
+        bool harmful = m.Type is 0 or 1;
+        var cast = _db.Animations[Math.Clamp(harmful ? cls.AnimMagicEnemy : cls.AnimMagicAlly, 0, _db.Animations.Length - 1)];
+        var spell = _db.Animations[Math.Clamp(m.AnimeIndex, 0, _db.Animations.Length - 1)];
+        bool first = true;
+        foreach (var e in r.Effects)
+        {
+            bool numeric = e.Kind is EffectKind.Damage or EffectKind.Heal or EffectKind.Miss;
+            var steps = new List<BattleScene.Step>();
+            if (first) steps.Add(new BattleScene.Step(caster, e.Target, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true, 0, false, Caption: ""));
+            steps.Add(new BattleScene.Step(caster, e.Target, spell, BattleScene.SheetFor(_db, _s.Field, caster, spell),
+                e.Kind != EffectKind.Miss && e.Kind != EffectKind.Resisted, e.Amount, e.Kind == EffectKind.Heal,
+                Caption: numeric ? null : ""));
+            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, caster, e.Target, steps, before));
+            first = false;
+        }
+        BattleMusic(caster, r.Effects[0].Target);
     }
 
     /// <summary>Result popups (WORD.DAT phrases where the game has them; the rest provisional).</summary>
-    void ShowResult(BattleUnit actor, ExchangeResult r)
+    void ShowResult(BattleUnit actor, ExchangeResult r, bool numbersShown = false)
     {
         foreach (var e in r.Effects)
         {
+            // the battle scene already showed damage and misses
+            if (numbersShown && e.Kind is EffectKind.Damage or EffectKind.Miss) continue;
             var n = e.Target.Name;
             // T21: "ＨＰが８ポイント回復した" (no name, full-width digits); the other stats follow the same pattern (provisional)
             string Points(string what, int v, int verb) => $"{what}{Word(64)}{Wide(v)}{Word(65)}{Word(verb)}";
@@ -649,19 +718,31 @@ public sealed class BattleController
     void DoAttack(BattleUnit atk, BattleUnit def)
     {
         AttackTriggers(atk, def, 10);
+        var before = HpSnapshot(new[] { atk, def });
         var r = _s.Field.Attack(atk, def);
-        foreach (var st in r.Strikes)
+        if (ShowScenes)
         {
-            Popup(st.Hit
-                ? $"{st.Attacker.Name} → {st.Target.Name}：{st.Damage}{(st.Critical ? "（会心）" : "")}{(st.Killed ? "　撃破" : "")}"
-                : $"{st.Attacker.Name} → {st.Target.Name}：ミス", st.Killed ? st.Target : null);
-            if (st.Killed) _s.Ghosts.Add(st.Target);
+            var steps = r.Strikes.Select(st =>
+            {
+                var a = BattleScene.WeaponAnim(_db, _s.Field, st.Attacker);
+                return new BattleScene.Step(st.Attacker, st.Target, a, BattleScene.SheetFor(_db, _s.Field, st.Attacker, a), st.Hit, st.Damage, false);
+            }).ToList();
+            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, atk, def, steps, before));
+            BattleMusic(atk, def);
         }
+        else
+            foreach (var st in r.Strikes)
+            {
+                Popup(st.Hit
+                    ? $"{st.Attacker.Name} → {st.Target.Name}：{st.Damage}{(st.Critical ? "（会心）" : "")}{(st.Killed ? "　撃破" : "")}"
+                    : $"{st.Attacker.Name} → {st.Target.Name}：ミス", st.Killed ? st.Target : null);
+                if (st.Killed) _s.Ghosts.Add(st.Target);
+            }
         ShowGrowth(r);
         AttackTriggers(atk, def, 11);
         _afterShow = atk.Side == Side.Ally ? State.Idle : State.EnemyPhase;
         if (atk.Side == Side.Ally) AfterAction(atk);
-        NextPopup();
+        RunScenes();
     }
 
     void Popup(string text, BattleUnit? kill = null)
@@ -840,6 +921,7 @@ public sealed class BattleController
         if (_state_ is State.SpellList or State.ItemList) DrawList(sb, frame);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
         if (_state_ == State.Status && _statusUnit is not null) DrawStatus(sb, _statusUnit);
+        if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup); }
         if (Outcome == MapOutcome.GameOver && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go)
             sb.Draw(go, Vector2.Zero, Color.White);   // full screen; provisional
         if (_telop is not null && _tex.Get(_telop) is { } t)

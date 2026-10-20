@@ -107,6 +107,7 @@ public sealed class ErumaniGame : Game
                 if (g.Split(':') is [var id, var n]) _state.AddItem(int.Parse(id), int.Parse(n));
         }
         _battle.PlayMapBgm = slot => _audio.PlayBgm(map.Bgm[slot]);
+        _battle.PlaySound = _audio.PlaySe;
         _battle.Start(_opts.Event);
         _seenOutcome = MapOutcome.None;
         _pendingMap = null;
