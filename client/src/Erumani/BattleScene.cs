@@ -278,14 +278,9 @@ public sealed class BattleScene
         if (_number is not { } n) return;
         int cx = n.On == _right ? StageWidth - 160 : 160;
         int y = 268 + Bounce[Math.Min(n.Age, Bounce.Length - 1)];
-        if (n.Miss)
-        {
-            if (_ui.Text.Get("MISS") is { } t) sb.Draw(t, new Vector2(cx - t.Width / 2, y + 8), Color.White);
-            return;
-        }
         var sys = _tex.Get("SYSTEM.BMP");
         if (sys is null) return;
-        string s = n.Amount.ToString();
+        string s = n.Miss ? "0" : n.Amount.ToString();   // a miss shows as a purple 0 (T22 recording)
         int row = n.Recovery ? 160 : 128;
         int x = cx - s.Length * 12;
         foreach (char c in s)

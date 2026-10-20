@@ -645,7 +645,7 @@ public sealed class BattleController
     void ShowGrowth(ExchangeResult r)
     {
         foreach (var (u, exp) in r.ExpGained)
-            Popup($"{u.Name}：{exp}{Word(60)}");            // "の経験値を獲得"
+            Popup($"{Wide(exp)}{Word(60)}");             // 「１７の経験値を獲得」: no name, full-width digits (T22)
         foreach (var (u, _) in r.LevelUps)
             Popup($"{u.Name}{Word(70)}{u.Level}{Word(71)}");   // "はレベル" n "になった"
         foreach (var (u, spells) in r.Learned)
