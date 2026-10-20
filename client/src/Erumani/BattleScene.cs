@@ -185,7 +185,21 @@ public sealed class BattleScene
     {
         if (_phase != Phase.Anim || Current is not { } st || st.Target != u || !st.Hit || st.Caption is not null && !st.Recovery) return false;
         int start = st.Anim.HitFrame - st.Anim.FlashTime / 2, k = _frame - start;
-        return k >= 0 && k < Math.Max(1, st.Anim.FlashTime) && !(k % 3 == 1 && k < 6);
+        return k >= 0 && k < Math.Max(1, st.Anim.FlashTime) && !(k % 3 == 1 && k < 8);
+    }
+
+    /// <summary>
+    /// Hit knock-back (the "stutter"): while the flash lasts, the target is pushed away from the attacker by
+    /// 0 px on the first tick, 11 px on the second, then 8 px until the flash ends. Not in any data file (it is
+    /// engine behaviour); the offsets are read frame by frame off the T22 recording, both directions. Heals don't do it.
+    /// </summary>
+    int Knockback(BattleUnit u)
+    {
+        if (_phase != Phase.Anim || Current is not { } st || st.Target != u || !st.Hit || st.Recovery) return 0;
+        int start = st.Anim.HitFrame - st.Anim.FlashTime / 2, k = _frame - start;
+        if (k <= 0 || k >= Math.Max(1, st.Anim.FlashTime)) return 0;
+        int away = u == StageRight ? 1 : -1;
+        return away * (k == 1 ? 11 : 8);
     }
 
     // ---------------- drawing ----------------
@@ -268,7 +282,7 @@ public sealed class BattleScene
         {
             if (l.Cell < 0) continue;
             // frame 0 of a weapon animation is the actor standing on the right; mirror it for the left side
-            DrawCell(sb, sheet, l.Cell, right ? l.X : StageWidth - l.X, l.Y, flip: !right);
+            DrawCell(sb, sheet, l.Cell, (right ? l.X : StageWidth - l.X) + Knockback(u), l.Y, flip: !right);
             break;
         }
     }
@@ -287,10 +301,16 @@ public sealed class BattleScene
         }
     }
 
+    /// <summary>
+    /// Draws one 192x192 cell centred on (cx, cy). Some sheets are a pixel short (CA05_006, ジュリア's, is 575
+    /// wide), so the last cell is drawn clipped rather than skipped; skipping it hid her whole run.
+    /// </summary>
     static void DrawCell(SpriteBatch sb, Texture2D sheet, int cell, int cx, int cy, bool flip)
     {
-        if ((cell + 1) * Cell > sheet.Width) return;
-        sb.Draw(sheet, new Vector2(cx - Cell / 2, cy - Cell / 2), new Rectangle(cell * Cell, 0, Cell, Cell), Color.White,
+        int w = Math.Min(Cell, sheet.Width - cell * Cell);
+        if (cell < 0 || w <= 0) return;
+        int x = cx - Cell / 2 + (flip ? Cell - w : 0);   // a flipped cell loses its missing column on the left
+        sb.Draw(sheet, new Vector2(x, cy - Cell / 2), new Rectangle(cell * Cell, 0, w, Cell), Color.White,
             0, Vector2.Zero, 1, flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
     }
 
