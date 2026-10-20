@@ -120,7 +120,7 @@ Controls:
    - camp menu, army screen (equipment, items, skills), shop (buy/sell) and sortie;
    - save and load in the original `SAVEn.DAT` format. Re-saving one of the original's camp saves reproduces it byte for byte, and its saves load in the client.
 
-   Still to do: saving and loading during a battle (in-battle saves currently restart their map), and matching the camp's inner screens to a recording (T23).
+   Still to do: saving and loading during a battle (in-battle saves currently restart their map), and checking 道具を使う against the original (the other camp screens are matched to recordings, T23).
 7. **Title, game over, map transitions.** A basic version is done: after a win, Enter goes on to the next map, and after a loss Enter retries.
 8. **Modern features:** fast-forward (basic version done), rebindable controls with a config file, resolution and scaling options, SoundFont music, and a self-contained `dotnet publish` build.
 

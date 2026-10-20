@@ -676,11 +676,13 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Battle scene: HP drain | the HP bar doesn't jump: from the hit it drains 1 HP per tick (weapon, ナス on ジュナ: 5 HP in 5 ticks) or 1 HP per 2 ticks (spell: 18 HP in ~34 ticks), stopping at 0. The number shows the full damage even when it exceeds the HP left (37 on an 18-HP minion) | measured, two samples; the rule behind the two rates (weapon vs spell?) is a guess |
 | Battle music | map BGM slot 3 (player-battle) when an ally starts the fight, 4 (enemy-battle) when an enemy does, 5 (boss-battle) when an enemy leader takes part; the phase music returns afterwards | battle music confirmed to start (T20b); slot choice inferred from the map header's slot names |
 | Enemy spells | an enemy casts a known, affordable damage spell when its predicted total damage beats its best weapon attack, and a heal when it restores ≥ ⅓ of someone's HP | guess |
-| Camp | CAMP_nnn full screen, camp BGM (map slot 0). Menu at (16,16) as measured (T17b). Shown before a map whose camp_before_battle is set, after the previous map's COMPLETE!!. The save / load lists match the T17b screenshots | menu, background and file lists confirmed. The rest is provisional |
-| Camp: unit screen (ユニット編成) | pick a unit (name, Lv), then 武器 / 防具 / 装飾品を替える (inventory items of that type the class may use, plus 「（装備をはずす）」; the old item goes back to the inventory), 道具を使う (stat-up and class-change items: needs the level, the class must be in the item's list, 「〜に昇格」), 技を見る (known spells with TP cost). The status window shows beside | guess: layout and rules need a camp recording |
-| Camp: shop | アイテム購入 lists the map's shop items with their price ("n肉": WORD 31's leading comma marks the number); アイテム売却 lists owned items with a price, at half price (下取り額). Gold shows under the menu | guess (sale price, layout) |
-| Camp: sortie | 次のステージ: if the army is bigger than the map's start positions (and party changes aren't disabled), pick who sorties (出撃ユニット数 n／max, 出撃 / ――). Then 「キャンプを終了して／進撃を開始します」 はい／いいえ. Units the map places itself always come | guess |
-| Fallen allies | an ally that died on the map doesn't rejoin the army afterwards | guess: needs checking (does the original bring them back?) |
+| Camp | CAMP_nnn full screen, camp BGM (map slot 0). Menu 96×129 at (16,16); the hovered entry gets the flashing light-green/white bar. Shown before a map whose camp_before_battle is set, after the previous map's COMPLETE!!. Sub-screens replace the menu | confirmed (T17b, T23 recordings) |
+| Camp: ユニット編成 | unit list 180×400 at (88,40), each row "name … 出撃" (or ――). Commands 武器を替える / 防具を替える / 装飾品を替える / 道具を使う / 技を見る in a panel at (288,40), greyed when there's nothing to choose. 「出撃ユニット数 n／max」 (max = the next map's start positions) at (432,40). The status window 264×288 at (288,152) | confirmed (T23). How 出撃 is toggled wasn't recorded: the client uses left/right or a click on the 出撃 column |
+| Camp: equipment / skills | the list replaces the unit list: 180×336 at (80,104), 「（装備をはずす）」 first, then matching items the class may use (the old item returns to the inventory). Skills: 204 wide, "name ＴＰ cost". The description window 480×48 at (80,32); status at (288,152) | confirmed (T23) |
+| Camp: 道具を使う | not recorded. Client guess: the same list with stat-up and class-change items the class may use. A stat-up adds to the base stats; class change needs the item's level and a matching from→to pair 「〜に昇格」 | guess (user couldn't test yet) |
+| Camp: shop | list 264×336 at (80,96): a 「アイテム ／ 値段 (アイテム売却: 下取り額) ／ 所持数」 header row with a rule, then rows. Gold in a 192×32 panel at (368,96), shown literally as 「130,肉」 (WORD 31 includes the comma). Description at the top. Sale price = half the price | confirmed (T23: ルーティのマント 10 → 5, ポーション 10 → 5) |
+| Camp: 次のステージ | 「キャンプを終了して／進撃を開始します」, a rule and はい／いいえ in a panel at (16,16). No separate sortie screen (sortie is set in ユニット編成) | confirmed (T23) |
+| Fallen allies | units that died on the previous map come back at the camp | confirmed (user, T23d) |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
 Every scripted run is reproducible: in screenshot mode the client seeds the battle RNG with 1, ignores the real keyboard and mouse, and `--keys` feeds input. The client writes the state and a token trace next to the PNG as `.txt`.
@@ -1020,20 +1022,6 @@ From a 2-minute 60 fps recording of map 1, `recordings/` (frames via `re/tools/f
 - **Heal recording** (グレイ's 活性波 on ジュリア): as in §15 "spells on one's own side".
 - **Spell recordings** (ルーティ's ルーチェ＝フォルツァ on two minions; a second cast): as in §15 "spells on enemies" and "HP drain".
 
-## Open items with no test planned
-
-- Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
-- The camera position at map start (§13).
-- Save variables: 16-bit at 0x5DC vs 8-bit at 0x5EF. Any later save with another variable set (e.g. at the 11話 camp, variable 0) settles it.
-- Save header fields 0x008, 0x00C, 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
-- Battle scene: why HP drains at 1/tick in one recording and 1/2 ticks in the other. A later recording of a spell, a miss and a heal would settle them.
-- Event-side details that need the running game:
-  - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
-  - picture display methods and screen effects beyond the first two;
-  - the T13 damaged-script behaviour.
-
-## Active tests
-
 ### Phase 6, round 1 — instructions (T23: the camp)
 
 A screen recording of the camp before map 3 or 4 (save slot 7 or 8 in `えるまに - Save testplay`) would settle most of the camp layout. Please go through:
@@ -1041,6 +1029,27 @@ A screen recording of the camp before map 3 or 4 (save slot 7 or 8 in `えるま
 - **T23b:** アイテム購入: buy something cheap. Then アイテム売却: hover a couple of items (to show the sale price) and sell one.
 - **T23c:** 次のステージ: everything up to the map starting. If a unit-selection screen appears, toggle someone.
 - **T23d:** does a unit that died in the previous map come back at the camp? Say if you remember; no need to test specially.
+
+### Phase 6, round 1 — results
+
+Two recordings: one of the camp before map 3 (ユニット編成, equipment, 技を見る, shop, 次のステージ) and one of buying and selling. Layout in §15. The user couldn't try 道具を使う yet, so the client's version is a guess (noted in §15). Units that die come back at the camp.
+
+## Open items with no test planned
+
+- Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
+- The camera position at map start (§13).
+- Save variables: 16-bit at 0x5DC vs 8-bit at 0x5EF. Any later save with another variable set (e.g. at the 11話 camp, variable 0) settles it.
+- Save header fields 0x008, 0x00C, 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
+- Battle scene: why HP drains at 1/tick in one recording and 1/2 ticks in the other.
+- Camp: 道具を使う (the user will record it when possible), and how a unit's 出撃 is toggled. A later recording of a spell, a miss and a heal would settle them.
+- Event-side details that need the running game:
+  - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
+  - picture display methods and screen effects beyond the first two;
+  - the T13 damaged-script behaviour.
+
+## Active tests
+
+None right now.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

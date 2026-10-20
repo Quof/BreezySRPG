@@ -6,28 +6,31 @@ using Srpg95.Rules;
 
 namespace Erumani.Camp;
 
-/// <summary>A vertical text menu in a green SYSTEM panel (12 px text, 16 px rows), optional right-aligned column.</summary>
+/// <summary>
+/// A vertical text list in a green SYSTEM panel: 12 px text, 16 px rows, optional right-aligned columns and a
+/// header row with a rule. The hovered row gets the flashing light-green / white bar with dark text (as the
+/// battle lists; T23 recording).
+/// </summary>
 sealed class MenuList
 {
     public Rectangle Rect;
     public string[] Items = Array.Empty<string>();
-    public string[]? Right;
+    public string[][]? Columns;      // right-aligned columns: text per row, right edge at ColumnX (from Rect.X)
+    public int[] ColumnX = Array.Empty<int>();
     public bool[] Enabled = Array.Empty<bool>();
     public int Index;
-    public string? Header;   // a title row with a rule under it (save / load lists)
-    public int TopPad;       // extra space above the rows (text drawn there by the caller)
+    public string? Header;           // a title line with a rule under it (save / load lists)
+    public string[]? HeaderColumns;  // a column header row with a rule (shop: アイテム / 値段 / 所持数)
+    public int TopPad, Indent = 9, RowInset = 4;
 
-    // with a header (save / load lists, T17b screenshot): title at +10, rule at +32, rows from +43, indented to +20
-    int RowsTop => Rect.Y + 9 + TopPad + (Header is null ? 0 : 34);
-    int Indent => Header is null ? 9 : 16;
+    int RowsTop => Rect.Y + 9 + TopPad + (Header is not null ? 34 : 0) + (HeaderColumns is not null ? 24 : 0);
 
-    public Rectangle Row(int i) => new(Rect.X + 4, RowsTop + i * 16, Rect.Width - 8, 16);
+    public Rectangle Row(int i) => new(Rect.X + RowInset, RowsTop + i * 16, Rect.Width - 2 * RowInset, 16);
 
-    public void Set(string[] items, bool[]? enabled = null, string[]? right = null)
+    public void Set(string[] items, bool[]? enabled = null)
     {
         Items = items;
         Enabled = enabled ?? items.Select(_ => true).ToArray();
-        Right = right;
         Index = Math.Clamp(Index, 0, Math.Max(0, items.Length - 1));
     }
 
@@ -42,33 +45,55 @@ sealed class MenuList
         return -1;
     }
 
-    public void Draw(SpriteBatch sb, Ui.Ui ui, bool active)
+    public void Draw(SpriteBatch sb, Ui.Ui ui, bool active, int frame)
     {
         ui.Panel(sb, Rect);
+        var white = Ui.Ui.PanelText;
         if (Header is not null)
         {
-            if (ui.SmallText.Get(Header) is { } h) sb.Draw(h, new Vector2(Rect.X + 13, Rect.Y + 10), Ui.Ui.PanelText);
-            ui.Fill(sb, new Rectangle(Rect.X + 12, Rect.Y + 32, Rect.Width - 24, 1), Ui.Ui.PanelText);
+            if (ui.SmallText.Get(Header) is { } h) sb.Draw(h, new Vector2(Rect.X + 13, Rect.Y + 10), white);
+            ui.Fill(sb, new Rectangle(Rect.X + 12, Rect.Y + 32, Rect.Width - 24, 1), white);
         }
+        if (HeaderColumns is not null)
+        {
+            int y = Rect.Y + 9 + TopPad;
+            if (ui.SmallText.Get(HeaderColumns[0]) is { } h0) sb.Draw(h0, new Vector2(Rect.X + 24, y), white);
+            for (int c = 1; c < HeaderColumns.Length && c - 1 < ColumnX.Length; c++)
+                if (ui.SmallText.Get(HeaderColumns[c]) is { } hc) sb.Draw(hc, new Vector2(Rect.X + ColumnX[c - 1] - hc.Width, y), white);
+            ui.Fill(sb, new Rectangle(Rect.X + 12, y + 18, Rect.Width - 24, 1), white);
+        }
+        var bar = frame / 8 % 2 == 0 ? new Color(160, 248, 96) : new Color(248, 248, 248);
         for (int k = 0; k < Items.Length; k++)
         {
             var r = Row(k);
-            var c = !Enabled[k] ? new Color(120, 140, 120) : active && k == Index ? new Color(255, 255, 120) : Ui.Ui.PanelText;
+            bool hot = active && k == Index;
+            if (hot) ui.Fill(sb, r, bar);
+            var c = hot ? new Color(0, 32, 0) : !Enabled[k] ? new Color(120, 140, 120) : white;
             if (ui.SmallText.Get(Items[k]) is { } t) sb.Draw(t, new Vector2(r.X + Indent, r.Y + 1), c);
-            if (Right?[k] is { Length: > 0 } s && ui.SmallText.Get(s) is { } rt) sb.Draw(rt, new Vector2(r.Right - 6 - rt.Width, r.Y + 1), c);
+            if (Columns is null) continue;
+            for (int col = 0; col < Columns.Length && col < ColumnX.Length; col++)
+                if (k < Columns[col].Length && Columns[col][k] is { Length: > 0 } s && ui.SmallText.Get(s) is { } ct)
+                    sb.Draw(ct, new Vector2(Rect.X + ColumnX[col] - ct.Width, r.Y + 1), c);
         }
     }
 }
 
 /// <summary>
-/// The camp between maps (SMAP camp_before_battle): CAMP_nnn full screen, the camp BGM, and the menu at (16,16):
-/// 次のステージ / ユニット編成 / アイテム購入 / アイテム売却 / セーブする / ロードする / ゲーム終了 (T17b screenshot).
-/// The sub-screens (army, shop, equipment) haven't been seen yet; their layout is provisional, built from the
-/// same panels and WORD.DAT strings (FORMAT_NOTES §15).
+/// The camp between maps (SMAP camp_before_battle). Layout measured from recordings of the original (T23):
+/// CAMP_nnn full screen with the camp BGM; menu 96x129 at (16,16): 次のステージ / ユニット編成 / アイテム購入 /
+/// アイテム売却 / セーブする / ロードする / ゲーム終了. Sub-screens replace the menu:
+/// - ユニット編成: unit list 180x400 at (88,40), each with 出撃 / ――; commands 武器 / 防具 / 装飾品を替える, 道具を使う,
+///   技を見る at (288,40) (greyed when there's nothing to choose); 「出撃ユニット数 n／max」 at (432,40); the status
+///   window at (288,152).
+/// - equipment / skill lists 180 (204) x 336 at (80,104), the description window 480x48 at (80,32), status beside.
+/// - shop: list 264x336 at (80,96) with a 「アイテム 値段 (下取り額) 所持数」 header and a rule; gold "n,肉" in a
+///   192x32 panel at (368,96); description at the top. Sale price = half the price (ルーティのマント 10 → 5).
+/// - 次のステージ: 「キャンプを終了して／進撃を開始します」, a rule and はい／いいえ in a panel at (16,16).
+/// Guessed: 道具を使う (not recorded yet) and how a unit's 出撃 is toggled (left/right or clicking its 出撃 column).
 /// </summary>
 public sealed class CampScreen
 {
-    enum Mode { Menu, Units, UnitCommands, Equip, UseItem, Skills, Buy, Sell, Save, Load, Sortie, Confirm }
+    enum Mode { Menu, Units, UnitCommands, Equip, UseItem, Skills, Buy, Sell, Save, Load, Confirm }
 
     readonly Database _db;
     readonly GameFolder _folder;
@@ -80,17 +105,20 @@ public sealed class CampScreen
     readonly Battlefield _field;   // for stats (terrain unused)
     Mode _mode = Mode.Menu;
     readonly MenuList _menu = new() { Rect = new Rectangle(16, 16, 96, 129) };
+    readonly MenuList _units = new() { Rect = new Rectangle(88, 40, 180, 400), ColumnX = new[] { 168 } };
+    readonly MenuList _commands = new() { Rect = new Rectangle(288, 40, 108, 96) };
     readonly MenuList _list = new();
-    readonly MenuList _sub = new();
-    readonly List<int> _units = new();
+    readonly MenuList _confirm = new() { Rect = new Rectangle(16, 16, 132, 100), Indent = 44 };
+    readonly List<int> _unitIds = new();
     int _unit = -1, _slot;   // equipment slot 0 weapon, 1 armor, 2 accessory
     List<int> _rowItems = new();
+    List<Magic> _rowSpells = new();
     string? _message;
     int _messageFrames;
-    (string[] Lines, Action Yes)? _confirm;
-    readonly HashSet<int> _sortie = new();
+    string[] _confirmLines = Array.Empty<string>();
+    Action? _confirmYes;
+    Mode _confirmFrom;
 
-    /// <summary>次のステージ (with the chosen sortie), a save loaded, or ゲーム終了.</summary>
     public Action? StartNext { get; set; }
     public Action<SaveFile>? Loaded { get; set; }
     public Action? Quit { get; set; }
@@ -100,13 +128,15 @@ public sealed class CampScreen
     {
         (_db, _folder, _tex, _ui, _state, _next, _nextIndex) = (db, folder, tex, ui, state, next, nextIndex);
         _field = new Battlefield(next, db, null);
-        // WORD.DAT 24-27, 21-23
-        _menu.Set(new[] { W(24), W(25), W(26), W(27), W(21), W(22), W(23) },
+        _menu.Set(new[] { W(24), W(25), W(26), W(27), W(21), W(22), W(23) },   // WORD.DAT 24-27, 21-23
             new[] { true, _state.Roster.Count > 0, next.ShopItems.Length > 0, true, true, true, true });
+        // who sorties: everyone until changed here, up to the map's start positions (units the map places come anyway)
+        _state.Sortie = new HashSet<int>(_state.Roster.Keys.Take(SortieMax));
     }
 
     string W(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
-    string Gold(int n) => $"{n}{W(31).TrimStart(',')}";   // ",肉": the comma stands for the number
+    string Gold(int n) => $"{n}{W(31)}";   // shown literally: 「60,肉」 (T23)
+    int SortieMax => Math.Max(1, _next.StartPositions.Length);
 
     BattleUnit Unit(int id)
     {
@@ -126,153 +156,151 @@ public sealed class CampScreen
     public void Update(BattleInput i, Point mouse)
     {
         if (_messageFrames > 0) { _messageFrames--; if (i.Confirm || i.Click) _messageFrames = 0; return; }
+        bool back = i.Cancel || i.RightClick;
         switch (_mode)
         {
-            case Mode.Menu: UpdateMenu(i, mouse); break;
+            case Mode.Menu:
+                switch (_menu.Navigate(i, mouse))
+                {
+                    case 0: Confirm(new[] { W(55), W(56) }, () => StartNext?.Invoke()); break;   // キャンプを終了して / 進撃を開始します
+                    case 1: OpenUnits(); break;
+                    case 2: OpenShop(sell: false); break;
+                    case 3: OpenShop(sell: true); break;
+                    case 4: OpenFiles(save: true); break;
+                    case 5: OpenFiles(save: false); break;
+                    case 6: Confirm(new[] { W(57) }, () => Quit?.Invoke()); break;           // ゲームを終了します
+                }
+                break;
             case Mode.Confirm:
-                if (i.Cancel || i.RightClick) { _mode = Mode.Menu; break; }
-                if (_sub.Navigate(i, mouse) is var c and >= 0) { if (c == 0) _confirm!.Value.Yes(); else _mode = Mode.Menu; }
+                if (back) { _mode = _confirmFrom; break; }
+                if (_confirm.Navigate(i, mouse) is var c and >= 0) { if (c == 0) _confirmYes?.Invoke(); else _mode = _confirmFrom; }
                 break;
             case Mode.Units:
-                if (i.Cancel || i.RightClick) { _mode = Mode.Menu; break; }
-                if (_list.Navigate(i, mouse) is var u and >= 0) { _unit = _units[u]; OpenUnitCommands(); }
+                if (back) { _mode = Mode.Menu; break; }
+                if (i.Left || i.Right || (i.Click && SortieColumnHit(mouse))) { ToggleSortie(); break; }
+                if (_units.Navigate(i, mouse) is var u and >= 0) { _unit = _unitIds[u]; OpenCommands(); }
                 break;
             case Mode.UnitCommands:
-                if (i.Cancel || i.RightClick) { _mode = Mode.Units; break; }
-                switch (_sub.Navigate(i, mouse))
+                if (back) { _mode = Mode.Units; break; }
+                switch (_commands.Navigate(i, mouse))
                 {
-                    case 0: case 1: case 2: _slot = _sub.Index; OpenEquip(); break;
+                    case 0: case 1: case 2: _slot = _commands.Index; OpenEquip(); break;
                     case 3: OpenUseItem(); break;
                     case 4: OpenSkills(); break;
                 }
                 break;
             case Mode.Equip:
-                if (i.Cancel || i.RightClick) { _mode = Mode.UnitCommands; break; }
+                if (back) { _mode = Mode.UnitCommands; RefreshCommands(); break; }
                 if (_list.Navigate(i, mouse) is var e and >= 0) Equip(_rowItems[e]);
                 break;
             case Mode.UseItem:
-                if (i.Cancel || i.RightClick) { _mode = Mode.UnitCommands; break; }
+                if (back) { _mode = Mode.UnitCommands; RefreshCommands(); break; }
                 if (_list.Navigate(i, mouse) is var it and >= 0) UseItem(_rowItems[it]);
                 break;
             case Mode.Skills:
-                if (i.Cancel || i.RightClick || i.Confirm || i.Click) _mode = Mode.UnitCommands;
+                if (back) { _mode = Mode.UnitCommands; break; }
+                _list.Navigate(i, mouse);
                 break;
             case Mode.Buy:
-                if (i.Cancel || i.RightClick) { _mode = Mode.Menu; break; }
+                if (back) { _mode = Mode.Menu; break; }
                 if (_list.Navigate(i, mouse) is var b and >= 0) Buy(_rowItems[b]);
                 break;
             case Mode.Sell:
-                if (i.Cancel || i.RightClick) { _mode = Mode.Menu; break; }
+                if (back) { _mode = Mode.Menu; break; }
                 if (_list.Navigate(i, mouse) is var s and >= 0) Sell(_rowItems[s]);
                 break;
             case Mode.Save:
             case Mode.Load:
-                if (i.Cancel || i.RightClick) { _mode = Mode.Menu; break; }
+                if (back) { _mode = Mode.Menu; break; }
                 if (_list.Navigate(i, mouse) is var f and >= 0) { if (_mode == Mode.Save) SaveTo(f + 1); else LoadFrom(f + 1); }
                 break;
-            case Mode.Sortie:
-                if (i.Cancel || i.RightClick) { _mode = Mode.Menu; break; }
-                if (_list.Navigate(i, mouse) is var p and >= 0)
-                {
-                    if (p == _units.Count) { ConfirmNext(); break; }   // 出撃
-                    int id = _units[p];
-                    if (!_sortie.Remove(id) && _sortie.Count < SortieMax) _sortie.Add(id);
-                    RefreshSortie();
-                }
-                break;
-        }
-    }
-
-    void UpdateMenu(BattleInput i, Point mouse)
-    {
-        switch (_menu.Navigate(i, mouse))
-        {
-            case 0: OpenNext(); break;
-            case 1: OpenUnits(); break;
-            case 2: OpenBuy(); break;
-            case 3: OpenSell(); break;
-            case 4: OpenFiles(save: true); break;
-            case 5: OpenFiles(save: false); break;
-            case 6: Confirm(new[] { W(57) }, () => Quit?.Invoke()); break;   // ゲームを終了します
         }
     }
 
     void Confirm(string[] lines, Action yes)
     {
-        _confirm = (lines, yes);
-        _sub.Rect = new Rectangle(232, 200, 176, 16 * lines.Length + 16 + 2 * 16 + 8);
-        _sub.Set(new[] { W(45), W(46) });   // はい / いいえ
-        _sub.TopPad = 16 * lines.Length + 8;
-        _sub.Index = 0;
+        _confirmFrom = _mode;
+        _confirmLines = lines;
+        _confirmYes = yes;
+        _confirm.Rect = new Rectangle(16, 16, 132, 16 * lines.Length + 68);
+        _confirm.TopPad = 16 * lines.Length + 12;
+        _confirm.Set(new[] { W(45), W(46) });   // はい / いいえ
+        _confirm.Index = 0;
         _mode = Mode.Confirm;
     }
 
-    // 次のステージ: choose who sorties when the roster is bigger than the map's start positions (provisional),
-    // then 「キャンプを終了して / 進撃を開始します」 (WORD 55, 56) with はい / いいえ
-    int SortieMax => Math.Max(1, _next.StartPositions.Length);
+    // ---------------- ユニット編成 ----------------
 
-    void OpenNext()
-    {
-        _units.Clear();
-        _units.AddRange(_state.Roster.Keys);
-        if (_units.Count > SortieMax && !_next.DisablePartyChanges)
-        {
-            _sortie.Clear();
-            foreach (var id in _units.Take(SortieMax)) _sortie.Add(id);
-            _list.Rect = new Rectangle(128, 16, 200, 16 * (_units.Count + 1) + 18 + 24);
-            _list.Index = 0;
-            RefreshSortie();
-            _mode = Mode.Sortie;
-            return;
-        }
-        _state.Sortie = null;
-        ConfirmNext();
-    }
-
-    void RefreshSortie()
-    {
-        _list.Header = $"{W(38)}  {_sortie.Count}／{SortieMax}";
-        _list.Set(_units.Select(id => _db.Units[id].Name).Append(W(39)).ToArray(), null,
-            _units.Select(id => _sortie.Contains(id) ? W(39) : W(40)).Append("").ToArray());
-    }
-
-    void ConfirmNext()
-    {
-        if (_mode == Mode.Sortie) _state.Sortie = new HashSet<int>(_sortie);
-        Confirm(new[] { W(55), W(56) }, () => StartNext?.Invoke());
-    }
-
-    // ユニット編成: pick a unit, then 武器 / 防具 / 装飾品を替える, 道具を使う, 技を見る (WORD 33-37)
     void OpenUnits()
     {
-        _units.Clear();
-        _units.AddRange(_state.Roster.Keys);
-        _list.Header = null;
-        _list.Rect = new Rectangle(128, 16, 176, 16 * _units.Count + 18);
-        _list.Set(_units.Select(id => _db.Units[id].Name).ToArray(), null, _units.Select(id => $"{W(1)} {_state.Roster[id].Level}").ToArray());
+        _unitIds.Clear();
+        _unitIds.AddRange(_state.Roster.Keys);
+        RefreshUnits();
         _mode = Mode.Units;
     }
 
-    void OpenUnitCommands()
+    void RefreshUnits()
     {
-        _sub.TopPad = 0;
-        _sub.Rect = new Rectangle(128, 16 + 16 * _units.Count + 26, 128, 5 * 16 + 18);
-        _sub.Set(new[] { W(33), W(34), W(35), W(36), W(37) });
-        _mode = Mode.UnitCommands;
+        _units.Set(_unitIds.Select(id => _db.Units[id].Name).ToArray());
+        _units.Columns = new[] { _unitIds.Select(id => _state.Sortie!.Contains(id) ? W(39) : W(40)).ToArray() };   // 出撃 / ――
+    }
+
+    bool SortieColumnHit(Point mouse) =>
+        Enumerable.Range(0, _unitIds.Count).Any(k => _units.Row(k).Contains(mouse) && mouse.X >= _units.Rect.X + 130);
+
+    /// <summary>出撃 ↔ ――, up to the map's start positions; locked when the map disables party changes (guess).</summary>
+    void ToggleSortie()
+    {
+        if (_next.DisablePartyChanges || _unitIds.Count == 0) return;
+        int id = _unitIds[_units.Index];
+        if (!_state.Sortie!.Remove(id) && _state.Sortie.Count < SortieMax) _state.Sortie.Add(id);
+        RefreshUnits();
     }
 
     static readonly ItemType[] SlotTypes = { ItemType.Weapon, ItemType.Armor, ItemType.Accessory };
 
-    bool Usable(Item it, int classId) => classId >= 0 && classId < it.ClassUsable.Length && it.ClassUsable[classId] != 0;
+    static bool Usable(Item it, int classId) => classId >= 0 && classId < it.ClassUsable.Length && it.ClassUsable[classId] != 0;
+
+    IEnumerable<int> EquipChoices(int slot, RosterEntry e) =>
+        _state.Items.Keys.Where(id => _db.Items[id].Type == SlotTypes[slot] && Usable(_db.Items[id], e.ClassId)).Order();
+
+    IEnumerable<int> UseChoices(RosterEntry e) =>
+        _state.Items.Keys.Where(id => _db.Items[id].Type is ItemType.StatUp or ItemType.ClassChange && Usable(_db.Items[id], e.ClassId)).Order();
+
+    void OpenCommands()
+    {
+        _commands.Set(new[] { W(33), W(34), W(35), W(36), W(37) });   // 武器 / 防具 / 装飾品を替える, 道具を使う, 技を見る
+        RefreshCommands();
+        _mode = Mode.UnitCommands;
+    }
+
+    /// <summary>Greyed when there is nothing to choose (the original greys 装飾品を替える / 道具を使う then, T23).</summary>
+    void RefreshCommands()
+    {
+        var e = _state.Roster[_unit];
+        bool Has(int slot) => EquipChoices(slot, e).Any() || (slot switch { 0 => e.Weapon, 1 => e.Armor, _ => e.Accessory }) >= 0;
+        _commands.Enabled = new[] { Has(0), Has(1), Has(2), UseChoices(e).Any(), true };
+    }
+
+    void ShowList(int width, string[] names, string[][]? columns, int[] columnX, bool[]? enabled = null)
+    {
+        _list.Rect = new Rectangle(80, 104, width, 336);
+        _list.Header = null;
+        _list.HeaderColumns = null;
+        _list.Indent = 9;
+        _list.Columns = columns;
+        _list.ColumnX = columnX;
+        _list.Index = 0;
+        _list.Set(names, enabled);
+    }
 
     void OpenEquip()
     {
         var e = _state.Roster[_unit];
-        // （装備をはずす） first, then matching items from the inventory the class may use
-        _rowItems = new List<int> { -1 };
-        _rowItems.AddRange(_state.Items.Keys.Where(id => _db.Items[id].Type == SlotTypes[_slot] && Usable(_db.Items[id], e.ClassId)).Order());
-        ShowItemList(_rowItems.Select(id => id < 0 ? W(32) : _db.Items[id].Name).ToArray(),
-            _rowItems.Select(id => id < 0 ? "" : $"×{_state.ItemCount(id)}").ToArray());
+        _rowItems = new List<int> { -1 };   // 「（装備をはずす）」 first
+        _rowItems.AddRange(EquipChoices(_slot, e));
+        ShowList(180, _rowItems.Select(id => id < 0 ? W(32) : _db.Items[id].Name).ToArray(),
+            new[] { _rowItems.Select(id => id < 0 ? "" : $"{_state.ItemCount(id)}").ToArray() }, new[] { 168 });
         _mode = Mode.Equip;
     }
 
@@ -288,16 +316,18 @@ public sealed class CampScreen
             1 => e with { Armor = item },
             _ => e with { Accessory = item },
         };
-        if (item >= 0) Say($"{_db.Units[_unit].Name}は{_db.Items[item].Name}{W(59)}");   // 「を装備します」
-        OpenEquip();
+        _mode = Mode.UnitCommands;
+        RefreshCommands();
     }
 
-    // 道具を使う at camp: stat-up and class-change items (medicine: HP is full at camp) — provisional
+    // 道具を使う: not recorded yet. Guess: the same list as equipment, with stat-up and class-change items; a stat-up
+    // raises the base stats, a class-change item needs its level and a matching (from → to) pair.
     void OpenUseItem()
     {
         var e = _state.Roster[_unit];
-        _rowItems = _state.Items.Keys.Where(id => _db.Items[id].Type is ItemType.StatUp or ItemType.ClassChange && Usable(_db.Items[id], e.ClassId)).Order().ToList();
-        ShowItemList(_rowItems.Select(id => _db.Items[id].Name).ToArray(), _rowItems.Select(id => $"×{_state.ItemCount(id)}").ToArray(),
+        _rowItems = UseChoices(e).ToList();
+        ShowList(180, _rowItems.Select(id => _db.Items[id].Name).ToArray(),
+            new[] { _rowItems.Select(id => $"{_state.ItemCount(id)}").ToArray() }, new[] { 168 },
             _rowItems.Select(id => ItemWorks(id, e)).ToArray());
         _mode = Mode.UseItem;
     }
@@ -305,8 +335,7 @@ public sealed class CampScreen
     bool ItemWorks(int id, RosterEntry e)
     {
         var it = _db.Items[id];
-        if (it.Type == ItemType.StatUp) return true;
-        return e.Level >= it.S.ClassChangeLevel && ClassChangeTarget(it, e.ClassId) >= 0;
+        return it.Type == ItemType.StatUp || (e.Level >= it.S.ClassChangeLevel && ClassChangeTarget(it, e.ClassId) >= 0);
     }
 
     static int ClassChangeTarget(Item it, int from)
@@ -326,7 +355,7 @@ public sealed class CampScreen
             var b = (int[])e.Base.Clone();
             for (int k = 0; k < 6; k++) b[k] += it.S.StatUp[k];
             _state.Roster[_unit] = e with { Base = b };
-            Say($"{name}{W(64)}{W(68)}");   // provisional wording: 「〜が上昇した」
+            Say($"{name}{W(64)}{W(68)}");   // guess: 「〜が上昇した」
         }
         else
         {
@@ -340,33 +369,43 @@ public sealed class CampScreen
 
     void OpenSkills()
     {
-        var u = Unit(_unit);
-        var spells = _field.KnownSpells(u).ToList();
-        _list.Header = null;
-        _list.Rect = new Rectangle(312, 16, 312, Math.Max(1, spells.Count) * 16 + 18);
-        _list.Set(spells.Count > 0 ? spells.Select(m => m.Name).ToArray() : new[] { W(40) }, null,
-            spells.Select(m => $"{W(3)} {m.MpCost}").ToArray());
+        _rowSpells = _field.KnownSpells(Unit(_unit)).ToList();
+        ShowList(204, _rowSpells.Select(m => m.Name).ToArray(),
+            new[] { _rowSpells.Select(_ => W(3)).ToArray(), _rowSpells.Select(m => $"{m.MpCost}").ToArray() }, new[] { 164, 192 });
         _mode = Mode.Skills;
     }
 
-    void ShowItemList(string[] names, string[] right, bool[]? enabled = null)
+    // ---------------- shop ----------------
+
+    /// <summary>Sale price: half the price (T23: ルーティのマント 10 → 5, ポーション 10 → 5); price 0 = unsellable.</summary>
+    static int SellPrice(Item it) => it.Price / 2;
+
+    void OpenShop(bool sell)
     {
+        _mode = sell ? Mode.Sell : Mode.Buy;
+        _list.Rect = new Rectangle(80, 96, 264, 336);
         _list.Header = null;
-        _list.Rect = new Rectangle(312, 16, 312, Math.Max(1, names.Length) * 16 + 18);
-        _list.Set(names.Length > 0 ? names : new[] { W(40) }, names.Length > 0 ? enabled : new[] { false }, names.Length > 0 ? right : new[] { "" });
+        _list.Indent = 9;
+        _list.HeaderColumns = new[] { "アイテム", W(sell ? 29 : 28), W(30) };   // 値段 / 下取り額, 所持数
+        _list.ColumnX = new[] { 204, 252 };
+        _list.Index = 0;
+        RefreshShop();
     }
 
-    // アイテム購入 / アイテム売却: price list with 値段 / 下取り額, owned count (所持数), gold
-    void OpenBuy()
+    void RefreshShop()
     {
-        _rowItems = _next.ShopItems.Where(id => id >= 0 && id < _db.Items.Length).ToList();
-        RefreshBuy();
-        _mode = Mode.Buy;
+        bool sell = _mode == Mode.Sell;
+        _rowItems = sell
+            ? _state.Items.Keys.Where(id => _db.Items[id].Price > 0).Order().ToList()
+            : _next.ShopItems.Where(id => id >= 0 && id < _db.Items.Length).ToList();
+        _list.Set(_rowItems.Select(id => _db.Items[id].Name).ToArray(),
+            sell ? null : _rowItems.Select(id => _db.Items[id].Price <= _state.Gold).ToArray());
+        _list.Columns = new[]
+        {
+            _rowItems.Select(id => $"{(sell ? SellPrice(_db.Items[id]) : _db.Items[id].Price)}").ToArray(),
+            _rowItems.Select(id => $"{_state.ItemCount(id)}").ToArray(),
+        };
     }
-
-    void RefreshBuy() => ShowItemList(_rowItems.Select(id => _db.Items[id].Name).ToArray(),
-        _rowItems.Select(id => Gold(_db.Items[id].Price)).ToArray(),
-        _rowItems.Select(id => _db.Items[id].Price <= _state.Gold).ToArray());
 
     void Buy(int id)
     {
@@ -374,35 +413,27 @@ public sealed class CampScreen
         if (it.Price > _state.Gold) return;
         _state.Gold -= it.Price;
         _state.AddItem(id, 1);
-        Say($"{it.Name}{W(62)}");   // 「を獲得」
-        RefreshBuy();
-    }
-
-    /// <summary>Sale price: half the price (provisional); price 0 = unsellable (help text).</summary>
-    static int SellPrice(Item it) => it.Price / 2;
-
-    void OpenSell()
-    {
-        _rowItems = _state.Items.Keys.Where(id => _db.Items[id].Price > 0).Order().ToList();
-        ShowItemList(_rowItems.Select(id => $"{_db.Items[id].Name} ×{_state.ItemCount(id)}").ToArray(),
-            _rowItems.Select(id => Gold(SellPrice(_db.Items[id]))).ToArray());
-        _mode = Mode.Sell;
+        RefreshShop();
     }
 
     void Sell(int id)
     {
         _state.Gold += SellPrice(_db.Items[id]);
         _state.AddItem(id, -1);
-        OpenSell();
+        RefreshShop();
     }
 
-    // セーブする / ロードする: 96x177 list, header + rule + ファイル１–８ (WORD 53/54, 81–88); empty slots grey when loading
+    // ---------------- save / load ----------------
+
     void OpenFiles(bool save)
     {
         _list.Header = W(save ? 53 : 54);
+        _list.HeaderColumns = null;
+        _list.Columns = null;
+        _list.Indent = 16;
         _list.Rect = new Rectangle(120, 16, 96, 177);
         var exists = Enumerable.Range(1, 8).Select(n => File.Exists(SaveFile.PathFor(_folder, n))).ToArray();
-        _list.Set(Enumerable.Range(81, 8).Select(W).ToArray(), save ? null : exists);
+        _list.Set(Enumerable.Range(81, 8).Select(W).ToArray(), save ? null : exists);   // ファイル１–８
         _list.Index = 0;
         _mode = save ? Mode.Save : Mode.Load;
     }
@@ -427,29 +458,35 @@ public sealed class CampScreen
     {
         if (_tex.Get($"CAMP_{_next.CampBackground:000}.BMP", transparent: false) is { } back) sb.Draw(back, Vector2.Zero, Color.White);
         else _ui.Fill(sb, new Rectangle(0, 0, 640, 480), Color.Black);
-        _menu.Draw(sb, _ui, _mode == Mode.Menu);
-
-        // gold, under the menu (provisional)
-        var g = new Rectangle(16, 151, 96, 26);
-        _ui.Panel(sb, g);
-        if (_ui.SmallText.Get(Gold(_state.Gold)) is { } gt) sb.Draw(gt, new Vector2(g.Right - 10 - gt.Width, g.Y + 7), Ui.Ui.PanelText);
-
-        switch (_mode)
+        var mode = _mode == Mode.Confirm ? _confirmFrom : _mode;
+        switch (mode)
         {
-            case Mode.Units: _list.Draw(sb, _ui, true); break;
-            case Mode.UnitCommands or Mode.Equip or Mode.UseItem or Mode.Skills:
-                _list.Draw(sb, _ui, _mode is Mode.Equip or Mode.UseItem);
-                if (_mode == Mode.UnitCommands) DrawUnitsBehind(sb);
-                _sub.Draw(sb, _ui, _mode == Mode.UnitCommands);
-                Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _field, Unit(_unit), new Rectangle(312, 176, 264, 288));
-                if (_mode is Mode.Equip or Mode.UseItem) DrawDescription(sb);
+            case Mode.Menu or Mode.Save or Mode.Load:
+                if (_mode != Mode.Confirm) _menu.Draw(sb, _ui, _mode == Mode.Menu, frame);
+                if (mode is Mode.Save or Mode.Load) _list.Draw(sb, _ui, true, frame);
                 break;
-            case Mode.Buy or Mode.Sell or Mode.Save or Mode.Load or Mode.Sortie:
-                _list.Draw(sb, _ui, true);
-                if (_mode is Mode.Buy or Mode.Sell) DrawDescription(sb);
+            case Mode.Units or Mode.UnitCommands:
+                _units.Draw(sb, _ui, true, frame);
+                if (mode == Mode.Units) _commands.Set(new[] { W(33), W(34), W(35), W(36), W(37) });
+                _commands.Draw(sb, _ui, mode == Mode.UnitCommands, frame);
+                DrawSortieCount(sb);
+                int shown = mode == Mode.Units && _unitIds.Count > 0 ? _unitIds[_units.Index] : _unit;
+                if (shown >= 0) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _field, Unit(shown), StatusRect);
                 break;
-            case Mode.Confirm: DrawConfirm(sb); break;
+            case Mode.Equip or Mode.UseItem or Mode.Skills:
+                _list.Draw(sb, _ui, true, frame);
+                Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _field, Unit(_unit), StatusRect);
+                DrawDescription(sb);
+                break;
+            case Mode.Buy or Mode.Sell:
+                _list.Draw(sb, _ui, true, frame);
+                var g = new Rectangle(368, 96, 192, 32);
+                _ui.Panel(sb, g);
+                if (_ui.SmallText.Get(Gold(_state.Gold)) is { } gt) sb.Draw(gt, new Vector2(g.Right - 12 - gt.Width, g.Y + 10), Ui.Ui.PanelText);
+                DrawDescription(sb);
+                break;
         }
+        if (_mode == Mode.Confirm) DrawConfirm(sb, frame);
         if (_messageFrames > 0 && _message is not null)
         {
             int w = Math.Max(240, _ui.SmallText.Measure(_message) + 32);
@@ -459,30 +496,37 @@ public sealed class CampScreen
         }
     }
 
-    void DrawUnitsBehind(SpriteBatch sb)
+    static readonly Rectangle StatusRect = new(288, 152, 264, 288);
+
+    void DrawSortieCount(SpriteBatch sb)
     {
-        var units = new MenuList { Rect = new Rectangle(128, 16, 176, 16 * _units.Count + 18) };
-        units.Set(_units.Select(id => _db.Units[id].Name).ToArray(), null, _units.Select(id => $"{W(1)} {_state.Roster[id].Level}").ToArray());
-        units.Index = _units.IndexOf(_unit);
-        units.Draw(sb, _ui, true);
+        var r = new Rectangle(432, 40, 112, 48);
+        _ui.Panel(sb, r);
+        if (_ui.SmallText.Get(W(38)) is { } a) sb.Draw(a, new Vector2(r.X + 12, r.Y + 8), Ui.Ui.PanelText);   // 出撃ユニット数
+        if (_ui.SmallText.Get($"{_state.Sortie!.Count}／{SortieMax,2}") is { } b) sb.Draw(b, new Vector2(r.Right - 12 - b.Width, r.Y + 26), Ui.Ui.PanelText);
     }
 
-    /// <summary>The item description window at the top, as in battle (80,32 480x48).</summary>
+    /// <summary>Description window 480x48 at (80,32): "name：" and the text (items and spells).</summary>
     void DrawDescription(SpriteBatch sb)
     {
-        if (_list.Index < 0 || _list.Index >= _rowItems.Count || _rowItems[_list.Index] < 0) return;
-        var it = _db.Items[_rowItems[_list.Index]];
-        var d = new Rectangle(80, 400, 480, 48);   // bottom here: the menus sit at the top
+        var d = new Rectangle(80, 32, 480, 48);
         _ui.Panel(sb, d);
-        if (_ui.SmallText.Get($"{it.Name}：") is { } a) sb.Draw(a, new Vector2(d.X + 16, d.Y + 10), Ui.Ui.PanelText);
-        if (_ui.SmallText.Get(it.Desc) is { } b) sb.Draw(b, new Vector2(d.X + 16, d.Y + 26), Ui.Ui.PanelText);
+        string? name = null, desc = null;
+        if (_mode == Mode.Skills && _list.Index < _rowSpells.Count) (name, desc) = (_rowSpells[_list.Index].Name, _rowSpells[_list.Index].Desc);
+        else if (_mode != Mode.Skills && _list.Index < _rowItems.Count && _rowItems[_list.Index] >= 0)
+            (name, desc) = (_db.Items[_rowItems[_list.Index]].Name, _db.Items[_rowItems[_list.Index]].Desc);
+        if (name is null) return;
+        if (_ui.SmallText.Get($"{name}：") is { } a) sb.Draw(a, new Vector2(d.X + 16, d.Y + 10), Ui.Ui.PanelText);
+        if (_ui.SmallText.Get(desc!) is { } b) sb.Draw(b, new Vector2(d.X + 16, d.Y + 26), Ui.Ui.PanelText);
     }
 
-    void DrawConfirm(SpriteBatch sb)
+    /// <summary>Confirmation (T23): message lines, a rule, はい／いいえ, in a panel at (16,16).</summary>
+    void DrawConfirm(SpriteBatch sb, int frame)
     {
-        _sub.Draw(sb, _ui, true);
-        var lines = _confirm!.Value.Lines;
-        for (int k = 0; k < lines.Length; k++)
-            if (_ui.SmallText.Get(lines[k]) is { } t) sb.Draw(t, new Vector2(_sub.Rect.X + 13, _sub.Rect.Y + 9 + k * 16), Ui.Ui.PanelText);
+        var r = _confirm.Rect;
+        _confirm.Draw(sb, _ui, true, frame);
+        for (int k = 0; k < _confirmLines.Length; k++)
+            if (_ui.SmallText.Get(_confirmLines[k]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 9 + k * 16), Ui.Ui.PanelText);
+        _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 9 + 16 * _confirmLines.Length + 4, r.Width - 24, 1), Ui.Ui.PanelText);
     }
 }

@@ -116,7 +116,8 @@ public sealed class MapSession : IMapContext
     /// <summary>Allies that survive a won map join (or update) the roster, unless they're guests.</summary>
     public void SaveRoster()
     {
-        foreach (var u in Field.Units.Where(u => u.Side == Side.Ally && !u.Guest && !u.Dead))
+        // fallen allies come back at the camp (user, T23d); hidden ones (not yet joined) don't count
+        foreach (var u in Field.Units.Where(u => u.Side == Side.Ally && !u.Guest && !u.Hidden))
             _state.Roster[u.Unit] = new RosterEntry(u.ClassId, u.Level, u.Exp, (int[])u.Base.Clone(), u.Weapon, u.Armor, u.Accessory);
     }
 
