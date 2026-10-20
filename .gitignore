@@ -1,0 +1,14 @@
+# Original game, editor and test copies: never committed (third-party content)
+/えるまに*/
+/srpg maker 95/
+
+# Generated parser output (rebuild with re/srpg95_data.py)
+/re/json*/
+__pycache__/
+
+# .NET build output
+bin/
+obj/
+*.user
+.vs/
+/client/publish/

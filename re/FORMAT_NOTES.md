@@ -1,0 +1,704 @@
+# Sim RPG Maker 95 data formats (えるまに)
+
+Phase 1 notes: what the data files contain and how they are laid out.
+Parser: [`srpg95_data.py`](srpg95_data.py) (one function per format).
+JSON dumps: `json/` (this game), `json_rtp/` (the editor's default RTP data), `json_kikumaru/` (the bundled English sample project).
+
+## Confidence levels
+
+- **confirmed**: the decoded value matched an independent known value. Usually that is the RTP default data compared with the help-file screenshots (e.g. RTP unit 0 "Richard" has HP 20 / growth 180 / Long Sword, exactly as `ue2.PNG` shows). Unambiguous cross-references (filenames, names that match each other) also count.
+- **inferred**: consistent with all the data and the editor's field order, but not pinned down by a known value. Each one comes with its evidence. Anything worth an editor test is listed in [Tests to run](#tests-to-run).
+
+Evidence sources:
+1. `srpg maker 95/Help/SRPG95.chm` (English RPGCrisis help file, decompiled with `hh -decompile`). It documents every editor field and includes screenshots of the RTP defaults.
+2. `srpg maker 95/RTP/*.DAT`, the stock data those screenshots show.
+3. Cross-checks between the three datasets (game, RTP, Kikumaru).
+
+## General conventions (all files)
+
+| Item | Finding | Confidence |
+|---|---|---|
+| Endianness | little-endian | confirmed |
+| Integers | almost all fields are int32. Booleans and attribute sets are packed u8 arrays | confirmed |
+| Text encoding | Shift-JIS. Decode as `cp932` because the files contain NEC/IBM extensions and half-width kana (`ﾎﾞｽ戦闘.MID`) | confirmed |
+| Strings | fixed-size buffers, NUL-terminated. Bytes after the NUL are stale leftovers from earlier edits, e.g. MAPNAME `１話\0vニング`. The parser drops them | confirmed |
+| Line breaks in text | `\r\n` | confirmed |
+| IDs | References to database records (class, item, spell, animation, unit) are 0-based, and the editor shows them +1 (`001:Lord M` is index 0). Frame numbers are 0-based too. **Graphic file numbers** (face, unit_graphic, battle_background, camp_background, tileset) are stored exactly as shown and map directly to `XXX_%03d.BMP` | confirmed (T2, T6, T1, T5) |
+| "none" sentinel | `-1` (0xFFFFFFFF), e.g. empty equipment slot | confirmed |
+| File sizes | every database is a fixed-size array. All 250/150/100… slots always exist, and empty slots keep editor defaults rather than zeros | confirmed |
+| Unknown bytes | the parser emits any non-zero byte not covered by a named field as `unknown_XXX` (hex offset), so nothing is lost. After this session, every non-zero byte in UNIT/CLASS/ITEM/MAGIC/GEOLOGY across all three datasets is covered by a named field | — |
+
+---
+
+## 1. Folder inventory
+
+### Game folder `えるまに/` (the game to reimplement)
+
+| Group | Files | What it is |
+|---|---|---|
+| Runtime | `SRPGEXEC.EXE` (1,074,688 B), `HARMONY.DLL` | Player executable. HARMONY.DLL also ships with the editor and is presumably the MIDI/sound helper (unverified). Neither is needed by a new client |
+| Databases | `UNIT CLASS ITEM MAGIC GEOLOGY ANIME .DAT` | Fixed-size record arrays (§2–§7) |
+| Name tables | `WORD MAPNAME VARNAME SWNAME .DAT` | Arrays of 32-byte strings (§8) |
+| Misc data | `GAME.DAT` (200 B), `TEST.DAT` (6000 B), `EDITOR.DAT` (4 B) | Game settings, editor test-play settings, editor state (§12) |
+| Maps | `MAP/SMAP_001…069, 099, 100.DAT` (79 files, 120–233 KB) | Map header, tile grid and events (§10). `SMAP_nnn` ↔ `MAPNAME[nnn-1]` |
+| Tileset terrain | `MAP/MAPC_001,002,003,008,009,013,017,025.DAT` (384 B each) | Terrain type of each tileset chip (§9) |
+| Graphics | `BMP/` 333 files, all 8-bit paletted | see below |
+| Music | `BGM/` 72 `.mid` + 1 `.wav` | Referenced by name from maps and events |
+| Sound FX | `EFS/` 82 `.wav` | Referenced by name from ANIME and events |
+| Extras | `はじめる前に.txt` (readme: mouse-only controls, F4 toggles window size, credits), 6 `.url` shortcuts | Not data |
+
+`BMP/` naming groups (sizes measured from the BMP headers):
+
+| Pattern | Count | Size | Meaning | Confidence |
+|---|---|---|---|---|
+| `FACE_nnn` | 89 | 128×128 | Portraits. `nnn` = UNIT.face | confirmed (T1: portrait #10 → face 10) |
+| `UNIT_nnn` | 71 | 192×320 (one is 32×32) | Map sprite sheet, 6×10 cells of 32×32. `nnn` = CLASS.unit_graphic | confirmed by help + cross-ref |
+| `CAxx_yyy` | 78 | 192×192 cells, up to 12 per row (≤2304 wide) | Weapon battle-animation cells. `xx` = ANIME index+1, `yyy` = class unit_graphic | confirmed (`CA03_004`: anime 2 "ナス攻撃" × class "ナス" unit_graphic 4) |
+| `MAGA_nnn` | 49 | 192×192 cells | Spell animation cells. `nnn` = spell-animation number | inferred (help) |
+| `BACK_nnn` | 15 | 640×320 | Battle backgrounds. `nnn` = GEOLOGY.battle_background | inferred |
+| `MAPC_nnn` | 12 | 384×1024 | Tilesets: 12×32 chips of 32×32 = 384 chips | confirmed (384 chips = 384-byte MAPC.DAT, max tile value 383) |
+| `CAMP_nnn` | 1 | 640×480 | Camp background (SMAP.camp_background) | inferred |
+| `TITLE`, `GAMEOVER` | 1 each | 640×480 | Title and game-over screens | name-evident |
+| `SYSTEM` | 1 | 256×320 | UI parts (cursor, window skin…) | to investigate |
+| `SFRAME_H`, `SFRAME_V` | 1 each | 640×64, 64×448 | Screen frame pieces | to investigate |
+| `TELOP1-3` | 3 | 512×96 | Caption banners | to investigate |
+| `act*`, `acted*` | 10 | 640×480 / 640×320 | Game-specific pictures shown by events ("Picture Display") | inferred |
+| `Thumbs.db` | 1 | — | Windows thumbnail cache, ignore | — |
+
+### Editor folder `srpg maker 95/`
+
+`SRPG95.exe` (editor), `Help/SRPG95.chm` (English help), `RTP/` (default database plus `BMP/BGM/EFS/MAP` assets, 693 BMPs), `Projects/Kikumaru's Adventure/` (English sample project), installer and uninstaller files, `UNLHA32.DLL` (LZH archive library), `Extras/msgothi0.ttc` (MS Gothic font).
+
+**Asset lookup order is still to be determined.** A game can reference assets that exist only in the RTP; for example, GEOLOGY.battle_background goes up to 66, but the game folder has only 15 BACK files. The new client will probably need the RTP folder as a fallback.
+
+---
+
+## 2. UNIT.DAT — 250 records × 480 B
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x000 | 32 | str | name | confirmed | RTP "Richard". Observed max 20 bytes |
+| 0x020 | 4 | i32 | face (FACE_%03d, value = portrait number as shown in the editor) | confirmed | T1: portrait #10 stored as 10 |
+| 0x024 | 4 | i32 | class_id | confirmed | Richard → class 0 "Lord M". Game units named 兵士 → class 24 兵士 |
+| 0x028 | 4 | i32 | level | confirmed | Richard 1. Game max 20 |
+| 0x02C | 4 | i32 | exp | confirmed | Richard 0 (range 0–55) |
+| 0x030 | 24 | i32[6] | base_stats: HP, MP, Str, Mag, Skl, Sta | confirmed | 20,5,5,1,4,4 = screenshot |
+| 0x048 | 24 | i32[6] | growth_pct (same order) | confirmed | 180,130,155,120,160,150 = screenshot. T1 "MP growth 111" was stored in slot 3 (0x054, Mag), so the row edited was probably the 4th one. The RTP check already fixes the order |
+| 0x060 | 4 | i32 | weapon (ITEM id, -1 none) | confirmed | 5 = "Long Sword" |
+| 0x064 | 4 | i32 | armor | confirmed | 40 = "Iron Mail" |
+| 0x068 | 4 | i32 | accessory | confirmed | 49 = "Power Wrist" |
+| 0x06C | 372 | str | death_message | confirmed | "If...I had...more time. \r\n". T1: the editor accepted 198 bytes of text (NUL at 0x132). It hard-wraps by inserting `\r\n` after every 39 bytes, and those CRLFs are stored and count toward the limit. Bytes 0x133–0x1DF are never used by the editor |
+
+Editor defaults for an empty slot: face 1, class 0, level 1, stats 20,20,5,5,5,5, growth 80,80,30,30,30,30, equipment -1.
+
+Note: the game's WORD.DAT renames the four base stats: Strength = 攻撃補正値, Magic = 特殊補正値, Skill = 命中回避値, Stamina = 耐久力 (T7). 攻撃力/攻撃精度/物理防御/特殊防御 are the *derived* combat values Attack, Attack Speed, Defense and Magic Defense, not unit fields. MP is labelled ＴＰ.
+
+## 3. CLASS.DAT — 150 records × 640 B
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x000 | 32 | str | name | confirmed | "Lord M" |
+| 0x020 | 4 | i32 | movement | confirmed | 6 |
+| 0x024 | 4 | i32 | move_type: 0 Walk, 1 Fly, 2 Special. Selects the GEOLOGY move_cost column | confirmed | dropdown order Walk/Fly/Special. T2: Special stored as 2 |
+| 0x028 | 280 | i32[70] | terrain_move_override, indexed by GEOLOGY id, -1 = use terrain default | confirmed | T2: terrain #4 (雪原, id 3) cost 4 → slot 3 = 4. The editor's Move Rule list marks overrides with `*` |
+| 0x140 | 4 | i32 | unit_graphic (UNIT_%03d, CAxx_%03d) | confirmed | Lord M 1. CA03_004 cross-ref |
+| 0x144 | 4 | i32 | anim_weapon_a (ANIME id, 0-based; editor shows +1) | confirmed | T2: editor 005…010 stored as 4…9 in exactly this field order |
+| 0x148 | 4 | i32 | anim_weapon_b | confirmed | ″ |
+| 0x14C | 4 | i32 | anim_weapon_c | confirmed | ″ |
+| 0x150 | 4 | i32 | anim_no_weapon | confirmed | ″ |
+| 0x154 | 4 | i32 | anim_magic_enemy | confirmed | ″ |
+| 0x158 | 4 | i32 | anim_magic_ally | confirmed | ″ |
+| 0x15C | 72 | — | (always zero) | — | |
+| 0x1A0 | 4 | i32 | (always zero) | — | possibly an init-stat slot for HP |
+| 0x1A4 | 16 | i32[4] | init_stats: Str, Mag, Skl, Sta | confirmed | 10,6,7,9 = screenshot |
+| 0x1B4 | 80 | i32[20] | skill_levels (level learned, 0 = end) | confirmed | T2: adding a level-13 skill wrote 13 into slot 1 |
+| 0x204 | 80 | i32[20] | skill_ids (MAGIC id) | inferred (strong) | paired with skill_levels. The T2 skill's id was 0, which was already there, so the id slot showed no change |
+| 0x254 | 6 | u8[6] | weakness_attr A–F | confirmed | T2: "Attribute B only" → bytes [0,1,0,0,0,0]. RTP undead weak to E (= Light), sea monsters to A (= Fire) |
+| 0x25A | 2 | — | (always zero) | — | |
+| 0x25C | 4 | u8[4] | resist: poison, sleep, atk down, def down | confirmed (sleep position), inferred (rest) | T2: "Sleep only" → [0,1,0,0]. Remaining order from the help text |
+| 0x260 | 32 | — | (always zero) | — | |
+
+## 4. ITEM.DAT — 100 records × 640 B
+
+All type-specific blocks coexist in every record. The editor keeps stale values from other types, so read only the block matching `type`.
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x000 | 32 | str | name | confirmed | "Knife" |
+| 0x020 | 4 | i32 | type: 0 Event, 1 Weapon, 2 Armor, 3 Accessory, 4 Medicine, 5 Stat-up, 6 Class change, 7 Magic item | 1 confirmed, rest inferred (strong) | Knife = 1. RTP names per value (Potions = 4, "HP Up" = 5, "Master Stone" = 6). Game 小型爆弾 = 7 |
+| 0x024 | 4 | i32 | price | confirmed | Knife 30 |
+| 0x028 | 80 | str | desc | confirmed | |
+| 0x078 | 200 | u8[200] | class_usable (index = CLASS id). Slots 150–199 are always 1 | confirmed | T3: unticking class 002 cleared byte 0x079 |
+| 0x140 | 4 | i32 | wpn_range: index into the dropdown `1-1, 1-2, 1-3, 2-2, 2-3, 2-4, 2-5, 3-10` (min-max distance). The parser also emits `wpn_range_min_max` | confirmed | T3 screenshot. Game item 001 = 1 = "1-2", matching its description 射程1～2 |
+| 0x144 | 4 | i32 | wpn_power | confirmed | 1 |
+| 0x148 | 4 | i32 | wpn_usability | confirmed | 10 |
+| 0x14C | 4 | i32 | wpn_critical (signed) | confirmed | 2 |
+| 0x150 | 4 | i32 | wpn_animation 0=A 1=B 2=C | 0 confirmed | |
+| 0x154 | 6 | u8[6] | wpn_attack_attr A–F | inferred | "Flame Sword" A, "Thors Hammer" D |
+| 0x15C | 4 | i32 | arm_defense | inferred | "Iron Mail" 8, weight 4 |
+| 0x160 | 4 | i32 | arm_magic_defense | inferred | "Evil Clothes" 5 |
+| 0x164 | 4 | i32 | arm_crit_avoid | inferred | "Angel Clothes" 60 |
+| 0x168 | 4 | i32 | arm_weight | inferred | |
+| 0x16C | 6 | u8[6] | arm_defense_attr A–F | inferred | "Ifrits Armor" A, "Leviathan" B. Game 物理ガード A, 闘気ガード B, 熱ガード C |
+| 0x174–0x184 | 5×4 | i32 | acc_str, acc_mag, acc_skl, acc_sta, acc_move | inferred (strong) | "Power Wrist" Str 2, "Boots" move 2, "Ring of Speed" move 6 |
+| 0x188 | 4 | i32 | acc_growth_bonus (Exp Growth %) | confirmed | T3: 37 |
+| 0x18C | 4 | i32 | med_hp | inferred (strong) | Small/Medium/Large HP Potion 10/25/60 |
+| 0x190 | 4 | i32 | med_mp | inferred (strong) | Mana potions 10/25/60 |
+| 0x194 | 4 | i32 | med_def_up | confirmed | T3: 11 |
+| 0x198 | 4 | i32 | med_mdef_up | confirmed | T3: 12 |
+| 0x19C | 24 | i32[6] | statup: HP, MP, Str, Mag, Skl, Sta | inferred (strong) | "HP Up" [4,0,…], "Stamina Up" […,2] |
+| 0x1B4 | 160 | i32[40] | class_change: 20 (from, to) CLASS id pairs, -1 empty | inferred | "Royal Crest" (1→10, 4→13…) |
+| 0x254 | 4 | u8[4] | med_cure: the editor's "Heal" group of 4 checkboxes (Poison, Sleep, Attack Down, Defense Down) | confirmed | T3: Sleep + Defense Down → [0,1,0,1] |
+| 0x258 | 4 | — | (always zero) | unknown | not the Heal checkbox (that is 0x254) |
+| 0x25C | 4 | u8[4] | acc_safe: poison, sleep, atk down, def down | inferred | Bandanna = sleep. "Ring of Protection" = atk/def down |
+| 0x264 | 4 | i32 | class_change_level (default 10) | inferred | class-change items 7/8/12/20, everything else 10 |
+| 0x268 | 4 | i32 | med_range (0 = self) | confirmed | T3: Range 2 stored as 2 |
+| 0x26C | 4 | i32 | magic_spell (MAGIC id) | confirmed | game 小型爆弾 → MAGIC 85 "小型爆弾" |
+| 0x270 | 16 | — | (always zero) | — | |
+
+## 5. MAGIC.DAT — 100 records × 480 B
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x000 | 32 | str | name | confirmed | "Fire Level 1" |
+| 0x020 | 4 | i32 | type: 0 Damage, 1 Degrade status, 2 Raise status | 0 confirmed, 1/2 inferred (strong) | Poison/Sleep = 1, Heal/Attack Up = 2 |
+| 0x024 | 4 | i32 | mp_cost | confirmed | 2 |
+| 0x028 | 80 | str | desc | confirmed | |
+| 0x078 | 4 | i32 | damage | confirmed | 5 |
+| 0x07C | 4 | i32 | accuracy | confirmed | 80 |
+| 0x080 | 8 | — | (always zero) | — | |
+| 0x088 | 6 | u8[6] | attack_attr A–F | confirmed (A), inferred (rest) | Fire = A. RTP Water = B, Earth = C, Lightning = D, Light = E, Darkness = F |
+| 0x08E | 2 | — | (always zero) | — | |
+| 0x090 | 4 | i32 | animation: **ANIME index = 80 + value** | confirmed | Fire Level 1 → 0 → ANIME[80] "Fire Level 1". Game ヒール → 24 → ANIME[104] "ヒール" |
+| 0x094 | 4 | i32 | exp_value (shown only for Degrade/Raise types; Damage spells keep a hidden value) | confirmed | T4: ヒール Exp Value 77 |
+| 0x098 | 4 | i32 | degrade_effect: 0 poison, 1 sleep, 2 atk down, 3 def down | inferred (strong) | RTP Poison/Sleep/Attack Down/Defense Down = 0/1/2/3 |
+| 0x09C | 4 | i32 | target: 0 "Allies/Enemies" (both sides), 1 "Enemies Only" | confirmed | T4: dropdown order Allies/Enemies, Enemies Only. Setting the last option stored 1. RTP Fire Level 1 = 1 = "Enemies Only", as in the help screenshot. (My earlier "contradiction" came from a screenshot taken after the edit, before saving.) Heal spells also store 1, so for Raise spells 1 presumably means "own side only"; the label may change with type, not checked |
+| 0x0A0 | 4 | i32 | value / power (degrade, raise) | inferred (strong) | Heal 1–4 = 10/20/40/60 |
+| 0x0A4 | 4 | i32 | relation (10 = 1:1 with caster Magic) | inferred | |
+| 0x0A8 | 4 | i32 | raise_effect: 0 HP, 1 atk up, 2 def up, 3 cure poison, 4 cleanse, 5 add turn | inferred (strong) | RTP names in that order |
+| 0x0AC | 60 | — | (always zero) | — | |
+| 0x0E8 | 4 | i32 | range_whole_map ("Apply To Entire Map") | inferred | only 3 game spells, including マクロヒール. **T4** |
+| 0x0EC | 4 | i32 | effect_whole_map | inferred | ″ |
+| 0x0F0 | 84 | grid21 | range_grid (where the spell can be aimed) | confirmed (encoding) | see below |
+| 0x144 | 84 | grid21 | effect_grid (splash around the aim point) | inferred (tab order) | |
+| 0x198 | 72 | — | (always zero) | — | |
+
+**grid21 encoding (confirmed):** 21 int32 rows, top row first, row 10 = centre. Within a row, bit 21 is the centre column, and a cell `dx` squares to the **right** of centre is bit `21 - dx`. So the leftmost column (dx = -10) is bit 31 and the rightmost (dx = +10) is bit 11. Bits 0–10 are never set (checked on all 100 spells). Max radius 10 ("maximum range is 10").
+
+Evidence:
+- **T4:** a cell 3 right of centre → row 10, bit 18. A cell 1 up → row 9, bit 21.
+- RTP Fire Level 1 decodes to the radius-2 diamond in the help screenshot.
+- Game spell 0 (ハウリングプラズマ) decodes to a radius-4 diamond with a hollow centre, and the editor shows those centre cells unset. Unset cells are real data and are not hit.
+
+The parser renders each row left to right as the editor shows it. (Before T4 it rendered mirrored; every earlier pattern was symmetric, so no earlier conclusion changes.)
+
+## 6. GEOLOGY.DAT (terrain types) — 70 records × 60 B
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x00 | 32 | str | name | confirmed | "Meadow" |
+| 0x20 | 4 | i32 | defense_bonus | inferred (strong) | RTP Forest 20, Bridge -10 |
+| 0x24 | 4 | i32 | hp_recovery per turn | inferred (strong) | game ダメージ床 ("damage floor") = -5, 城 = 4 |
+| 0x28 | 12 | i32[3] | move_cost: Walking, Flying, Special (index = CLASS.move_type; 0 = impassable) | confirmed | T5 screenshot labels the three boxes Walking/Flying/Special. The help's "Special = can both fly and walk" is wrong: Special is a third, independent cost column (e.g. Sea [0,1,0] is impassable for Special) |
+| 0x34 | 4 | i32 | battle_background (number shown in the editor; BACK_%03d presumably) | confirmed (field) / inferred (file mapping) | T5: set to 12, stored 12. Whether 12 → BACK_012.BMP is not yet checked |
+| 0x38 | 4 | — | (always zero) | — | |
+
+## 7. ANIME.DAT — 160 records × 2400 B
+
+Records 0–79 are weapon/cast animations, used by CLASS anim_* and ITEM wpn_animation. Records 80–159 are spell animations (MAGIC.animation + 80).
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x000 | 32 | str | name | confirmed | "Sword Slash A" |
+| 0x020 | 4 | ? | unknown_020: either 0 or 0x0000FFFF (int16 -1 + 0?) | unknown | 5 game records, 9 RTP |
+| 0x024 | 4 | i32 | preview_graphic: the `yyy` of CAxx_yyy used by the editor's "Filename" | inferred | game ANIME 2 "ナス攻撃" = 52, and file CA03_052 exists |
+| 0x028 | 2160 | frame[90] | frames (max 90 per help) | inferred (strong) | see below |
+| 0x898 | 4 | i32 | frame_count ("Max Frame Number") | inferred (strong) | 20–45 |
+| 0x89C | 4 | i32 | hit_frame | inferred | < frame_count |
+| 0x8A0 | 4 | i32 | flash_time (1/10 s) | inferred | mostly 10 |
+| 0x8A4 | 28 | — | (always zero) | — | |
+| 0x8C0 | 48 | str | hit_sound (EFS wav filename) | confirmed | "THUNDER2.WAV" |
+| 0x8F0 | 48 | str | miss_sound | inferred (order) | "WHACK.WAV" |
+| 0x920 | 4 | i32 | hit_sound_frame, **0-based** (editor shows +1) | confirmed | T6: editor 5 → stored 4 |
+| 0x924 | 4 | i32 | miss_sound_frame, **0-based** | confirmed | T6: editor 6 → stored 5 |
+| 0x928 | 56 | — | (always zero) | — | |
+
+**Frame** (24 B) = 4 cell layers × (int16 x, int16 y, int16 cell). cell = -1 means the layer is empty. Frame 0 starts at 0x028, layer 0 first, and x is the first int16 in pixels (confirmed by T6: moving the cell 16 px right changed frame 0 / layer 0 x from 480 to 496). Still inferred:
+- y is the second int16.
+- x/y anchor at the cell's top-left (vs centre).
+- cell indexes the 192×192 tiles of the CA/MAGA bitmap.
+- Layers with cell -1 can still hold stale x/y.
+- Frames ≥ frame_count are ignored.
+
+Whether hit_frame is 0-based like the sound frames is also unconfirmed. It probably is.
+
+## 8. Name tables — WORD / MAPNAME / VARNAME / SWNAME
+
+Each is an array of 32-byte strings (confirmed).
+
+| File | Entries | Content |
+|---|---|---|
+| WORD.DAT | 100 | UI vocabulary, parsed by `parse_word` into `{index, label, text}`. See the label table below. The game's currency name is "肉" (meat): entry 31 ",肉" |
+| MAPNAME.DAT | 100 | Editor map names. Index n ↔ `SMAP_{n+1:03d}` (confirmed: equals each SMAP's own name field) |
+| VARNAME.DAT | 500 | Editor names of the 500 variables |
+| SWNAME.DAT | 500 | Editor names of the 500 switches |
+
+**WORD.DAT labels.** All confirmed from the Vocabulary Editor's four "Term" tabs (T7, T7b) by matching each text box to its entry. Every one of the 76 labels matches the stored text. The full index → label map is `WORD_LABELS` in the parser. Term 1:
+
+| Index | Editor label | This game's text |
+|---|---|---|
+| 1 | Level | ＬＶ |
+| 2 | HP | ＨＰ |
+| 3 | MP | ＴＰ |
+| 4 | Attack | 攻撃力 |
+| 5 | Attack Speed | 攻撃精度 |
+| 6 | Defense | 物理防御 |
+| 7 | Magic Defense | 特殊防御 |
+| 8 | Strength | 攻撃補正値 |
+| 9 | Magic | 特殊補正値 |
+| 10 | Skill | 命中回避値 |
+| 11 | Stamina | 耐久力 |
+| 12 | Weapon | 武器 |
+| 13 | Armor | 防具 |
+| 14 | Accessory | 装飾品 |
+| 15 | End (unit action) | 行動終了 |
+| 16 | Attack (command) | 攻撃 |
+| 17 | Magic (command) | 必殺技 |
+| 18 | Item (command) | アイテム |
+| 19 | End Turn | ターン終了 |
+| 20 | View Map | 全体マップ |
+| 21 | Save | セーブする |
+| 22 | Load | ロードする |
+| 23 | Exit | ゲーム終了 |
+| 45 | Yes | はい |
+| 46 | No | いいえ |
+| 75 | Terrain Effect | 地形効果 |
+| 89 | Equipment | 装備 |
+
+The tab layout is not in index order (Yes/No/Terrain Effect/Equipment sit far from 1–23).
+
+The other three tabs:
+
+| Tab | Indices | Contents |
+|---|---|---|
+| Term 2 | 24–40 | camp menu: Continue, Organize Units, Buy/Sell Items, Cost, Sell Amount, Owned, Currency, Unequip, Change Weapon/Armor/Accessory, Use Item, View Magic, Unit Slots, Slot, Stay |
+| Term 2 | 47 | New Game |
+| Term 2 | 81–88 | File 1–8 (save slots) |
+| Term 3 | 52–58, 60–62 | Finish Turn, Select Save File, Select File To Load, Finish Camp Line 1/2, Quit Game, Was Used, Exp. Earned, Gold Earned, Was Found |
+| Term 4 | 63–74, 76 | Page, However, Point, Recovered, Strength Increased, Increase, Decrease, Reached Level, Became, Promoted To, Learned, Removed Poison, Woke Up |
+
+Several of these are sentence fragments the engine glues to names and numbers (e.g. unit + 70 "はレベル" + n + 71 "になった"). The exact assembly order needs to be checked in the running game.
+
+**Entries with text but no editor box:** 41–44 (ファイル１–４), 48–51 (ファイル１–４をロード), 59 (を装備します). They look like leftovers from an older 4-slot save screen. This editor exposes 8 slots at 81–88. Whether the runtime still reads them is unknown. Index 0 and 77–80, 90–99 are empty.
+
+## 9. MAPC_nnn.DAT — 384 B
+
+One u8 per chip of `MAPC_nnn.BMP` (12 chips wide × 32 rows, row-major), value = GEOLOGY id. Inferred (strong): sizes match exactly and the max value is 69 (70 terrains).
+
+## 10. SMAP_nnn.DAT — maps (variable size, always a multiple of 100 B)
+
+### Header 0x000–0x4AF
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x000 | 32 | str | name | confirmed | = MAPNAME[n-1] |
+| 0x020 | 4 | i32 | width (19–40) | inferred (strong) | all tiles outside w×h are 0 in all 79 maps |
+| 0x024 | 4 | i32 | height (14–40) | inferred (strong) | ″ |
+| 0x028 | 4 | i32 | tileset (MAPC_%03d) | inferred (strong) | values 1, 2, 3, 9, 13, 25 all exist as MAPC files |
+| 0x02C | 4 | i32 | win_condition: 0 Defeat All Enemies, 1 Defeat Enemy Leader, 2 Event | 0/1 confirmed, 2 inferred | T8: "Defeat All Enemies" = 0, "Defeat Enemy Leader" = 1. 2 is the only remaining dropdown option and appears in 6 maps |
+| 0x030 | 8×48 | str | BGM: camp, player turn, enemy turn, player battle, enemy battle, boss battle, victory, game over | confirmed | SMAP_001: コミカル, コミカル, 敵行動, 戦闘, 戦闘, ﾎﾞｽ戦闘, ミッションクリアー, ミッション失敗 |
+| 0x1B0 | 4 | i32 | camp_before_battle (0 No, 1 Yes) | confirmed | T8: No → Yes changed 0 → 1. The editor says camp is impossible on the 1st map |
+| 0x1B4 | 400 | i32[100] | shop_items (ITEM ids, 0-based). Only the first shop_item_count entries are valid | confirmed | T8: "item 001 then item 005" → [0, 4] |
+| 0x344 | 4 | i32 | shop_item_count | confirmed | T8: 0 → 2. Across the 79 maps, SMAP_006 and SMAP_019 have stale ids past the count, so always use the count |
+| 0x348 | 4 | i32 | start_pos_count | inferred | SMAP_003: 4 positions at x 27–28 on a 30-wide map |
+| 0x34C | 80 | i32[20] | start_pos_x | inferred | |
+| 0x39C | 80 | i32[20] | start_pos_y | inferred | |
+| 0x3EC | 80 | i32[20] | character_list (UNIT ids: forced participants / game over if killed) | inferred (strong) | ids 239–246 = main cast サラ, ルーティ, ハンス, ゴーバック… |
+| 0x43C | 4 | i32 | character_list_count | inferred | |
+| 0x440 | 4 | i32 | camp_background (CAMP_%03d) | confirmed | T8: 7 → 3 |
+| 0x444 | 4 | i32 | unknown_444 (always 1) | unknown | stayed 1 after the T8 redo |
+| 0x448 | 4 | i32 | unknown_448 (rare: 74, 254, 318) | unknown | |
+| 0x44C | 4 | i32 | unknown_44c (rare: 46, 94, 96, 250) | unknown | |
+| 0x450 | 4 | i32 | disable_party_changes (1 = ticked) | confirmed | T10: screenshot shows it ticked on map 1 (stored 1). Unticking + Save current map stored 0. (The T8-redo untick didn't take; the box is greyed out while Camp Before Battle = No) |
+| 0x454 | 92 | — | (always zero) | — | |
+
+Lists keep stale entries past their count (e.g. 4 x-coords with count 1), so always honour the count field.
+
+### Tile grid 0x4B0–0x112F (confirmed layout)
+
+40×40 uint16, row-major, stride 40, independent of width. Value = chip index into MAPC_tileset.BMP (0–383, chip k at column k%12, row k//12 — chip→pixel mapping inferred). Single layer; no separate upper layer has turned up.
+
+### Event area 0x1130–EOF
+
+Decoded in phase 2. See **§11**. Layout summary (confirmed on all 79 maps):
+
+| Off | Size | Content |
+|---|---|---|
+| 0x01130 | 100 × 164 | map objects (unit placements and "Other" events). Slot 0 is never used |
+| 0x05140 | 5000 × i32 | block chain table (FAT): next block index, -2 = end of chain, -1 = free |
+| 0x09F60 | 5000 × 16 | file directory: `char name[8]`, `i32 first_block`, `i32 size_bytes`. All-zero = empty |
+| 0x1D7E0 | n × 100 | data blocks |
+
+File size is always `0x1D7E0 + 100 × (number of non-free FAT entries)`. The parser still writes the raw area to `json/map/smap_nnn.events.bin` as a backup.
+
+## 11. Map objects and event scripts (phase 2)
+
+Phase 2 progress:
+1. Storage (objects, internal file system, command framing): done.
+2. Command payloads: done for every command the game uses.
+3. Script trees + cross-references: done (§11.4).
+4. Checks in the running game: open (see Active tests).
+5. Save files: not started, optional.
+
+Sources: 79 game maps + 7 Kikumaru maps (+ RTP maps, which have no events), and the help pages "Creating A Event" (incl. the Object Editor and Event Start Conditions screenshots) and "Event Editor Commands".
+
+### 11.1 Map object — 164 B, 100 slots at 0x1130
+
+Every non-zero byte is covered (1,608 objects checked).
+
+| Off | Size | Type | Field | Conf. | Evidence |
+|---|---|---|---|---|---|
+| 0x00 | 4 | i32 | in_use: 1, or 0 = deleted (data left stale; 308 of 1,552 game objects) | inferred (strong) | |
+| 0x04 | 4 | i32 | x (tiles) | inferred (strong) | within map width |
+| 0x08 | 4 | i32 | y | inferred (strong) | within map height |
+| 0x0C | 4 | i32 | type: 0 Enemy, 1 Ally, 2 Neutral, 3 Other | inferred (strong) | Object Editor dropdown order. Ally objects hold the main cast (unit ids 236–249) |
+| 0x10 | 2 | i16 | switch_condition (switch id, -1 none; high half always 0) | inferred | values 19–103 ≤ 500 switches |
+| 0x14 | 4 | i32 | unit (UNIT id) | inferred (strong) | SMAP_001: 242 ルーティ, 243 ジュナ, 3/4 ナス (whose dialogue they own) |
+| 0x18 | 4 | i32 | graphic (tileset chip for "Other", -1 none) | inferred | only type 3 uses values ≠ -1 (0, 143, 190) |
+| 0x1C | 4 × 10 | i16 × 5 | move_patterns[4]: switch, action (0 Rush, 1 Wait, 2 Specific, 3 None), x, y, switch_to_apply | inferred | pattern 1's switch is always -1 (greyed out in the editor). The one action-2 object has a location set |
+| 0x44 | 4 | i32 | leader | inferred | 44 enemies, never Other |
+| 0x48 | 4 | i32 | guest | inferred | 59 allies |
+| 0x4C | 4 | i32 | reward_item (ITEM id, -1) | inferred (strong) | 40 ポーション, 70 エーテル薬 … |
+| 0x50 | 4 | i32 | reward_gold | inferred (strong) | 20, 40, 1000 … |
+| 0x54 | 5 × 8 | i16 × 4 | event_slots[5]: condition, switch (0-based id), turn, target_unit (UNIT id, -1 = Nothing) | confirmed | T11: object 2's slots read back exactly as set (see the condition codes below) |
+
+**Event-slot condition codes.** The codes are *not* in dialog order, and 3 is never used.
+
+| Code | Condition | Conf. | Evidence |
+|---|---|---|---|
+| 0 | Do Not Perform | confirmed | 7,624 empty slots |
+| 1 | Switch (uses `switch`) | confirmed | T11: switch 007 → cond 1, switch 6 |
+| 2 | Turn (uses `turn`) | confirmed | T11: Enemy turn 3 → cond 2, turn 6 |
+| 4 | First Contact (Any Time) | confirmed | T11, target ルーティ (unit 99) |
+| 5 | When Unit Dies | confirmed | T11. Also ルーティ's slot-5 script is her "lost already?" line |
+| 6, 7, 8 | Unit Passes By / Unit Stops On It / Victory Conditions Met | inferred (order) | used only by "Other" objects |
+| 9, 10, 11 | First Contact (After Movement) / First Attack (Before) / First Attack (After) | inferred | used only by unit objects. 10 is likely "Before Attack" (the T11 screenshot showed it selected with target ナス, matching ルーティ/ジュナ's cond-10 slots that target ナス) |
+
+**Turn encoding:** `turn` counts phases. Ally turn t = 2t−1, Enemy turn t = 2t. Confirmed for enemy 3 → 6 (T11) and the default Ally 1 → 1. Both odd and even values occur in the game.
+| 0xA0 | 4 | i32 | unattackable | inferred | set only on 2 neutral objects |
+
+### 11.2 Event files
+
+Names (confirmed on all 469 files):
+- `OPENING` is the map's opening event.
+- `EVoooo ss` is object `oooo` (0-based slot index), event slot `ss` (1–5). Every one of the 392 EV files maps to an existing object.
+
+Files are read by following the FAT chain from `first_block` and truncating to `size`.
+
+**Damaged files in the shipped game.** The editor sizes the map file by the *count* of used blocks without compacting them. When the FAT has free holes, the highest-numbered blocks are cut off. In **SMAP_056** this ruined three scripts:
+- `EV001701` is missing 7 of its 12 blocks.
+- `EV003601` and `EV003602` point at blocks that now hold the middle of other scripts.
+
+The parser reports them with `error` / `missing_blocks`. Kikumaru's SMAP_006 `OPENING` has the same defect.
+
+**T13 (provisional):** for now, assume the intended dialogue plays. This is a placeholder, **not verified** against the original runtime, and has to be checked later by playing episode 32. If the dialogue does play, the original must recover the text some other way than the FAT chain, and that needs investigating. `EV001701`'s first 5 blocks (≈500 bytes) are intact and decodable up to the cut. `EV003601`/`EV003602` currently decode to the middle of other scripts.
+
+**File layout:**
+
+| Off | Size | Field |
+|---|---|---|
+| 0 | 100 | comment (str). Editor-only label, e.g. `OPENING` = "オープニングイベント" |
+| 100 | 4 | stream length n |
+| 104 | n | command stream |
+
+The stream is a sequence of commands followed by one `0x00` byte. The last command is always `00` (end_of_script, len 0). **Command framing** (confirmed; 465 of 469 files re-encode byte-identically, and the 4 that don't are the damaged files above):
+
+| Off | Size | Field |
+|---|---|---|
+| 0 | u8 | opcode |
+| 1 | u16 | payload length |
+| 3 | u8 | nesting depth (0–6) |
+| 4 | len | payload |
+
+**Block structure** (confirmed on every script; there is no "else"):
+- `2A` conditional_branch at depth d → body at d+1 → `C7` end_block (d+1) → `CA` end_branch (d)
+- `2D` character_choice at d → repeated [`CC` choice_case (d, payload u8 case index) → body (d+1) → `C7` (d+1)] → `CD` end_choice (d)
+
+Only `2A` and `CC` open a deeper level (964 + 306 = 1,270 = number of `C7`).
+
+### 11.3 Opcodes
+
+**All opcode names are now confirmed by T12**: one of each command, in a known order, matching the editor's own command list. Payload fields are confirmed where T12 set a distinctive value, and the rest are marked. All IDs are 0-based record indices (the editor shows +1). Counts are across this game's 443 intact scripts.
+
+| Op | n | Name | Payload | Field status |
+|---|---|---|---|---|
+| 00 | 443 | end_of_script | — | confirmed |
+| 01 | 12,474 | message | u16 window, str text | confirmed: window 0 = top "(AB)", 1 = centre "(CE)", 2 = bottom "(UN)" (T12 choice messages) |
+| C9 | 18,783 | message_line | u16 window, str | confirmed: further lines of the preceding message |
+| 02 | 11,231 | face_graphic | u8 position, u8 flip, u16 face | confirmed: position 0 left / 1 right, flip 1 = mirrored (T14: Right → 1/0, Left+Flip → 0/1, Right+Flip → 1/1) |
+| 03 | 507 | switch_operation | u16 on, u16 switch | confirmed: 007 ON → (1, 6), 008 OFF → (0, 7) |
+| 04 | 51 | item_management | u16 add, u16 item, u16 count | confirmed: add item 005 ×3 → (1, 4, 3). 0 = remove inferred |
+| 05 | 9 | gold_management | u16 add, i32 amount | confirmed: −1234 → (0, 1234). 1 = add inferred |
+| 0B | 233 | screen_display | u8 color, u8 effect | confirmed: color 0 from black, 1 from white. effect = dropdown index (1st = 0, 2nd "Random Blocks" = 1) |
+| 0C | 229 | erase_screen | u8 color, u8 effect | same as 0B |
+| 0D | 230 | picture_display | u8 method, u8 position, u8 remove_transparent, u8 ×3, str file | confirmed. method = dropdown index (0 Instantaneous). **position uses numeric-keypad layout** (7 8 9 / 4 5 6 / 1 2 3): Upper Left 7, Center 5, Lower Right 3 tested. So the game's common 8 = "Above" and 2 = "Below". remove_transparent 1 = ticked. The last 3 bytes are always 0 |
+| 0E | 77 | erase_picture | u16 method | 0 = Instant confirmed |
+| 10 | 181 | scroll_screen | u16 x, u16 y | confirmed (5, 9) |
+| 12 | 391 | flash_tint_screen | u16 mode, i16 red, green, blue, vividness | confirmed: mode = Type dropdown (Flash 1/2/3 = 0–2, Fast/Medium/Slow Change = 3–5). Red/Green/Blue are 0–200 %. Vividness is 0–100 % (0 = monochrome) per the dialog |
+| 13 | 342 | shake_screen | u16 strength | confirmed: 0 Weak, 1 Medium, 2 Strong |
+| 16 | 35 | change_ally_unit | u16 add, u16 unit | confirmed: Added unit 005 → (1, 4). 0 = remove inferred |
+| 17 | 87 | unit_class_change | u16 unit, u16 class | confirmed (4, 6) |
+| 18 | 20 | unit_equipment_change | u16 unit, u16 item | confirmed (4, 1). Slot is implied by the item's type (inferred) |
+| 1F | 22 | move_unit | u16 unit, u16 n, u8 step[n] | confirmed: steps 0–3 = move up/right/down/left, 4–7 = face up/right/down/left (T12 sequence and T14 "Up Up Left Right Down" → 0 0 3 1 2) |
+| 20 | 18 | execute_movement | — | confirmed |
+| 24 | 721 | bgm | str file | confirmed. `(OFF)` = stop |
+| 25 | 1,780 | sound_effect | str file | confirmed |
+| 29 | 562 | variable_operation | u16 variable, u16 source, i16 constant, u16 source_variable, u16 random_max, u16 operation | confirmed: operation 0 Set, 1 Added, 2 Subtracted, 3 Multiplied, 4 Divided (T14). source = radio button (0 Numerical Value, 1 Variable, 2 Random Number Value; 0 and 1 tested, 2 from dialog order). **The editor keeps all three source fields**, so only the selected one applies (e.g. game "var 008 = 28" also carries a stale variable 9 and random 9) |
+| 2A | 964 | conditional_branch | u16 cond_type, u16 switch, u16 turn, u16 item, u16 unit, u16 variable, u8 switch_state, u8 turn_mode, u8 item_state, u8 unit_state, i16 compare_value, u16 comparison, i32 0 | confirmed (T14 + T15). cond_type 0 Switch, 1 Turn, 2 Item, 3 Unit, 4 Variable. Like 0x29, every kind's fields are kept and only cond_type's apply. Option codes:
+- switch_state: 0 ON, 1 OFF.
+- turn: phase-encoded like event slots (ally t = 2t−1, so Ally 1/2/3 → 1/3/5). turn_mode: 0 After, 1 Before, 2 Exact.
+- item_state: 0 Party Possesses, 1 Party Does Not Possess.
+- unit_state: 0 Alive, 1 Dead, 2 Not Present, 3 Controlled by Player, 4 Controlled by Computer.
+- comparison: 0 "= OR >" (≥), 1 "= OR <" (≤), 2 "=".
+
+The parser adds `cond` and `test_*` fields naming only the active condition |
+| 2D | 93 | character_choice | u16 n, n × str | confirmed |
+| 33 | 7 | button_input | — | confirmed (no variable in this version) |
+| 34 | 1,022 | wait | u16 tenths of a second | confirmed: 25 → "Wait For 2.5 S" |
+| 36 | 42 | select_map ("Next Map") | u16 map | confirmed: 7話 → 6 (0-based) |
+| 38 | 210 | end_event | — | confirmed |
+| 3A | 90 | map_complete | u16 win | confirmed: 1 = Win; 0 = Lose inferred |
+| 3B | 10 | game_over | — | confirmed |
+| 3D | 3 | return_to_title | — | confirmed |
+| C7 / CA / CC / CD | | end_block / end_branch / choice_case (u8 index) / end_choice | | confirmed (structure, see 11.2) |
+
+Play Movie was not tested and doesn't occur in this game.
+
+The parser keeps every payload as hex (`raw`) and adds named fields per the table above. Payloads it can't name fall back to a neutral `u16` list.
+
+### 11.4 Script trees and cross-reference check (`srpg95_scripts.py`)
+
+A second module builds on the parser and turns each map's flat command lists into what an engine will run:
+
+```bash
+python re/srpg95_scripts.py えるまに re/json "srpg maker 95/RTP"
+```
+
+For every map this writes `json/scripts/smap_nnn.json` (objects + script trees) and `smap_nnn.txt` (a readable listing, useful for review and translation). All findings go to `json/scripts/report.txt`.
+
+**Tree shape:**
+- A `message` node has `window`, `window_name` and `lines`. The first line usually starts with the speaker, e.g. `ルーティ：`.
+- `conditional_branch` has `cond`, `test_*` and `then`.
+- `character_choice` has `options` and one body per option in `cases`.
+- Block markers and end_of_script are absorbed into the structure.
+- Every ID gets a `*_name` (unit, item, class, switch, variable, map), faces get `face_file`, picture positions get `position_name`, and variable ops get `source_name` / `operation_name`.
+- Objects list only their used event slots, with the condition named and `script` pointing at the tree.
+
+**Result on this game:** all 443 intact scripts build with **zero structure problems**. Every ID is in range and every BGM/picture/face file exists in the game or RTP folders, with these exceptions, all quirks of the shipped game:
+
+| Where | Finding | Client implication |
+|---|---|---|
+| SMAP_056 EV001701, EV003601, EV003602 | damaged scripts (§11.2) | T13 provisional: assume dialogue plays; revisit |
+| SMAP_067 EV000201 | sound `空湾曲1.wav` exists in neither EFS folder | play nothing (presumed original behaviour) |
+| SMAP_041 OPENING | the "deploy ハンス and ゴーバック" guard: the ハンス branch restarts map 41 correctly, but the ゴーバック branch's Next Map is index 99 = **SMAP_100**, an empty map. An authoring bug | reproduce by default; candidate for an optional fix |
+| SMAP_021 object 18, SMAP_037 object 1 | slot 1 has a start condition but no script | nothing happens |
+
+Kikumaru: only its known damaged SMAP_006 `OPENING`.
+
+## 12. Small files
+
+| File | Layout | Findings |
+|---|---|---|
+| GAME.DAT (200 B) | i32[50] | [0] = 98 here and 0 in Kikumaru: maybe the **start map** (0-based → SMAP_099 "０話" prologue). Inferred, and slightly at odds with the editor's "Unable to Camp on 1st Map" wording. [1]..[4] unknown (game: 0,1,0,0; Kikumaru: 1,1,1,50). This editor version has no Game Properties dialog: the Game menu holds only Test Play Game (F9), Test Play Current Map (F8) and "Launch In Full Screen". GAME.DAT was not rewritten during any test session. T9b: toggling "Launch In Full Screen" and reopening the project does not change GAME.DAT, so that setting is stored outside the game data (registry or editor config, not investigated). [0] = start map stays inferred; [1]..[4] remain unidentified |
+| TEST.DAT (6000 B) | i32[1500] | Editor test-play config: 1,1,0,5,40,49,0… (RTP-like defaults). Not needed by the runtime (inferred) |
+| EDITOR.DAT (4 B) | i32 | Last map opened in the editor, 0-based. Confirmed: 58 (SMAP_059) became 0 after the T10 session ended on map 1. Irrelevant to the runtime |
+
+---
+
+## Test log (completed, oldest first)
+
+All tests are done in `えるまに - Copy/` and diffed byte-for-byte against the untouched `えるまに/`. Unit/item/etc. numbers in instructions are the editor's 1-based numbers.
+
+### Phase 1, round 1 — instructions (T1–T9)
+
+- **T1 — UNIT.DAT.** Unit 004 (ナス): set Face Graphic to portrait #10. In Death Message, paste `0123456789` repeatedly until the editor stops accepting text. Set MP growth to 111. Tells us: face offset/base, max message length, growth order.
+- **T2 — CLASS.DAT.** Class 003 (ナス):
+  - Move Type = Special.
+  - Animations: Weapon A = 005, Weapon B = 006, Weapon C = 007, No Weapon = 008, Magic To Enemy = 009, Magic To Ally = 010.
+  - Weakness: Attribute B only. Resistance: Sleep only.
+  - Move Rule → Special Terrain Case: give terrain #4 (雪原) cost 4.
+  - Skill Progression: add a skill at level 13.
+  - Please also screenshot the Move Type and Move Rule dialogs.
+- **T3 — ITEM.DAT.** Screenshot the open weapon **Range** dropdown (its order defines the enum). Then:
+  - Item 041 (ポーション): Range 2, Defense Up 11, Magic Defense Up 12. In the Heal group, tick **Sleep and Defense Down only** (leave Poison and Attack Down unticked).
+  - Item 033 (スピードバンド, accessory): Exp Growth 37.
+  - Item 001: untick class usability for class 002 only.
+- **T4 — MAGIC.DAT.** Screenshot the **Target** dropdown. Then:
+  - Spell 001 (ハウリングプラズマ, currently "Enemies Only"): Target = the last option.
+  - Spell 012 (ヒール, Raise Status; Exp Value only appears on Degrade/Raise spells): Exp Value 77.
+  - In the Attack Range tab, clear the grid and paint one cell 3 squares **right** of centre and one 1 square **up**.
+  - In the Effect Range tab, paint only the centre.
+- **T5 — GEOLOGY.DAT.** Screenshot the Terrain Editor, especially the labels of the three Movement boxes. Set terrain 001 (草原) Animation Background to 12.
+- **T6 — ANIME.DAT** (optional). Animation 001: in frame 1, move one cell exactly 16 px right (Grid Use on). Then set Hit Sound Frame 5 and Miss Sound Frame 6.
+- **T7 — WORD.DAT.** Screenshot the vocab editor (toolbar: the speech-bubble icon, second after the ½ zoom button) so the 100 entries can be labelled.
+- **T8 — SMAP_001.DAT.** First screenshot Map Properties for map 1 (１話) as it is. Then:
+  - Win Condition = Defeat Enemy Leader.
+  - Toggle Camp Before Battle and Disable Party Changes.
+  - Camp Background = 3.
+  - Shop list = exactly item 001 then item 005.
+  - Save and send SMAP_001.DAT.
+- **T9 — GAME.DAT.** Open Game Properties (toolbar: the first icon right after the ½ zoom button, or the Game (G) menu) and screenshot it with its current values. No edits needed.
+
+### Phase 1, round 2 — follow-ups (T8 redo, T7b, T9b, T10)
+
+- **T8 redo:** T8 again, this time pressing **Save current map** before switching maps (the first attempt was never written to disk).
+- **T7b:** screenshot the vocab editor's Term 2, Term 3 and Term 4 tabs.
+- **T9b:** untick Game → "Launch In Full Screen" and check whether GAME.DAT changes.
+- **T10:** on map 1 with Camp Before Battle = Yes, screenshot Map Properties, toggle "Disable Party Changes", Save current map.
+
+### Phase 1 — results
+
+Every change landed in exactly the field the parser expected, apart from the corrections already folded into the tables above:
+- the grid column direction
+- 0x9C really is Target
+- T1's growth edit landed in slot 3, the 4th row
+
+| Test | Result |
+|---|---|
+| T1 UNIT | face, death-message limit/wrapping confirmed. Growth edit landed in slot 3 (Mag) |
+| T2 CLASS | move_type 2, terrain override, all 6 animation slots, skill level, weakness B, resist Sleep all confirmed |
+| T3 ITEM | range enum, class_usable, acc_growth_bonus, med_def_up/mdef_up, med_cure order, med_range confirmed |
+| T4 MAGIC | target, exp_value confirmed. Grid columns were mirrored in the parser (fixed) |
+| T5 GEOLOGY | move_cost column labels, battle_background confirmed |
+| T6 ANIME | frame layout start, x position, 0-based sound frames confirmed |
+| T7 / T7b WORD | all four tabs: 76 entries labelled and text-matched (§8). 9 text entries have no editor box |
+| T8 SMAP | first attempt not saved. **Redo**: win_condition 1, camp_before_battle 1, shop list [0, 4] with count 2 at 0x344, camp_background 3, all confirmed |
+| T9 / T9b GAME | no Game Properties dialog in this editor version. The full-screen toggle doesn't touch GAME.DAT (§12) |
+| T10 SMAP | Disable Party Changes = 0x450, confirmed. EDITOR.DAT confirmed as last-opened map |
+
+### Phase 2, round 1 — instructions (T11–T13)
+
+Open each dialog from the map's EVENT mode by double-clicking an object. Click **Save current map** before switching maps, then send `MAP/SMAP_001.DAT` plus the screenshots.
+
+- **T11 — event start conditions.**
+  1. Screenshot the Event Start Conditions dialog. This editor version may list more options than the help screenshot.
+  2. On map 1, open object ナス at (7, 0) (object 2) and set:
+     - No. 2 = Switch 007.
+     - No. 3 = Turn, Enemy, at turn 3.
+     - No. 4 = the first Unit Condition, Target Unit = ルーティ.
+     - No. 5 = the last Unit Condition (When Unit Dies?).
+
+  Leave No. 1 as is.
+- **T12 — one of each command.**
+  1. On map 1, create a new event on an empty tile: Type = Other, No. 1 condition = Switch 001.
+  2. In its Event Contents, add these commands in this order, with exactly these values, and **screenshot each command's dialog** (the field names matter as much as the bytes):
+     1. Message, two lines: `AAA` / `BBB`
+     2. Face Graphics Setup: face #12 (note any position/side options)
+     3. Switch Operations: switch 007 ON
+     4. Switch Operations: switch 008 OFF
+     5. Item Management: add item 005 ×3
+     6. Gold Management: remove 1234
+     7. Screen Display: 2nd effect option
+     8. Erase Screen: 2nd effect option
+     9. Picture Display: `BACK_002.BMP` (note all fields)
+     10. Erase Picture
+     11. Scroll Screen to (5, 9)
+     12. Flash/Tint Screen: distinct values in every field (e.g. 10, 20, 30, 40, 50)
+     13. Shake Screen: distinct values
+     14. Change Ally Unit: add unit 005
+     15. Unit Class Change: unit 005 → class 007
+     16. Unit Equipment Change: unit 005 weapon → item 002
+     17. Move Unit: unit 005 to (3, 4)
+     18. Execute Movement
+     19. BGM: `戦闘.MID`
+     20. Sound Effect: `BOMB.WAV`
+     21. Variable Operations: variable 010 = 77
+     22. Variable Operations: variable 010 += 5
+     23. Conditional Branch: variable 010 ≥ 50, with a `YES` message inside
+     24. Character Choice: options `X` / `Y` / `Z`, each with a one-line message
+     25. Button Input (into variable 011, if it asks)
+     26. Wait 25
+     27. Select Map 7
+     28. Map Complete
+     29. Return to Title
+     30. Game Over
+     31. End Event
+
+     Finally screenshot the whole command list.
+- **T13 — damaged events in the original game.** Map 56 (３２話) ships with three broken scripts: the enemy ルシフィール at (12, 22) event 1, and the "Other" event at (20, 26) events 1–2. If you can reach that chapter (or a save near it), note what happens when those events should fire: dialogue shown, garbage, nothing, or a crash. The new client should match whatever the original does.
+
+### Phase 2, round 1 — results
+
+- **T11:** condition codes 1/2/4/5 and the turn encoding confirmed (§11.1).
+- **T12:** all opcode names and most payload fields confirmed (§11.3). The test event is object 6 / `EV000601` in the copy's SMAP_001. Notes from the session:
+  - Face Graphics has left/right and a "flip horizontally" toggle.
+  - Screen Display and Erase Screen have "From Black"/"From White".
+  - Move Unit is a sequence of direction buttons, not a target tile.
+  - Button Input doesn't ask for a variable.
+  - Map Complete has a Win/Lose toggle.
+  - There's no Play Movie test.
+- **T13:** recorded as "dialogue plays", a provisional assumption to revisit (§11.2).
+
+### Phase 2, round 2 — instructions (T14)
+
+Same procedure: map 1 in the copy, add commands to a new "Other" event, Save current map, send SMAP_001.DAT.
+1. **Move Unit steps:** report the button sequence used for T12's Move Unit, then add a Move Unit with exactly Up, Up, Left, Right, Down.
+2. **Face Graphics:** (a) face #3 Right; (b) face #3 Left + Flip; (c) face #3 Right + Flip.
+3. **Picture Display:** `BACK_003.BMP` at Upper Left with the 2nd Display Method, then at Lower Right with "Remove Transparent Color" ticked.
+4. **Screen Display:** "From White" with the 1st effect.
+5. **Flash/Tint:** screenshot the Screen FX dialog.
+6. **Variable Operations:** screenshot the dialog, then one command per operation type, then one per operand source, on variable 012.
+7. **Conditional Branch:** screenshot the dialog, then one branch per condition type/option, with variable 013 ≥ 44 and variable 014 = 55 among them.
+
+### Phase 2, round 2 — results
+
+The test commands are in `EV000701` (object 7) in the copy's SMAP_001. They landed in event slot 1, whose condition is "Do Not Perform", which is fine for a test.
+- **Move Unit:** T12's sequence was move up/right/down/left, face up/right/down/left → steps 0–7. T14 was split into a move series `[0,0,3,1,2]` and a facing series `[4,4,7,5,6]`. Step codes confirmed.
+- **Face:** position/flip bytes confirmed.
+- **Picture:** keypad position layout, method index and remove-transparent byte confirmed.
+- **Screen Display:** From White = color 1.
+- **Flash/Tint:** the dialog names the four values Red, Green, Blue (0–200 %) and Vividness (0 = monochrome).
+- **Variable Operations:** operations 0–4 confirmed. The dialog's sources are Numerical Value / Variable / Random Number Value. The second test series used source 1 (Variable) with the default variable 001. The 8-byte value area turned out to be three per-source fields.
+- **Conditional Branch:** the dialog has Switch (ON…), Turn (Ally/… – n – After…), Item (Party Possesses…), Unit (Alive…), Variable (value + "= OR >"…). The record keeps one field per kind, and the parser decodes them all by name. Option codes are still unnamed (T15).
+
+### Phase 2, round 3 — instructions (T15)
+
+Screenshot the Conditional Branch dropdowns (Switch ON/…, Turn Ally/… and After/…, Item Party Possesses…, Unit Alive…, Variable "= OR >"), and report what T14's three Turn branches were set to.
+
+### Phase 2, round 3 — results
+
+All option lists captured (codes in §11.3, row 2A). T14's Turn branches were Ally turn 1 After, turn 2 Before, turn 3 Exact. They were stored as turn 1/3/5 with mode 0/1/2, which confirms the branch turn field uses the same phase encoding as event slots. All 15 T14 branches decode exactly as set. Every branch in the game's scripts maps to a named option:
+
+| Condition | Count |
+|---|---|
+| variable ≥ | 373 |
+| variable ≤ | 257 |
+| variable = | 175 |
+| switch ON | 76 |
+| switch OFF | 36 |
+| unit alive | 21 |
+| item possessed | 13 |
+| unit dead | 10 |
+| unit not present | 3 |
+
+## Open items with no test planned
+
+Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
+
+## Active tests
+
+**T16 — save files.** The runtime writes saves as `SAVE<n>.DAT` in the game folder (string `%s\SAVE%d.DAT` in SRPGEXEC.EXE). There are none yet, so they have to come from real play.
+
+**Setup:** make a *fresh* copy of the original `えるまに` folder, e.g. `えるまに - Play`. Don't use `えるまに - Copy`, because its test edits change map 1. Run `SRPGEXEC.EXE` from inside it.
+
+1. **New game.** At the first point where Save is offered, save to **File 1**.
+2. **Without doing anything else**, save again to **File 2**. Two saves of the same state show which bytes are timestamps or noise.
+3. **Make exactly one change:** move one unit one tile and end its action. Save to **File 3**. Note which unit, and from where to where.
+4. **Play until the first camp** (after winning a map). Save to **File 4** and note the gold, one unit's level/HP/EXP, and anything in the inventory.
+
+Send all `SAVE*.DAT` files from the Play folder, plus your notes. A screenshot of the save/load screen showing the file labels would also help.
+
+Everything else is decoded. The remaining event-side unknowns will be checked against the running game rather than the editor:
+- the order of event-slot condition codes 6–8 and 9–11 (§11.1);
+- picture display methods and screen effects beyond the first two;
+- the T13 damaged-script behaviour.
