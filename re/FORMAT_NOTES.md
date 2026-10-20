@@ -980,7 +980,7 @@ From save slot 6, on map 2 (screenshots 37–43; layout numbers in §15):
 
 ### Phase 5, round 1 — instructions (T22: the battle scene)
 
-The client now has a first battle scene, built from the data alone. These checks fix its layout and timing. Map 1 in `えるまに - Save testplay` is enough: slot 3, or a new game. Screenshots are the most useful thing. A short screen recording also works, because I can pull frames out of it once ffmpeg is installed.
+The client now has a first battle scene, built from the data alone. These checks fix its layout and timing. Map 1 in `えるまに - Save testplay` is enough: slot 3, or a new game. Screenshots are the most useful thing. A short screen recording works even better, e.g. from ShareX, which is already installed, or Win+Alt+R. Drop it into the `recordings/` folder at the workspace root. `re/tools/frames.py` extracts the frames (using ShareX's ffmpeg).
 
 - **T22a — the first moment.** Attack a minion with ジュナ. Screenshot the scene as soon as it appears, before anyone moves:
   - Which side is ジュナ on?
