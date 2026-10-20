@@ -570,16 +570,20 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 | Off | Field | Conf. | Evidence |
 |---|---|---|---|
 | 0x000, 0x004 | 1 at camp, else 0 | unknown | SAVE4 only |
-| 0x010 | map number (1-based) | inferred | map 1 battle = 1, camp before map 2 = 2 |
-| 0x060 | 0x01000000 (byte 0x63 = 1) in every save | unknown | |
+| 0x004 | 1 at the first camp, 2 at the second | unknown | maybe the number of camps or chapters cleared |
+| 0x00C | 0, then 6 after map 2 | unknown | |
+| 0x010 | map number (1-based) | inferred | map 1 battle = 1, camp before map 2 = 2, camp before map 3 = 3 |
+| 0x014 | **switches**: 500 bytes, one per switch, 1 = ON | confirmed | the prologue's switch 79 「ＯＰ」 = byte 0x63 in every save; map 2's switches 0 and 1 = bytes 0x14, 0x15 (T18) |
 | 0x20C | phase counter (ally turn t = 2t−1) | inferred | 1 at start, 7 mid-battle, 13 at the end |
+| 0x210 | **inventory**: 100 × (i32 item, i32 count) | inferred | buying one ポーション wrote item 40, 1 (T18) |
+| 0x530 | inventory entries used | inferred | 0 → 1 after the purchase |
 | 0x534 | gold | confirmed | 20 = in-game gold (T16) |
 | 0x538 | party size | inferred | 2 (ルーティ, ジュナ) |
 | 0x53C | current BGM file name (48 B) | confirmed | コミカル.MID in battle, 安らきﾞ.MID at camp |
 | 0x56C | screen tone R, G, B, vividness | inferred | 100,100,100,100 |
 | 0x57C | number of map objects | inferred | 5 on map 1 |
 
-Switches, variables and the item inventory weren't found yet; map 1 doesn't set any (**T18**).
+**Variables** are not located yet. The header (2000 B) has no room for 500 int32s, and no script on the maps played so far (99, 1, 2) changes one. The first one that does is map 4 (variable 19) (**T18b**).
 
 **Unit record** (640 B, int32 index [n] = byte offset 4n):
 
@@ -808,6 +812,24 @@ Screenshots of: a choice menu (11話 camp menu), the camp screen, the save/load 
 
 All delivered (camp menu, save list, load list, 11話 choice menu, a battle screen, an EXP message); fades take about half a second. Findings are in §13. The choice menu was implemented and matched against its screenshot: 12 px text pixels 98 % identical (the rest is the mouse cursor drawn over it), panel 99.7 %.
 
+### Phase 3, round 3 — instructions (T18)
+
+Buy or receive an item at camp and save to File 6; play to the end of map 2 and save at the next camp to File 7.
+
+### Phase 3, round 3 — results
+
+- **SAVE4 → SAVE6** (bought one ポーション, 10 gold) changed 4 int32s:
+  - 0x210 = 40 (item id) and 0x214 = 1;
+  - 0x530 = 1 (entry count);
+  - gold 20 → 10.
+
+  So the inventory is (item, count) pairs.
+- **SAVE6 → SAVE7** (map 2 played):
+  - switch bytes 0x14/0x15 = 1, matching map 2's only two switch commands (switches 0, 1);
+  - map number 2 → 3, gold 130, party 4, with グレイ (245) and ジュリア (247) added to the roster;
+  - no variable changes, because maps 99/1/2 have no variable commands.
+- **Bonus screenshot** (map 2 mid-opening narration): the client's text matches pixel-for-pixel. The trailing 「＿」 is part of the script text, not a UI marker.
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
@@ -819,9 +841,8 @@ All delivered (camp menu, save list, load list, 11話 choice menu, a battle scre
 
 ## Active tests
 
-**T18 — saves with switches, variables and items.** Continue the save-testplay game, or load SAVE4:
-1. Buy or receive **one item** at camp (note which), then save to File 6.
-2. Play to the end of **map 2** (story events set switches and variables there), then save at the next camp to File 7.
-3. If you can, also make a save at the **11話 camp** (that chapter's menu uses variable 001 "11話、仲間会話").
+**T18b — variables and the inventory layout.** Continue from SAVE7:
+1. At the current camp, buy **one more ポーション** and **one different item** (note which). Save to **File 8**. This shows whether a second Potion becomes count 2 or a new entry.
+2. Play **maps 3 and 4** and save at the camp after map 4 (overwriting File 8 is fine if you copy it aside first, or use File 5). Map 4 is the first map whose events change a variable: variable 19 「ルーティサバイヴ条件」.
 
-Send the new `SAVE*.DAT` files with a note of what you did between them.
+Send the new `SAVE*.DAT` files with a note of what you bought.

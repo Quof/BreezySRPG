@@ -669,7 +669,10 @@ SAVE_OBJECTS_OFF = SAVE_UNIT_OFF + (SAVE_MAP_UNITS + SAVE_ROSTER_UNITS) * SAVE_U
 
 SAVE_HEADER_SPEC = [
     (0x10, 'map_number', 'i32', None),        # 1-based SMAP number (inferred)
+    (0x14, 'switches', 'u8[]', 500),          # one byte per switch, 1 = ON (confirmed T18)
     (0x20c, 'phase', 'i32', None),            # turn/phase counter (inferred)
+    (0x210, '_inventory', 'i32[]', 200),      # 100 x (item id, count) (inferred T18)
+    (0x530, 'inventory_count', 'i32', None),  # number of used inventory entries (inferred T18)
     (0x534, 'gold', 'i32', None),             # confirmed (T16: 20)
     (0x538, 'party_count', 'i32', None),      # inferred (2 = ルーティ + ジュナ)
     (0x53c, 'bgm', 'str', 0x30),              # current BGM file
@@ -711,6 +714,10 @@ def parse_save(data):
     if len(data) != SAVE_SIZE:
         raise ValueError(f'expected {SAVE_SIZE} bytes, got {len(data)}')
     out = _parse_record(data[:SAVE_UNIT_OFF], SAVE_HEADER_SPEC)
+    sw = out.pop('switches')
+    out['switches_on'] = [i for i, v in enumerate(sw) if v]
+    inv = out.pop('_inventory')
+    out['inventory'] = [{'item': inv[i * 2], 'count': inv[i * 2 + 1]} for i in range(max(0, min(100, out['inventory_count'])))]
     units = []
     for i in range(SAVE_MAP_UNITS + SAVE_ROSTER_UNITS):
         rec = data[SAVE_UNIT_OFF + i * SAVE_UNIT_SIZE:SAVE_UNIT_OFF + (i + 1) * SAVE_UNIT_SIZE]
