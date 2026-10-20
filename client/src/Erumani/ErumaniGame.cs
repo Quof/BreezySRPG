@@ -96,6 +96,7 @@ public sealed class ErumaniGame : Game
         if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
         _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex);
         _audio.PlayBgm(map.Bgm[1]);   // player-turn BGM; the opening usually sets its own
+        _battle.PlayMapBgm = slot => _audio.PlayBgm(map.Bgm[slot]);
         _battle.Start(_opts.Event);
         _seenOutcome = MapOutcome.None;
         _pendingMap = null;
@@ -173,9 +174,17 @@ public sealed class ErumaniGame : Game
     BattleInput Scripted(BattleInput bi)
     {
         if (_script.TryPeek(out var next) && next.StartsWith("shot+")) { _script.Dequeue(); _shotAt = _frame + int.Parse(next[5..]); }
+        // telop tokens fire wherever they are in the queue: the caption may come while other input is still queued
+        var telopTok = _script.FirstOrDefault(s => s.StartsWith("telop"));
+        if (telopTok is not null && System.Text.RegularExpressions.Regex.Match(telopTok, @"^telop(\d?)\+(\d+)$") is { Success: true } tm
+            && _battle?.CurrentTelop is { } cur && (tm.Groups[1].Value == "" || cur == $"TELOP{tm.Groups[1].Value}.BMP"))
+        {
+            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, telopTok)));
+            _shotAt = _frame + int.Parse(tm.Groups[2].Value);
+        }
         bool idle = _battle is { Busy: false } && _runner is { Message: null, Choice: null };
         _idleFrames = idle ? _idleFrames + 1 : 0;
-        if (!idle || _script.Count == 0 || ++_scriptWait < 10) return bi;
+        if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
@@ -195,7 +204,7 @@ public sealed class ErumaniGame : Game
     }
 
     int _shotAt = int.MaxValue;
-    bool ShotReady => _frame > 6000 || _frame >= _shotAt ||
+    bool ShotReady => _frame > 30000 || _frame >= _shotAt ||
         (_frame > 2 && (_opts.Keys is null ? _shotAdvance <= 0 && (_shotAdvance == 0 || _idleFrames > 30) : _script.Count == 0 && _idleFrames > 30));
 
     /// <summary>Map tile under the mouse, or null outside the viewport.</summary>
@@ -242,7 +251,6 @@ public sealed class ErumaniGame : Game
         {
             case MapOutcome.Won:
                 int next = _battle.NextMap ?? idx + 1;   // provisional: no "Next Map" means the following map
-                _audio.PlayBgm(_session!.Map.Bgm[6]);    // victory
                 _status = $"MAP CLEAR → SMAP_{next + 1:000} {SafeName(next)}  [Enter]";
                 if (Array.IndexOf(_mapIndices, next) is var p and >= 0) _pendingMap = p;
                 break;

@@ -54,11 +54,52 @@ public sealed class BattleController
 
     public MapOutcome Outcome { get; private set; }
     /// <summary>One-line state summary (screenshot mode writes it next to the PNG).</summary>
-    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome}" +
-        string.Concat(_s.Field.Units.Where(u => !u.Hidden).Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp}{(u.Dead ? " dead" : "")}"));
+    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} plan={_plan?.Unit.Name}/{_planWalking} queue={_enemyQueue.Count} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} wait={_wait}" +
+        string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
     public int? NextMap => _runner.NextMap;
     public bool EventRunning => _state_ == State.Events && _runner.Running;
-    public bool Busy => _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase;
+    public bool Busy => _telop is not null || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase;
+    /// <summary>Asks the game to play one of the map's BGM slots (1 player turn, 2 enemy turn, 6 victory...).</summary>
+    public Action<int>? PlayMapBgm { get; set; }
+
+    // ---------------- captions (TELOP1-3.BMP) ----------------
+
+    // TELOP1 "PLAYER TURN", TELOP2 "ENEMY TURN", TELOP3 "COMPLETE!!" (512x96, index 0 transparent).
+    // COMPLETE!! after the last victory/death event, with the fanfare, then the camp (T19e).
+    // The turn captions are shipped with the game but their timing is provisional.
+    string? _telop;
+    public string? CurrentTelop => _telop;
+    int _telopFrames;
+    Action? _afterTelop;
+    bool _announcePlayer;
+
+    void Telop(int n, int frames, Action then)
+    {
+        _telop = $"TELOP{n}.BMP";
+        _telopFrames = frames;
+        _afterTelop = then;
+    }
+
+    bool UpdateTelop(BattleInput i)
+    {
+        if (_telop is null) return false;
+        _telopFrames -= i.FastForward ? 4 : 1;
+        if (_telopFrames <= 0 || i.Confirm || i.Click)
+        {
+            _telop = null;
+            var then = _afterTelop;
+            _afterTelop = null;
+            then?.Invoke();
+        }
+        return true;
+    }
+
+    void Win()
+    {
+        _state_ = State.Ended;
+        PlayMapBgm?.Invoke(6);
+        Telop(3, 240, () => End(MapOutcome.Won));
+    }
 
     public BattleController(MapSession s, EventRunner runner, GameState state, Database db, Ui.Ui ui, Textures tex)
         => (_s, _runner, _state, _db, _ui, _tex) = (s, runner, state, db, ui, tex);
@@ -72,6 +113,7 @@ public sealed class BattleController
         if (_s.Map.Scripts.TryGetValue(firstEvent ?? "OPENING", out var opening)) _events.Enqueue((firstEvent ?? "OPENING", opening));
         QueuePhaseEvents();
         _state_ = State.Events;
+        _announcePlayer = true;
     }
 
     IEnumerable<(MapObject Obj, int Slot, EventSlot S)> Slots() =>
@@ -171,7 +213,7 @@ public sealed class BattleController
                     if (ObjectPresent(o) || o.Type == ObjectType.Other) Queue(o, i);
             }
             // death and victory events (e.g. the boss's last words) play out first
-            if (_events.Count == 0) { End(MapOutcome.Won); return true; }
+            if (_events.Count == 0) { Win(); return true; }
         }
         if (_s.Field.Lost()) { End(MapOutcome.GameOver); return true; }
         if (_events.Count > 0) { _state_ = State.Events; return true; }
@@ -190,6 +232,7 @@ public sealed class BattleController
     public void Update(BattleInput input, EventInput ev)
     {
         if (input.MouseTile is { } mt && input.MouseMoved) _cursor = mt;
+        if (UpdateTelop(input)) return;
         switch (_state_)
         {
             case State.Events: UpdateEvents(ev); break;
@@ -213,7 +256,7 @@ public sealed class BattleController
             if (_runner.Running) return;
             switch (_runner.End)
             {
-                case EventEnd.MapWon: End(MapOutcome.Won); return;
+                case EventEnd.MapWon: Win(); return;
                 case EventEnd.MapLost: End(MapOutcome.Lost); return;
                 case EventEnd.GameOver: End(MapOutcome.GameOver); return;
                 case EventEnd.ReturnToTitle: End(MapOutcome.ReturnToTitle); return;
@@ -229,7 +272,12 @@ public sealed class BattleController
         if (CheckPoint()) return;
         if (_resumeMenu && _sel is { Dead: false }) { _resumeMenu = false; _state_ = State.ActionMenu; return; }
         _resumeMenu = false;
-        if (_s.Field.AllyPhase) { _state_ = State.Idle; MaybeAutoEndTurn(); return; }
+        if (_s.Field.AllyPhase)
+        {
+            _state_ = State.Idle;
+            if (_announcePlayer) { _announcePlayer = false; Telop(1, 60, () => { }); }
+            return;
+        }
         _state_ = State.EnemyPhase;
         if (_enemyQueue.Count == 0 && _plan is null) BeginEnemyPhase();
     }
@@ -387,7 +435,6 @@ public sealed class BattleController
             _sel = null;
             if (CheckPoint()) return;
             _state_ = _afterShow;
-            if (_state_ == State.Idle) MaybeAutoEndTurn();
         }
     }
 
@@ -403,14 +450,7 @@ public sealed class BattleController
         AfterAction(_sel);
         _sel = null;
         if (CheckPoint()) return;
-        _state_ = State.Idle;
-        MaybeAutoEndTurn();
-    }
-
-    void MaybeAutoEndTurn()
-    {
-        // provisional: the original may require "ターン終了"; we end the turn when nobody can act
-        if (!_s.Field.Alive.Any(u => u.Side == Side.Ally && !u.Acted)) EndPlayerTurn();
+        _state_ = State.Idle;   // the turn only ends from the menu (T19a)
     }
 
     void OpenTurnMenu()
@@ -432,11 +472,18 @@ public sealed class BattleController
     void EndPlayerTurn()
     {
         _s.Field.NextPhase();          // enemy phase
-        QueuePhaseEvents();
-        if (CheckPoint()) return;
         _state_ = State.EnemyPhase;
-        BeginEnemyPhase();
+        _enemyQueue.Clear();
+        _plan = null;
+        Telop(2, 60, () =>
+        {
+            QueuePhaseEvents();
+            if (CheckPoint()) return;
+            BeginEnemyPhase();
+        });
     }
+
+    bool _planWalking;
 
     void BeginEnemyPhase()
     {
@@ -450,7 +497,16 @@ public sealed class BattleController
         if (_wait > 0) { _wait -= i.FastForward ? 4 : 1; return; }
         if (_plan is { } p)
         {
-            if (_s.MovesRunning) return;
+            if (!_planWalking)
+            {
+                // the screen scrolls to each enemy before it moves (T19f), then follows it to its destination
+                if (_s.Panning) return;
+                _s.Walk(p.Unit, p.Path);
+                if (p.Path.Count > 0) _s.PanTo(p.Destination.X, p.Destination.Y);
+                _planWalking = true;
+                return;
+            }
+            if (_s.MovesRunning || _s.Panning) return;
             if (p.SwitchToApply >= 0 && p.SwitchToApply < GameState.SwitchCount) _state.Switches[p.SwitchToApply] = true;
             _plan = null;
             p.Unit.Acted = true;
@@ -464,15 +520,18 @@ public sealed class BattleController
             var u = _enemyQueue.Dequeue();
             if (u.Dead || u.Hidden) continue;
             _plan = EnemyAi.Plan(_s.Field, u, _state.Switches);
-            _s.Walk(u, _plan.Path);
-            if (_plan.Path.Count > 0) _s.ScrollTo(_plan.Destination.X, _plan.Destination.Y);
+            _planWalking = false;
+            _s.PanTo(u.X, u.Y);
             return;
         }
         // enemy phase over: back to the player
         _s.Field.NextPhase();
-        QueuePhaseEvents();
-        if (CheckPoint()) return;
         _state_ = State.Idle;
+        Telop(1, 60, () =>
+        {
+            QueuePhaseEvents();
+            CheckPoint();
+        });
     }
 
     // ---------------- drawing ----------------
@@ -507,8 +566,10 @@ public sealed class BattleController
         if (_state_ is State.ActionMenu or State.TurnMenu) DrawMenu(sb);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
         if (_state_ == State.Status && _statusUnit is not null) DrawStatus(sb, _statusUnit);
-        if (_state_ == State.EnemyPhase && _wait > 10 && _plan is null && _enemyQueue.Count > 0 && frame % 60 < 50)
-            DrawPopup(sb, "ENEMY PHASE");
+        if (Outcome == MapOutcome.GameOver && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go)
+            sb.Draw(go, Vector2.Zero, Color.White);   // full screen; provisional
+        if (_telop is not null && _tex.Get(_telop) is { } t)
+            sb.Draw(t, new Vector2(viewport.Center.X - t.Width / 2, viewport.Center.Y - t.Height / 2), Color.White);
     }
 
     /// <summary>Name and "HP／max" above the hovered unit (screenshot 5; font and offsets provisional).</summary>

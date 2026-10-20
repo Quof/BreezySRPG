@@ -52,6 +52,7 @@ Options:
   - `at:X.Y` puts the cursor on tile (X,Y);
   - `wait` skips a beat;
   - `shot+N` captures N frames later, even mid-animation.
+  - `telop+N` / `telopK+N` captures N frames after the next caption (any, or `TELOPK.BMP`: 1 PLAYER TURN, 2 ENEMY TURN, 3 COMPLETE!!) appears.
 
   Example: select ジュナ on map 1 and move her 3 tiles up:
 
@@ -100,6 +101,8 @@ Controls:
    - attacks: target choice, hit/crit/damage, counter-attacks, double attacks, EXP and level-ups (help formulas);
    - enemy phase: AI move patterns (rush, wait, go to a point);
    - event triggers: turn, switch, contact, death, pass/stop on a tile, before/after attack, victory;
+   - PLAYER TURN / ENEMY TURN / COMPLETE!! captions with the victory fanfare, GAMEOVER screen;
+   - the camera follows each enemy;
    - win/lose, then on to the next map.
 
    Still to do: magic and items in battle, the other turn-menu entries, and checking the provisional rules against the original (FORMAT_NOTES §15, test T19).

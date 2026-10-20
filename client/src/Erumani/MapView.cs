@@ -139,6 +139,31 @@ public sealed class MapSession : IMapContext
         ClampCamera();
     }
 
+    Point? _panTarget;
+    const int PanSpeed = 16;   // px per frame (provisional)
+
+    /// <summary>Scrolls smoothly until tile (x,y) is on screen, centring it; no-op if already well inside the view.</summary>
+    public void PanTo(int x, int y)
+    {
+        int px = x * Tile, py = y * Tile, m = 2 * Tile;
+        if (px >= Camera.X + m && px + Tile <= Camera.X + ErumaniGame.ViewWidth - m &&
+            py >= Camera.Y + m && py + Tile <= Camera.Y + ErumaniGame.ViewHeight - m) return;
+        var saved = Camera;
+        ScrollTo(x, y);
+        _panTarget = Camera;
+        Camera = saved;
+    }
+
+    public bool Panning => _panTarget is not null;
+
+    void UpdatePan()
+    {
+        if (_panTarget is not { } t) return;
+        Camera.X += Math.Clamp(t.X - Camera.X, -PanSpeed, PanSpeed);
+        Camera.Y += Math.Clamp(t.Y - Camera.Y, -PanSpeed, PanSpeed);
+        if (Camera == t) _panTarget = null;
+    }
+
     public void ClampCamera()
     {
         Camera.X = Math.Clamp(Camera.X, 0, Math.Max(0, PixelWidth - ErumaniGame.ViewWidth));
@@ -177,6 +202,7 @@ public sealed class MapSession : IMapContext
 
     public void Update()
     {
+        UpdatePan();
         foreach (var (u, v) in Visuals)
         {
             if (v.StepFrames > 0)
@@ -231,15 +257,19 @@ public sealed class MapSession : IMapContext
             if (o.Graphic >= 0 && OtherVisible(o)) sb.Draw(_chips, ScreenPos(o.X, o.Y, viewport), ChipRect(o.Graphic), Color.White);
     }
 
-    /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan, 1 salmon, 2 orange, 3 blue.
-    /// Opacity is provisional.</summary>
+    /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan = move, 1 salmon = attack,
+    /// 2 orange, 3 blue. The original draws only the tile's odd pixel rows, opaque, leaving the map visible
+    /// in between (T19c, pixel-matched).</summary>
     public void DrawRange(SpriteBatch sb, Rectangle viewport, IEnumerable<(int X, int Y)> tiles, int colour, int frame)
     {
         var sys = _tex.Get("SYSTEM.BMP", transparent: false);
         if (sys is null) return;
-        var src = new Rectangle(colour * 64 + (frame / 20 % 2) * 32, 64, 32, 32);
         foreach (var (x, y) in tiles)
-            sb.Draw(sys, ScreenPos(x, y, viewport), src, Color.White * 0.55f);
+        {
+            var p = ScreenPos(x, y, viewport);
+            for (int row = 1; row < Tile; row += 2)
+                sb.Draw(sys, p + new Vector2(0, row), new Rectangle(colour * 64, 64 + row, Tile, 1), Color.White);
+        }
     }
 
     public void DrawUnits(SpriteBatch sb, Rectangle viewport, int frame)

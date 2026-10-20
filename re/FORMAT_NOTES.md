@@ -619,21 +619,24 @@ Python: `parse_save()` in `re/srpg95_data.py`.
 
 ## 15. Battle runtime (client behaviour, mostly provisional)
 
-What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/src/Erumani/BattleController.cs`). "Data" rows follow from the files or the help text; the rest are guesses until T19 checks them against the original.
+What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/src/Erumani/BattleController.cs`). "Data" rows follow from the files or the help text; T19 confirmed several against the original; T20 covers the rest.
 
 | Behaviour | Client | Basis |
 |---|---|---|
 | Stat formulas (Attack, Accuracy, Defense, MDef) | §14 formulas | confirmed on 172 save records |
 | Hit, crit, damage, double attack, EXP, level-up | help "Battle Algorithm" formulas | help text, not yet checked in play |
 | Movement range | Dijkstra over the class's terrain costs; enemies block, allies can be passed but not stopped on | inferred |
-| Undo a move | cancel at the command menu returns the unit to where it started | guess (T19b) |
-| End of player turn | automatic once every ally has acted; ターン終了 from the menu on an empty tile | guess (T19a) |
-| Range overlay | SYSTEM.BMP range tiles at 55 % opacity: cyan = move, salmon = attack targets | guess (T19c) |
+| Undo a move | cancel at the command menu returns the unit to where it started | confirmed (T19b) |
+| End of player turn | only through ターン終了, from the menu opened by clicking an empty tile, even when every ally has acted | confirmed (T19a) |
+| Range overlay | SYSTEM.BMP range tile (16-px two-colour checker) drawn on the tile's **odd pixel rows only**, opaque; even rows show the map. Move = cyan tile (x 0), attack = salmon tile (x 64), covering the weapon's whole range, not just the enemies. Units are drawn on top | confirmed, pixel-matched (T19c) |
 | Strike results | one-line popups (damage, miss, 撃破, EXP, level-up) until the battle-scene milestone | placeholder |
-| Death events vs victory | a unit's "dies" events play first, then the victory events, then the map ends | inferred from map 1 (the boss ナス's last words are its death event) |
-| Losing | every ally down, or a unit from the map's character list down | guess. Map 1's EV000101 (ルーティ dies: 「いきなり負けちゃった～？」) hints that losing her ends the map, though she is in no list (T19d) |
-| Winning without a "Next map" command | goes on to the next map number | guess (T19e) |
-| Enemy phase | each enemy moves in map-object order; the camera does not follow yet | guess (T19f) |
+| Death events vs victory | a unit's "dies" events play first, then the victory events, then COMPLETE!! | confirmed on map 1 (T19e) |
+| Victory | `TELOP3.BMP` "COMPLETE!!" (512×96, index 0 transparent) with the victory fanfare (map BGM slot 6), then the camp menu | confirmed (T19e). The client centres it in the viewport for 4 s (or until confirm); position and timing unverified. The camp is milestone 6, so the client goes straight to the next map |
+| Turn captions | `TELOP1.BMP` "PLAYER TURN" / `TELOP2.BMP` "ENEMY TURN" for 1 s, centred, at each phase start (PLAYER TURN after the opening) | guess: the files ship with the game (T20a) |
+| Game over | `GAMEOVER.BMP` full screen | guess (T20c) |
+| Losing | every ally down, or a unit from the map's character list down. Map 1 goes on without ルーティ: EV000101 is just her remark | confirmed for map 1 (T19d) |
+| Winning without a "Next map" command | goes on to the next map number | guess |
+| Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
 Every scripted run is reproducible: in screenshot mode the client seeds the battle RNG with 1, ignores the real keyboard and mouse, and `--keys` feeds input. The client writes the state and a token trace next to the PNG as `.txt`.
 
@@ -877,6 +880,31 @@ From SAVE8, replay map 4's opening choosing 「ジュリアの選んだ服を買
 
 The only non-zero byte in 0x580–0x7CF of the new SAVE2 is **0x602 = 1** = variable 19 in a 16-bit table at 0x5DC. SAVE1 (other choice) has none, and the switch and inventory fields agree. The other differences were unit movement, because SAVE1 had been saved later in that battle. `parse_save()` now reports `variables_set`.
 
+### Phase 4, round 1 — instructions (T19: battle flow on map 1)
+
+In `えるまに - Save testplay` with the original runtime, play map 1 and report:
+- **T19a:** the end of the turn;
+- **T19b:** whether a move can be undone;
+- **T19c:** the movement and target overlays (screenshots);
+- **T19d:** what happens when ルーティ dies;
+- **T19e:** what follows beating ナス;
+- **T19f:** whether the screen follows the enemies.
+
+### Phase 4, round 1 — results
+
+- **T19a:** the turn never ends by itself. Click a blank tile and pick ターン終了.
+- **T19b:** cancelling at the command menu undoes the move.
+- **T19c:** two screenshots, pixel-analysed (§15 "Range overlay"):
+  - odd pixel rows show the SYSTEM.BMP range tile's checker (cyan (128,176,176)/(176,216,248) for movement, salmon (248,120,104)/(248,200,168) for attack);
+  - even rows are the untouched map.
+- **T19d:** the map continues. Her line is only her talking about herself.
+- **T19e:** in order:
+  1. ナス's death-event lines;
+  2. a cutscene;
+  3. "COMPLETE!!" on screen (`TELOP3.BMP`) with a fanfare;
+  4. the camp menu.
+- **T19f:** the screen scrolls to each moving enemy.
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
@@ -890,16 +918,19 @@ The only non-zero byte in 0x580–0x7CF of the new SAVE2 is **0x602 = 1** = vari
 
 ## Active tests
 
-### Phase 4, round 1 — instructions (T19: battle flow on map 1)
+### Phase 4, round 2 — instructions (T20: captions and music on map 1)
 
-Play map 1 (１話) in `えるまに - Save testplay` with the original runtime. Load save slot 3 (map 1, turn 1) or start a new game. The minions are weakened there, but ナス (the boss) has its real stats. Screenshots help wherever something appears on screen.
+Same setup as T19: map 1 in `えるまに - Save testplay`, save slot 3 or a new game. The game ships `TELOP1.BMP` "PLAYER TURN", `TELOP2.BMP` "ENEMY TURN", `TELOP3.BMP` "COMPLETE!!" and `GAMEOVER.BMP`.
 
-- **T19a — end of turn.** Move both ルーティ and ジュナ and end each one's action. Does the enemy turn start by itself, or do you have to pick ターン終了 from the menu?
-- **T19b — undo.** Select ジュナ, move her a few tiles, and press Esc or right-click at the command menu. Does she go back to where she started, or stay put with the menu closed?
-- **T19c — overlays.** Screenshot (1) ジュナ selected, showing her movement range, and (2) the target choice after picking 攻撃 next to an enemy.
-- **T19d — losing ルーティ.** Let ルーティ be defeated, for example by leaving her next to ナス for a few turns. After her 「いきなり負けちゃった～？」 lines, what happens: a game-over screen, back to the title, or the map carries on with ジュナ alone?
-- **T19e — winning.** Reload and beat ナス. After his last lines, what comes next: victory music, a "map clear" message, a camp screen, or map 2's opening straight away?
-- **T19f — enemy turn.** While the enemies move, does the screen scroll to each one? Is there a pause or a cursor on each enemy before it moves?
+- **T20a — turn captions.** Do PLAYER TURN and ENEMY TURN appear? If so:
+  - Does PLAYER TURN show on turn 1 right after the opening dialogue, or only from turn 2?
+  - Does each caption slide in or just appear?
+  - Roughly how long does it stay? Is it centred?
+
+  A screenshot of one, mid-display, would be ideal.
+- **T20b — turn music.** When the enemy turn starts, does the music change? Does it change back on your turn, even though the opening started コミカル.MID?
+- **T20c — game over.** Let ジュナ fall too, with ルーティ already down. Screenshot whatever comes up (`GAMEOVER.BMP`?), and say what a click does after that.
+- **T20d — COMPLETE!!** A screenshot while COMPLETE!! is on screen, to check its position. Roughly how long until the camp menu appears? Does a click skip it?
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

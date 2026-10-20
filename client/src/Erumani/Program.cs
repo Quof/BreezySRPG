@@ -33,6 +33,7 @@ public static class Program
 ///               --keys "a,b,..."       (with --screenshot: scripted input once the map is idle;
 ///                                       up/down/left/right/enter/esc, at:X,Y moves the cursor to a tile,
 ///                                       wait skips a beat, shot+N takes the shot N frames later even mid-animation;
+///                                       telop+N / telopK+N wait for the next caption (any, or TELOPK.BMP) and shoot N frames in;
 ///                                       otherwise the shot is taken once the queue is done and the map is idle)
 /// </summary>
 public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null)
