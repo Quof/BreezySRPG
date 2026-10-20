@@ -260,13 +260,14 @@ public sealed class MapSession : IMapContext
     /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan = move, 1 salmon = attack,
     /// 2 orange, 3 blue. The original draws only the tile's odd pixel rows, opaque, leaving the map visible
     /// in between (T19c, pixel-matched).</summary>
-    public void DrawRange(SpriteBatch sb, Rectangle viewport, IEnumerable<(int X, int Y)> tiles, int colour, int frame)
+    public void DrawRange(SpriteBatch sb, Rectangle viewport, IEnumerable<(int X, int Y)> tiles, int colour, int frame, bool solid = false)
     {
         var sys = _tex.Get("SYSTEM.BMP", transparent: false);
         if (sys is null) return;
         foreach (var (x, y) in tiles)
         {
             var p = ScreenPos(x, y, viewport);
+            if (solid) { sb.Draw(sys, p, new Rectangle(colour * 64, 64, Tile, Tile), Color.White); continue; }   // affected units (T21)
             for (int row = 1; row < Tile; row += 2)
                 sb.Draw(sys, p + new Vector2(0, row), new Rectangle(colour * 64, 64 + row, Tile, 1), Color.White);
         }

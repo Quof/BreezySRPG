@@ -394,7 +394,7 @@ public sealed class BattleController
     {
         var u = _sel!;
         _spells = _s.Field.KnownSpells(u).ToList();
-        _menu = _spells.Select(m => $"{m.Name}　{Word(3)}{m.MpCost}").ToArray();
+        _menu = _spells.Select(m => m.Name).ToArray();
         _menuEnabled = _spells.Select(m => Battlefield.CanCast(u, m) && _s.Field.SpellAims(u, m, u.X, u.Y).Any()).ToArray();
         _menuIndex = Math.Max(0, Array.IndexOf(_menuEnabled, true));
         _state_ = State.SpellList;
@@ -404,23 +404,65 @@ public sealed class BattleController
     {
         var u = _sel!;
         _items = UsableItems(u).ToList();
-        _menu = _items.Select(it => $"{it.Name}　×{_state.ItemCount(it.Index)}").ToArray();
+        _menu = _items.Select(it => it.Name).ToArray();
         _menuEnabled = _items.Select(it => ItemReady(u, it)).ToArray();
         _menuIndex = Math.Max(0, Array.IndexOf(_menuEnabled, true));
+        _itemPage = _menuIndex / ItemRows;
         _state_ = State.ItemList;
+    }
+
+    // Lists measured from the original (T21): spell list at x 352, one 16-px row per spell, "ＴＰ cost／current";
+    // item list a fixed 180x240 panel at (352,224) with 12 rows per page and a "ページ n／m" footer.
+    // The hovered row gets a flashing light-green/white bar; a description window sits at (80,32) 480x48.
+    const int ItemRows = 12;
+    int _itemPage;
+
+    Rectangle SpellListRect()
+    {
+        int h = _menu.Length * 16 + 16;
+        int y = _sel is null ? 240 : (int)_s.ScreenPos(_sel.X, _sel.Y, ViewportRect).Y;
+        return new Rectangle(352, Math.Clamp(y, ErumaniGame.ViewY, ErumaniGame.ViewY + ErumaniGame.ViewHeight - h), 228, h);
+    }
+
+    static readonly Rectangle ItemListRect = new(352, 224, 180, 240);
+
+    Rectangle RowRect(int row) => _state_ == State.ItemList
+        ? new Rectangle(ItemListRect.X + 4, ItemListRect.Y + 8 + (row % ItemRows) * 16, ItemListRect.Width - 8, 16)
+        : new Rectangle(SpellListRect().X + 6, SpellListRect().Y + 8 + row * 16, SpellListRect().Width - 12, 16);
+
+    int ListNavigate(BattleInput i)
+    {
+        int n = _menu.Length;
+        if (n == 0) return -1;
+        if (i.Up) _menuIndex = (_menuIndex + n - 1) % n;
+        if (i.Down) _menuIndex = (_menuIndex + 1) % n;
+        if (_state_ == State.ItemList)
+        {
+            int pages = (n + ItemRows - 1) / ItemRows;
+            if (i.Left || i.Right) _menuIndex = Math.Min(n - 1, ((_menuIndex / ItemRows + (i.Right ? 1 : pages - 1)) % pages) * ItemRows);
+            _itemPage = _menuIndex / ItemRows;
+        }
+        int first = _state_ == State.ItemList ? _itemPage * ItemRows : 0;
+        int count = _state_ == State.ItemList ? Math.Min(ItemRows, n - first) : n;
+        int hover = -1;
+        for (int r = 0; r < count; r++)
+            if (RowRect(first + r).Contains(MouseVirtual)) hover = first + r;
+        if (i.MouseMoved && hover >= 0) _menuIndex = hover;
+        if ((i.Confirm || (i.Click && hover >= 0)) && _menuEnabled[_menuIndex]) return _menuIndex;
+        return -1;
     }
 
     void UpdateSpellList(BattleInput i)
     {
         if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
-        int pick = MenuNavigate(i, MouseVirtual);
+        int pick = ListNavigate(i);
         if (pick >= 0) BeginAim(_spells[pick], null);
     }
 
     void UpdateItemList(BattleInput i)
     {
         if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
-        int pick = MenuNavigate(i, MouseVirtual);
+        int pick = ListNavigate(i);
         if (pick < 0) return;
         var it = _items[pick];
         if (_s.Field.ItemSpell(it) is { } m) { BeginAim(m, it); return; }
@@ -502,13 +544,14 @@ public sealed class BattleController
         foreach (var e in r.Effects)
         {
             var n = e.Target.Name;
-            string Points(string what, int v, int verb) => $"{n}の{what}{Word(64)}{v}{Word(65)}{Word(verb)}";   // "の攻撃力が3ポイント上昇した"
+            // T21: "ＨＰが８ポイント回復した" (no name, full-width digits); the other stats follow the same pattern (provisional)
+            string Points(string what, int v, int verb) => $"{what}{Word(64)}{Wide(v)}{Word(65)}{Word(verb)}";
             Popup(e.Kind switch
             {
                 EffectKind.Damage => $"{actor.Name} → {n}：{e.Amount}{(e.Killed ? "　撃破" : "")}",
                 EffectKind.Miss => $"{actor.Name} → {n}：ミス",
                 EffectKind.Resisted => $"{n}：無効",
-                EffectKind.Heal => $"{n}{Word(64)}{e.Amount}{Word(65)}{Word(66)}",          // "が12ポイント回復した"
+                EffectKind.Heal => Points(Word(2), e.Amount, 66),
                 EffectKind.MpHeal => Points(Word(3), e.Amount, 66),
                 EffectKind.PowerUp => Points(Word(4), e.Amount, 68),
                 EffectKind.DefUp => Points(Word(6), e.Amount, 68),
@@ -526,6 +569,9 @@ public sealed class BattleController
         }
         ShowGrowth(r);
     }
+
+    /// <summary>Full-width digits, as the original's messages print numbers.</summary>
+    static string Wide(int v) => string.Concat(v.ToString().Select(c => c is >= '0' and <= '9' ? (char)('０' + (c - '0')) : c));
 
     void ShowGrowth(ExchangeResult r)
     {
@@ -756,12 +802,18 @@ public sealed class BattleController
                 }
             _s.DrawRange(sb, viewport, tiles, 1, frame);
         }
-        // provisional colours: spell range orange (tile 2), area under the cursor blue (tile 3); medicine range blue
+        // T21: spell range and the area around the aim in blue stripes (tile 3), the tiles of affected units
+        // solid blue; medicine range in salmon stripes (tile 1)
         if (_state_ == State.Aiming && _aimSpell is not null && _sel is not null)
         {
-            _s.DrawRange(sb, viewport, _aimRange, 2, frame);
+            var tiles = new HashSet<(int X, int Y)>(_aimRange);
             if (_aimRange.Contains((_cursor.X, _cursor.Y)))
-                _s.DrawRange(sb, viewport, _s.Field.SpellArea(_aimSpell, _cursor.X, _cursor.Y), 3, frame);
+            {
+                tiles.UnionWith(_s.Field.SpellArea(_aimSpell, _cursor.X, _cursor.Y));
+                _s.DrawRange(sb, viewport, tiles, 3, frame);
+                _s.DrawRange(sb, viewport, _s.Field.SpellTargets(_sel, _aimSpell, _cursor.X, _cursor.Y).Select(u => (u.X, u.Y)), 3, frame, solid: true);
+            }
+            else _s.DrawRange(sb, viewport, tiles, 3, frame);
         }
         if (_state_ == State.MedicineTarget && _sel is not null && _aimItem is not null)
         {
@@ -770,7 +822,7 @@ public sealed class BattleController
             for (int y = _sel.Y - r; y <= _sel.Y + r; y++)
                 for (int x = _sel.X - r; x <= _sel.X + r; x++)
                     if (Math.Abs(x - _sel.X) + Math.Abs(y - _sel.Y) <= r && _s.Field.InBounds(x, y)) tiles.Add((x, y));
-            _s.DrawRange(sb, viewport, tiles, 3, frame);
+            _s.DrawRange(sb, viewport, tiles, 1, frame);
         }
     }
 
@@ -784,7 +836,8 @@ public sealed class BattleController
             _ui.Frame(sb, new Rectangle(p.X + 1, p.Y + 1, 30, 30), Color.White, 2);
             if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
         }
-        if (_state_ is State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList) DrawMenu(sb);
+        if (_state_ is State.ActionMenu or State.TurnMenu) DrawMenu(sb);
+        if (_state_ is State.SpellList or State.ItemList) DrawList(sb, frame);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
         if (_state_ == State.Status && _statusUnit is not null) DrawStatus(sb, _statusUnit);
         if (Outcome == MapOutcome.GameOver && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go)
@@ -824,6 +877,58 @@ public sealed class BattleController
         {
             var c = !_menuEnabled[i] ? new Color(120, 140, 120) : i == _menuIndex ? new Color(255, 255, 120) : Ui.Ui.PanelText;
             if (_ui.SmallText.Get(_menu[i]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + i * 16), c);
+        }
+    }
+
+    void DrawList(SpriteBatch sb, int frame)
+    {
+        bool items = _state_ == State.ItemList;
+        var r = items ? ItemListRect : SpellListRect();
+        _ui.Panel(sb, r);
+        var bar = frame / 8 % 2 == 0 ? new Color(160, 248, 96) : new Color(248, 248, 248);   // flashing (T21)
+        int first = items ? _itemPage * ItemRows : 0;
+        int count = items ? Math.Min(ItemRows, _menu.Length - first) : _menu.Length;
+        void T(string s, int x, int y, Color c, bool right = false)
+        {
+            if (_ui.SmallText.Get(s) is not { } tx) return;
+            sb.Draw(tx, new Vector2(right ? x - tx.Width : x, y), c);
+        }
+        for (int k = 0; k < count; k++)
+        {
+            int i = first + k;
+            var row = RowRect(i);
+            bool hot = i == _menuIndex;
+            if (hot) _ui.Fill(sb, row, bar);
+            var c = hot ? new Color(0, 32, 0) : !_menuEnabled[i] ? new Color(120, 140, 120) : Ui.Ui.PanelText;
+            T(_menu[i], row.X + 8, row.Y + 2, c);
+            if (items) T($"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
+            else
+            {
+                T(Word(3), row.X + 140, row.Y + 2, c);                                     // ＴＰ
+                T($"{_spells[i].MpCost}／{_sel?.Mp ?? 0}", row.Right - 8, row.Y + 2, c, right: true);
+            }
+        }
+        if (items)
+        {
+            int pages = Math.Max(1, (_menu.Length + ItemRows - 1) / ItemRows);
+            _ui.Fill(sb, new Rectangle(r.X + 12, r.Bottom - 32, r.Width - 24, 1), Ui.Ui.PanelText);
+            T(Word(63), r.X + 12, r.Bottom - 24, Ui.Ui.PanelText);                                   // ページ
+            T($"{_itemPage + 1,2}／{pages,2}", r.X + 60, r.Bottom - 24, Ui.Ui.PanelText);
+            // page arrows: SYSTEM.BMP 16x16 icons at y 304 (x 0 left, x 16 right)
+            if (_tex.Get("SYSTEM.BMP") is { } sys)
+            {
+                sb.Draw(sys, new Vector2(r.Right - 55, r.Bottom - 27), new Rectangle(0, 304, 16, 16), Color.White);
+                sb.Draw(sys, new Vector2(r.Right - 31, r.Bottom - 27), new Rectangle(16, 304, 16, 16), Color.White);
+            }
+        }
+        // description of the hovered entry
+        if (_menuIndex >= 0 && _menuIndex < _menu.Length)
+        {
+            string desc = items ? _items[_menuIndex].Desc : _spells[_menuIndex].Desc;
+            var d = new Rectangle(80, 32, 480, 48);
+            _ui.Panel(sb, d);
+            T($"{_menu[_menuIndex]}：", d.X + 16, d.Y + 10, Ui.Ui.PanelText);
+            T(desc, d.X + 16, d.Y + 26, Ui.Ui.PanelText);
         }
     }
 

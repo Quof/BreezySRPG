@@ -639,10 +639,14 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Winning without a "Next map" command | goes on to the next map number | guess |
 | Spells known | the class's skill list: every spell whose level the unit has reached. Reaching one on level-up shows 「〜を習得した」 (WORD 73) | data + inferred |
 | Spell targeting | the range grid around the caster, or the whole map. The aim must catch at least one unit the spell affects. The effect grid around the aim, or the whole map, is hit. Target 1 = enemies only for Damage/Degrade, own side for Raise; target 0 = everyone in the area. A harmful spell never hits its caster | grids confirmed (§5). The rest is a guess (T21) |
-| Spell effects | Damage: magic hit/damage formulas, no counter. Degrade: hit roll; class resist or accessory "Safe Against" blocks it. Poison 3 turns; sleep loses 2 of the unit's turns and it acts on the 3rd; Atk/Def Down = −(Value + Mag·Relation/10). Raise: HP heal (capped), Atk/Def Up = Value + Mag·Relation/10, cure poison, cleanse, extra turn (target may act again). Buffs decay 1 per own turn | help text. Heal amount and messages: T21 |
-| Spell EXP | Damage: like an attack (kill or hit, against the highest-level unit caught). Degrade/Raise: the spell's Exp Value per cast. From an item: none | help for Degrade/Raise; the rest is a guess (T21c) |
+| Spell effects | Damage: magic hit/damage formulas, no counter. Degrade: hit roll; class resist or accessory "Safe Against" blocks it. Poison 3 turns; sleep loses 2 of the unit's turns and it acts on the 3rd; Atk/Def Down = −(Value + Mag·Relation/10). Raise: HP heal (capped), Atk/Def Up = Value + Mag·Relation/10, cure poison, cleanse, extra turn (target may act again). Buffs decay 1 per own turn. A spell whose effect grid has a hollow centre doesn't touch the aim tile (剣の舞: 「術者は含まない」) | 剣の舞 +3 and the 1-per-turn decay confirmed (T21c, T21d). The rest is help text |
+| Spell EXP | Damage: like an attack (kill or hit, against the highest-level unit caught). Degrade/Raise: the spell's Exp Value per cast. From an item: none | Raise Exp Value confirmed (剣の舞 25, T21c). The rest is a guess |
 | Battle items | ITEM types Medicine and Magic, if the user's class may use them. Medicine targets the user's side within its range (0 = self): HP/MP recovery, Def/MDef Up (resets the counter, cures Def Down), cures. A magic item casts its spell with no MP cost. Using one ends the action and uses up one | help text. Stat-up and class-change items are camp-only (guess) |
-| Menus and overlays | 必殺技 lists spells with ＴＰ cost (greyed when unaffordable or nothing in range); アイテム lists usable items ×count. Spell range = orange tile, area under the cursor = blue tile, medicine range = blue | guess: the layout and colours need T21 screenshots |
+| Spell list | green panel at x 352, top at the caster's tile (clamped), 228 wide, 16 px per row + 16. Row: name at +14, ＴＰ label at +146, "cost／current TP" right-aligned at +220, 12 px text. The hovered row has a 16-px bar flashing light green (160,248,96) / white with dark text (0,32,0) | measured from T21 screenshots (the client matches to within the text rendering). Flash rate is a guess |
+| Item list | fixed green panel (352,224) 180×240, 12 rows per page from y 232, "× n" right-aligned. Footer: a white line, "ページ  1／ 1", and SYSTEM.BMP arrow icons (16×16 at y 304, x 0 = ◁, x 16 = ▷) | measured (T21) |
+| Description window | green panel (80,32) 480×48 while a list is open: "name：" at (+16,+10), the description at (+16,+26), white 12 px | measured (T21) |
+| Aiming overlays | spell range and the area around the aim tile in blue stripes (SYSTEM range tile 3, odd rows). Each affected unit's tile is solid blue (all rows). Medicine range: salmon stripes (tile 1) | confirmed (T21b/e screenshots). The spell-range colour for spells reaching beyond the caster is inferred: 剣の舞 only aims at its caster |
+| Result messages | no name, full-width digits: 「ＨＰが８ポイント回復した」 (WORD 2+64+n+65+66). The client builds 攻撃力/防御 changes the same way with 上昇した/下降した. The 「〜は〜を使います」 line before an item is a guess | heal message confirmed (T21e). The popup sat at x 160 there and the EXP popup at x 200, so its position rule is unknown |
 | Enemy spells | an enemy casts a known, affordable damage spell when its predicted total damage beats its best weapon attack, and a heal when it restores ≥ ⅓ of someone's HP | guess |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
@@ -929,6 +933,29 @@ On map 1, check:
 - **T20d:** COMPLETE!! slides in at the same speed as the turn captions and stays about 9 s while the fanfare plays, then the camp menu.
 - **Aside:** the runtime once reported `CAMP_003.BMP` missing. That file only exists in the editor's RTP folder (`srpg maker 95/RTP/BMP`), which the runtime finds through `HKCU\Software\Enterbrain\SRPG95\MyPath`. Every map's camp uses background 7, which the game folder has, so it was a one-off; nothing had changed on disk.
 
+### Phase 4, round 3 — instructions (T21: magic and items on map 2)
+
+Map 2 (２話) in `えるまに - Save testplay`: load save slot 6: the camp before map 2, with ルーティ, ジュナ and 1 ポーション. ジュリア knows 剣の舞, a Raise Attack spell for her own side, at level 2. Screenshots help wherever something appears on screen.
+
+- **T21a — spell list.** Move ジュリア next to another ally and pick 必殺技. Screenshot the spell list.
+- **T21b — aiming.** Pick 剣の舞. Screenshot the range display, with the cursor on an ally. Can the cursor go on an empty tile, or only onto units?
+- **T21c — result.** Cast it on the ally. What messages appear, in order? Then:
+  - Right-click the ally: what is its 攻撃力 now, compared with before? The data predicts +3 (Value 3, Relation 0).
+  - How much EXP did ジュリア get? The data says 25.
+- **T21d — decay.** On your next turn, check the ally's 攻撃力 again; it should be 1 lower.
+- **T21e — items.** If you have a ポーション, use it from someone next to a hurt ally. Screenshot the item list and the target choice. What messages appear?
+- **T21f — healing.** If グレイ joins during the map, have him cast 活性波 on a hurt ally. How much HP did it restore? The data predicts 7: Value 6 + his Magic 3 × Relation 5 / 10, rounded down, without an accessory.
+
+### Phase 4, round 3 — results
+
+From save slot 6, on map 2 (screenshots 37–43; layout numbers in §15):
+- **T21a — spell list:** to the right of ジュリア, one row 「剣の舞　ＴＰ 4／13」. The hovered row flashes yellow/white, and a description window appears at the top: 「剣の舞：範囲内の味方の攻撃力を一時的に上げる、術者は含まない。」
+- **T21b — aiming:** 剣の舞 aims only at the caster. Its effect grid around her shows as blue stripes, and the tile of the ally it will boost is solid blue. Whether the cursor can sit on an empty tile wasn't checked.
+- **T21c — result:** the ally's 攻撃力 rose by 3, and ジュリア got 25 EXP. Both match the data.
+- **T21d — decay:** a turn later it was 1 lower.
+- **T21e — items:** a 12-row item list with a page footer, salmon range stripes around the user, and the message 「ＨＰが８ポイント回復した」.
+- **T21f — healing:** taken as 7 (not observed).
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
@@ -942,18 +969,7 @@ On map 1, check:
 
 ## Active tests
 
-### Phase 4, round 3 — instructions (T21: magic and items on map 2)
-
-Map 2 (２話) in `えるまに - Save testplay`: load save slot 6: the camp before map 2, with ルーティ, ジュナ and 1 ポーション. ジュリア knows 剣の舞, a Raise Attack spell for her own side, at level 2. Screenshots help wherever something appears on screen.
-
-- **T21a — spell list.** Move ジュリア next to another ally and pick 必殺技. Screenshot the spell list.
-- **T21b — aiming.** Pick 剣の舞. Screenshot the range display, with the cursor on an ally. Can the cursor go on an empty tile, or only onto units?
-- **T21c — result.** Cast it on the ally. What messages appear, in order? Then:
-  - Right-click the ally: what is its 攻撃力 now, compared with before? The data predicts +3 (Value 3, Relation 0).
-  - How much EXP did ジュリア get? The data says 25.
-- **T21d — decay.** On your next turn, check the ally's 攻撃力 again; it should be 1 lower.
-- **T21e — items.** If you have a ポーション, use it from someone next to a hurt ally. Screenshot the item list and the target choice. What messages appear?
-- **T21f — healing.** If グレイ joins during the map, have him cast 活性波 on a hurt ally. How much HP did it restore? The data predicts 7: Value 6 + his Magic 3 × Relation 5 / 10, rounded down, without an accessory.
+None right now.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 
