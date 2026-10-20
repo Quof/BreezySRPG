@@ -570,12 +570,14 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 | Off | Field | Conf. | Evidence |
 |---|---|---|---|
 | 0x000, 0x004 | 1 at camp, else 0 | unknown | SAVE4 only |
-| 0x004 | 1 at the first camp, 2 at the second | unknown | maybe the number of camps or chapters cleared |
-| 0x00C | 0, then 6 after map 2 | unknown | |
+| 0x000 | 1 when saved at a camp, 0 during a battle | inferred | SAVE4/6/7/8/5 at camp = 1, SAVE1/3/5-old mid-battle = 0 |
+| 0x004 | camps reached: 1, 2, 3, 4 | inferred | one more each chapter (T18b) |
+| 0x008 | 7 / 1 / 2 across saves | unknown | |
+| 0x00C | 0, 6, 4, 5 across saves | unknown | |
 | 0x010 | map number (1-based) | inferred | map 1 battle = 1, camp before map 2 = 2, camp before map 3 = 3 |
 | 0x014 | **switches**: 500 bytes, one per switch, 1 = ON | confirmed | the prologue's switch 79 「ＯＰ」 = byte 0x63 in every save; map 2's switches 0 and 1 = bytes 0x14, 0x15 (T18) |
 | 0x20C | phase counter (ally turn t = 2t−1) | inferred | 1 at start, 7 mid-battle, 13 at the end |
-| 0x210 | **inventory**: 100 × (i32 item, i32 count) | inferred | buying one ポーション wrote item 40, 1 (T18) |
+| 0x210 | **inventory**: 100 × (i32 item, i32 count) | confirmed | buying one ポーション wrote (40, 1) (T18); a second one made it (40, 2), not a new entry (T18b) |
 | 0x530 | inventory entries used | inferred | 0 → 1 after the purchase |
 | 0x534 | gold | confirmed | 20 = in-game gold (T16) |
 | 0x538 | party size | inferred | 2 (ルーティ, ジュナ) |
@@ -583,7 +585,7 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 | 0x56C | screen tone R, G, B, vividness | inferred | 100,100,100,100 |
 | 0x57C | number of map objects | inferred | 5 on map 1 |
 
-**Variables** are not located yet. The header (2000 B) has no room for 500 int32s, and no script on the maps played so far (99, 1, 2) changes one. The first one that does is map 4 (variable 19) (**T18b**).
+**Variables** are not located yet. The header (2000 B) has no room for 500 int32s. The only variable command on the maps played so far (99, 1–4) is in map 4's opening, inside the choice case 「ジュリアの選んだ服を買う」. T18b took the other option, so nothing was written (**T18c**).
 
 **Unit record** (640 B, int32 index [n] = byte offset 4n):
 
@@ -830,6 +832,22 @@ Buy or receive an item at camp and save to File 6; play to the end of map 2 and 
   - no variable changes, because maps 99/1/2 have no variable commands.
 - **Bonus screenshot** (map 2 mid-opening narration): the client's text matches pixel-for-pixel. The trailing 「＿」 is part of the script text, not a UI marker.
 
+### Phase 3, round 4 — instructions (T18b)
+
+Buy a second ポーション and save; play maps 3 and 4 and save at the camp after map 4. A `wintool.py weaken` helper was added for quick wins.
+
+### Phase 3, round 4 — results
+
+| Save | When |
+|---|---|
+| SAVE8 | camp before map 4 |
+| SAVE1 | mid-map 4, after the opening and the second Potion |
+| SAVE5 | camp after map 4 (party 6) |
+
+- **Inventory:** a second ポーション increments the count to (40, 2) rather than adding an entry, so it's confirmed as (item, count) pairs. ロボットアーム (41) arrived after map 3.
+- **Header:** 0x004 counts camps (1→4); 0x000 is 1 only at a camp.
+- **Variables:** still not seen. Map 4's only variable command is in the choice case the player didn't pick (see §14).
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
@@ -841,11 +859,12 @@ Buy or receive an item at camp and save to File 6; play to the end of map 2 and 
 
 ## Active tests
 
-**T18b — variables and the inventory layout.** Continue from SAVE7:
-1. At the current camp, buy **one more ポーション** (the shop only sells Potions here). Save to **File 8**. This shows whether a second Potion becomes count 2 or a new entry. If a later camp sells a different item, buying one there and saving would also help.
-2. Play **maps 3 and 4** and save at the camp after map 4 (overwriting File 8 is fine if you copy it aside first, or use File 5). Map 4 is the first map whose events change a variable: variable 19 「ルーティサバイヴ条件」.
+**T18c — find the variables.** Back up SAVE1 and SAVE8 first (copy them somewhere), then:
+1. Load **SAVE8** (camp before map 4) and start map 4. Make the **same purchase as last time** (the second ポーション) if you did it at this camp.
+2. In the opening's clothes choice pick **「ジュリアの選んだ服を買う」** (last time it was the other option). This option adds 1 to variable 19.
+3. As soon as you have control of the map, before moving anyone, save to **File 2**. SAVE2's old contents aren't needed any more.
 
-Send the new `SAVE*.DAT` files with a note of what you bought.
+SAVE2 vs SAVE1 should then differ in little more than that variable.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 
