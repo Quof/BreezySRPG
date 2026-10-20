@@ -157,4 +157,76 @@ public sealed class SaveFile
     }
 
     public void Write(string path) => File.WriteAllBytes(path, Raw);
+
+    // ---------------- battle saves ----------------
+
+    const int ObjectsOff = 0x17ED0, ObjectSize = 164, FiredOff = 124;
+
+    /// <summary>Phase counter (ally turn t = 2t−1) at 0x20C.</summary>
+    public int Phase => I32(0x20C);
+
+    /// <summary>One map-unit record of a battle save (§14 fields).</summary>
+    public sealed record SavedUnit(int Object, int Unit, int ClassId, int Level, int Exp, int[] Base, int Hp, int Mp,
+        int Weapon, int Armor, int Accessory, int X, int Y, bool Acted, bool Alive, bool Computer);
+
+    /// <summary>The map units of a battle save, in record order (records start at index 1).</summary>
+    public IEnumerable<SavedUnit> MapUnitRecords()
+    {
+        for (int i = 0; i < MapUnits; i++)
+        {
+            int off = UnitOff + i * UnitSize;
+            if (I32(off) == 0) continue;
+            int R(int k) => I32(off + k * 4);
+            yield return new SavedUnit(R(7), R(8), R(9), R(10), R(11), Enumerable.Range(20, 6).Select(R).ToArray(), R(26), R(27),
+                R(40), R(41), R(42), R(5), R(6), R(2) != 0, R(1) != 0, R(3) != 0);
+        }
+    }
+
+    /// <summary>Event slots that have fired: the object table copy keeps a 16-bit flag per slot at +124 + 2·(slot−1).</summary>
+    public IEnumerable<(int Object, int Slot)> FiredSlots()
+    {
+        for (int o = 0; o < 100; o++)
+            for (int s = 1; s <= 5; s++)
+                if (BinaryPrimitives.ReadInt16LittleEndian(Raw.AsSpan(ObjectsOff + o * ObjectSize + FiredOff + (s - 1) * 2)) != 0)
+                    yield return (o, s);
+    }
+
+    /// <summary>
+    /// A battle save (header 0x000 = 0): the camp fields plus the phase, one record per unit on the map (units deployed
+    /// from the army first, then map objects in order, from index 1 as the original does), and the map's object table
+    /// with spawned objects' in-use word cleared and fired event slots flagged (both as in SAVE1/SAVE3).
+    /// </summary>
+    public static SaveFile ForBattle(GameState s, Database db, int mapIndex, string bgm, int phase, string mapPath,
+        IEnumerable<Srpg95.Rules.BattleUnit> units, IEnumerable<(int Object, int Slot)> fired, byte[]? template)
+    {
+        var f = ForCamp(s, db, mapIndex, bgm, template);
+        f.I32(0x000, 0);
+        f.I32(0x20C, phase);
+        Array.Clear(f.Raw, UnitOff, MapUnits * UnitSize);
+        var ordered = units.Where(u => !u.Hidden).OrderBy(u => u.MapObject < 0 ? 0 : 1).ThenBy(u => u.MapObject).ToList();
+        int index = 1, deployed = 0;
+        foreach (var u in ordered.Take(MapUnits - 1))
+        {
+            int off = UnitOff + index++ * UnitSize;
+            WriteUnit(f, off, db, u.Unit, new RosterEntry(u.ClassId, u.Level, u.Exp, u.Base, u.Weapon, u.Armor, u.Accessory), keepBattleState: false);
+            void R(int k, int v) => f.I32(off + k * 4, v);
+            R(1, u.Dead ? 0 : 1); R(2, u.Acted ? 1 : 0); R(3, u.Side == Srpg95.Rules.Side.Ally ? 0 : 1);
+            R(5, u.X); R(6, u.Y); R(7, u.MapObject); R(13, u.MapObject < 0 ? 1 : 0);
+            R(26, Math.Max(0, u.Hp)); R(27, u.Mp); R(36, u.PowerUp);
+            R(54, u.X); R(55, u.Y);
+            // [4]: deployment slot of a unit brought from the army (ルーティ 0, ジュナ 1 in SAVE3), else −1
+            R(4, u.MapObject < 0 ? deployed++ : -1);
+            // [50] movement left: computer units only get theirs back on their own phase (0 during the player's, SAVE3)
+            if (u.Side != Srpg95.Rules.Side.Ally && phase % 2 == 1) R(50, 0);
+        }
+        // object table: the map's own, spawned objects marked, fired slots flagged
+        var smap = File.ReadAllBytes(mapPath);
+        Array.Copy(smap, 0x1130, f.Raw, ObjectsOff, 100 * ObjectSize);
+        foreach (var u in ordered.Where(u => u.MapObject >= 0))
+            f.I32(ObjectsOff + u.MapObject * ObjectSize, 0);
+        foreach (var (o, slot) in fired)
+            if (o is >= 0 and < 100 && slot is >= 1 and <= 5)
+                BinaryPrimitives.WriteInt16LittleEndian(f.Raw.AsSpan(ObjectsOff + o * ObjectSize + FiredOff + (slot - 1) * 2), 1);
+        return f;
+    }
 }

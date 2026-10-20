@@ -111,6 +111,37 @@ public sealed class MapSession : IMapContext
         }
     }
 
+    /// <summary>
+    /// Puts a battle save's units on the map: units the save recorded replace the map's own (by object index); army
+    /// units come from their records; objects never spawned stay as the map defines them (hidden by their switch).
+    /// </summary>
+    public void RestoreFrom(SaveFile save)
+    {
+        foreach (var u in Field.Units.Where(u => u.MapObject < 0).ToList())
+        {
+            Field.Units.Remove(u);
+            Visuals.Remove(u);
+        }
+        foreach (var r in save.MapUnitRecords())
+        {
+            var u = r.Object >= 0 ? Field.Units.FirstOrDefault(x => x.MapObject == r.Object) : null;
+            if (u is null)
+            {
+                if (r.Object >= 0) continue;
+                u = CreateUnit(r.Unit, Side.Ally, r.X, r.Y, null);
+                Add(u);
+            }
+            u.ClassId = r.ClassId;
+            u.Level = r.Level;
+            u.Exp = r.Exp;
+            Array.Copy(r.Base, u.Base, 6);
+            (u.Hp, u.Mp, u.Weapon, u.Armor, u.Accessory) = (r.Hp, r.Mp, r.Weapon, r.Armor, r.Accessory);
+            (u.X, u.Y, u.Acted, u.Dead) = (r.X, r.Y, r.Acted, !r.Alive);
+        }
+        Field.SetPhase(Math.Max(1, save.Phase));
+        UpdateVisibility();
+    }
+
     public bool OtherVisible(MapObject o) => o.SwitchCondition < 0 || _state.Switches[o.SwitchCondition];
 
     /// <summary>Allies that survive a won map join (or update) the roster, unless they're guests.</summary>

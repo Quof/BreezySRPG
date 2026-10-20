@@ -11,7 +11,7 @@ namespace Erumani.Camp;
 /// header row with a rule. The hovered row gets the flashing light-green / white bar with dark text (as the
 /// battle lists; T23 recording).
 /// </summary>
-sealed class MenuList
+public sealed class MenuList
 {
     public Rectangle Rect;
     public string[] Items = Array.Empty<string>();

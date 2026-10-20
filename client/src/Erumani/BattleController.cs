@@ -21,7 +21,7 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
-        SpellList, ItemList, Aiming, MedicineTarget, Scene }
+        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -110,6 +110,56 @@ public sealed class BattleController
     // The turn captions are shipped with the game but their timing is provisional.
     string? _telop;
     public string? CurrentTelop => _telop;
+
+    // ---------------- saving and loading (turn menu) ----------------
+
+    /// <summary>セーブする / ロードする / ゲーム終了 from the turn menu; the game writes / reads the file.</summary>
+    public Action<int>? SaveRequested { get; set; }
+    public Func<int, bool>? LoadRequested { get; set; }
+    public Func<int, bool>? SlotExists { get; set; }
+    public Action? QuitRequested { get; set; }
+    readonly Camp.MenuList _files = new() { Rect = new Rectangle(128, 24, 96, 177), Indent = 16 };
+    readonly Camp.MenuList _quit = new() { Rect = new Rectangle(128, 24, 132, 84), Indent = 44, TopPad = 28 };
+    bool _saving;
+
+    /// <summary>Event slots that have run (object, slot), for a battle save's fired flags.</summary>
+    public IEnumerable<(int Object, int Slot)> FiredSlots =>
+        _fired.Where(n => n.Length == 8 && n.StartsWith("EV")).Select(n => (int.Parse(n[2..6]), int.Parse(n[6..8])));
+
+    /// <summary>Continue a restored battle: no opening, the saved events stay fired, straight into the phase.</summary>
+    public void Resume(IEnumerable<(int Object, int Slot)> fired)
+    {
+        foreach (var (o, s) in fired) _fired.Add(MapObject.ScriptName(o, s));
+        _announcePlayer = false;
+        if (_s.Field.Alive.FirstOrDefault(u => u.Side == Side.Ally) is { } first) { _s.ScrollTo(first.X, first.Y); _cursor = new Point(first.X, first.Y); }
+        if (_s.Field.AllyPhase) _state_ = State.Idle;
+        else { _state_ = State.EnemyPhase; BeginEnemyPhase(); }
+    }
+
+    void OpenFiles(bool save)
+    {
+        _saving = save;
+        _files.Header = Word(save ? 53 : 54);   // セーブします / ロードします
+        _files.Set(Enumerable.Range(81, 8).Select(Word).ToArray(),   // ファイル１–８
+            save ? null : Enumerable.Range(1, 8).Select(n => SlotExists?.Invoke(n) ?? false).ToArray());
+        _files.Index = 0;
+        _state_ = State.Files;
+    }
+
+    void UpdateFiles(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
+        int pick = _files.Navigate(i, MouseVirtual);
+        if (pick < 0) return;
+        if (_saving) { SaveRequested?.Invoke(pick + 1); _afterShow = State.Idle; Popup(Word(53)); NextPopup(); }
+        else LoadRequested?.Invoke(pick + 1);
+    }
+
+    void UpdateQuit(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
+        if (_quit.Navigate(i, MouseVirtual) is var c and >= 0) { if (c == 0) QuitRequested?.Invoke(); else _state_ = State.TurnMenu; }
+    }
     int _telopFrames;
     Action? _afterTelop;
     bool _announcePlayer;
@@ -311,6 +361,8 @@ public sealed class BattleController
             case State.Aiming: UpdateAiming(input); break;
             case State.MedicineTarget: UpdateMedicineTarget(input); break;
             case State.Scene: UpdateScene(input); break;
+            case State.Files: UpdateFiles(input); break;
+            case State.QuitConfirm: UpdateQuit(input); break;
         }
     }
 
@@ -792,7 +844,7 @@ public sealed class BattleController
     {
         // WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了
         _menu = new[] { Word(19), Word(20), Word(21), Word(22), Word(23) };
-        _menuEnabled = new[] { true, false, false, false, false };
+        _menuEnabled = new[] { true, false, true, true, true };   // 全体マップ: not yet
         _menuIndex = 0;
         _sel = null;
         _state_ = State.TurnMenu;
@@ -801,7 +853,17 @@ public sealed class BattleController
     void UpdateTurnMenu(BattleInput i)
     {
         if (i.Cancel || i.RightClick) { _state_ = State.Idle; return; }
-        if (MenuNavigate(i, MouseVirtual) == 0) EndPlayerTurn();
+        switch (MenuNavigate(i, MouseVirtual))
+        {
+            case 0: EndPlayerTurn(); break;
+            case 2: OpenFiles(save: true); break;
+            case 3: OpenFiles(save: false); break;
+            case 4:
+                _quit.Set(new[] { Word(45), Word(46) });   // ゲームを終了します: はい / いいえ
+                _quit.Index = 0;
+                _state_ = State.QuitConfirm;
+                break;
+        }
     }
 
     void EndPlayerTurn()
@@ -927,7 +989,14 @@ public sealed class BattleController
             _ui.Frame(sb, new Rectangle(p.X + 1, p.Y + 1, 30, 30), Color.White, 2);
             if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
         }
-        if (_state_ is State.ActionMenu or State.TurnMenu) DrawMenu(sb);
+        if (_state_ is State.ActionMenu or State.TurnMenu or State.Files or State.QuitConfirm) DrawMenu(sb);
+        if (_state_ == State.Files) _files.Draw(sb, _ui, true, frame);
+        if (_state_ == State.QuitConfirm)
+        {
+            _quit.Draw(sb, _ui, true, frame);
+            if (_ui.SmallText.Get(Word(57)) is { } q) sb.Draw(q, new Vector2(_quit.Rect.X + 13, _quit.Rect.Y + 9), Ui.Ui.PanelText);
+            _ui.Fill(sb, new Rectangle(_quit.Rect.X + 12, _quit.Rect.Y + 29, _quit.Rect.Width - 24, 1), Ui.Ui.PanelText);
+        }
         if (_state_ is State.SpellList or State.ItemList) DrawList(sb, frame);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
         if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit);

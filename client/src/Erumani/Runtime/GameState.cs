@@ -27,6 +27,22 @@ public sealed class GameState
 
     public int ItemCount(int item) => Items.TryGetValue(item, out var n) ? n : 0;
 
+    /// <summary>A new game.</summary>
+    public void Reset()
+    {
+        Array.Clear(Switches);
+        Array.Clear(Variables);
+        Items.Clear();
+        Gold = 0;
+        Party.Clear();
+        ClassOverride.Clear();
+        WeaponOverride.Clear();
+        Roster.Clear();
+        CampCount = 0;
+        Sortie = null;
+        LastSave = null;
+    }
+
     public void AddItem(int item, int count)
     {
         int n = Math.Max(0, ItemCount(item) + count);

@@ -626,6 +626,12 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 | [150] | number of known spells | confirmed | 1 → 2 for ジュリア |
 | [13] | 1 on roster copies | inferred | every roster record |
 
+**Battle saves** (header 0x000 = 0; SAVE1, SAVE3):
+- Map-unit records exist only for units that have appeared, starting at index 1: units deployed from the army first, then map objects in order. [7] is the object index (−1 for army units) and [4] the army unit's deployment slot (ルーティ 0, ジュナ 1), else −1.
+- Computer units' [50] (movement left) is 0 during the player's phase.
+- The object-table copy at 0x17ED0 is the map's own, except that a spawned object's in-use word is 0, and **+124 + 2·(slot−1) is a 16-bit 'this event slot has fired' flag**. ルーティ's death and first-attack slots and ジュナ's first-attack slot on map 1 were set.
+- The client writes battle saves the same way. Re-saving SAVE3 differs only in leftovers it can't know: an army unit's movement left and position before moving from earlier play, and ジュリア's [52] = 2 (maybe facing). Loading restores the units, phase, switches, inventory and fired events. Status effects and buffs aren't known to be in the save and restart clear.
+
 **Writing saves (client):** a camp save sets header 0x000 = 1, 0x004 (camps), 0x010 (next map, 1-based), switches, inventory and its count, gold, party size, BGM name, tone and variables. Each roster record is rebuilt from unit, class, level, EXP, base stats and equipment: in-use flags, stats with the accessory, Attack/Accuracy/Defense/MDef, range, movement, terrain costs and known spells. Fields that are leftovers of the last battle ([5], [6], [50], [52], [54]–[56]) and unknown header fields are kept from the slot's previous file or the last save loaded. Checks (`SaveFileTests`):
 - Re-saving SAVE6 at its own camp reproduces the original file byte for byte.
 - Every camp save's roster records rebuild from nothing exactly, apart from those leftovers.
@@ -1049,7 +1055,9 @@ Two recordings: one of the camp before map 3 (ユニット編成, equipment, 技
 
 ## Active tests
 
-None right now.
+### Phase 6, round 2 — instructions (T24: the title screen)
+
+The client's title menu is a guess (「はじめませう」 / ロードする / ゲーム終了 in a small panel low in the middle). A screenshot of the original's title screen with its menu, and of what loading from it looks like, would fix it. Also: does any music play on the title?
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

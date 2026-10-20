@@ -83,4 +83,34 @@ public class SaveFileTests
                     $"roster {u} field [{k}]: {BitConverter.ToInt32(save.Raw, off)} vs {BitConverter.ToInt32(fresh.Raw, off)}");
             }
     }
+
+    [Fact]
+    public void Battle_save_records_match_the_original_apart_from_unknown_leftovers()
+    {
+        var test = Folder("えるまに - Save testplay");
+        var game = Folder("えるまに");
+        if (test is null || game is null || !File.Exists(Path.Combine(test, "SAVE3.DAT"))) return;
+        var folder = new GameFolder(game);
+        var db = Database.Load(folder);
+        var save = SaveFile.Load(Path.Combine(test, "SAVE3.DAT"))!;   // map 2, turn 1
+        Assert.False(save.AtCamp);
+        var state = new GameState();
+        save.ApplyTo(state);
+        // rebuild the units the way the client holds them, then write a battle save
+        var units = save.MapUnitRecords().Select(r => new Srpg95.Rules.BattleUnit
+        {
+            Unit = r.Unit, Side = r.Computer ? Srpg95.Rules.Side.Enemy : Srpg95.Rules.Side.Ally, MapObject = r.Object,
+            ClassId = r.ClassId, Level = r.Level, Exp = r.Exp, Base = r.Base, Hp = r.Hp, Mp = r.Mp,
+            Weapon = r.Weapon, Armor = r.Armor, Accessory = r.Accessory, X = r.X, Y = r.Y, Acted = r.Acted, Dead = !r.Alive,
+        }).ToList();
+        var bgm = System.Text.Encoding.GetEncoding(932).GetString(save.Raw, 0x53C, 48).TrimEnd('\0');
+        var again = SaveFile.ForBattle(state, db, save.MapNumber - 1, bgm, save.Phase, folder.MapPath(save.MapNumber - 1),
+            units, save.FiredSlots(), save.Raw);
+        var differing = new HashSet<string>();
+        for (int i = 0; i < SaveFile.Size; i++)
+            if (save.Raw[i] != again.Raw[i])
+                differing.Add(i is >= 0x7D0 and < 0x101D0 ? $"unit[{(i - 0x7D0) % 640 / 4}]" : $"0x{i:X}");
+        // what the client can't know: an ally's movement left and position before moving from earlier play, and [52]
+        Assert.Subset(new HashSet<string> { "unit[50]", "unit[52]", "unit[54]", "unit[55]" }, differing);
+    }
 }
