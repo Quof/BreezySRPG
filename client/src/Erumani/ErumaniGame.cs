@@ -18,6 +18,8 @@ namespace Erumani;
 public sealed class ErumaniGame : Game
 {
     public const int VirtualWidth = 640, VirtualHeight = 480;
+    /// <summary>Map viewport inside the SFRAME border (original layout).</summary>
+    public const int ViewX = 16, ViewY = 16, ViewWidth = 608, ViewHeight = 448;
 
     readonly GraphicsDeviceManager _gfx;
     readonly GameFolder _folder;
@@ -55,7 +57,7 @@ public sealed class ErumaniGame : Game
             PreferredBackBufferHeight = VirtualHeight * 2,
             SynchronizeWithVerticalRetrace = true,
         };
-        IsMouseVisible = true;
+        IsMouseVisible = false;   // the SYSTEM.BMP cursor is drawn instead
         Window.AllowUserResizing = true;
         IsFixedTimeStep = true;
         TargetElapsedTime = TimeSpan.FromSeconds(1.0 / 60);
@@ -66,7 +68,7 @@ public sealed class ErumaniGame : Game
     {
         _db = Database.Load(_folder);
         _tex = new Textures(GraphicsDevice, _folder);
-        _ui = new Ui.Ui(GraphicsDevice);
+        _ui = new Ui.Ui(GraphicsDevice, _tex);
         _audio = new Audio(_folder) { Muted = _opts.Screenshot is not null };
         _sb = new SpriteBatch(GraphicsDevice);
         _screen = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight);
@@ -95,6 +97,7 @@ public sealed class ErumaniGame : Game
     {
         var k = Keyboard.GetState();
         var m = Mouse.GetState();
+        _mouseVirtual = ToVirtual(m.Position);
         bool Pressed(Keys key) => k.IsKeyDown(key) && !_prevKeys.IsKeyDown(key);
         bool alt = k.IsKeyDown(Keys.LeftAlt) || k.IsKeyDown(Keys.RightAlt);
         bool click = IsActive && m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
@@ -177,7 +180,7 @@ public sealed class ErumaniGame : Game
 
     protected override void Draw(GameTime gameTime)
     {
-        if (_pendingMap is int pm && (_prevKeys.IsKeyDown(Keys.Enter) || _opts.Screenshot is not null && false))
+        if (_pendingMap is int pm && _prevKeys.IsKeyDown(Keys.Enter))
         {
             _pendingMap = null;
             LoadMap(pm);
@@ -185,19 +188,28 @@ public sealed class ErumaniGame : Game
 
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
-        var view = new Rectangle(_fx.ShakeOffset.X, _fx.ShakeOffset.Y, VirtualWidth, VirtualHeight);
+        var view = new Rectangle(ViewX + _fx.ShakeOffset.X, ViewY + _fx.ShakeOffset.Y, ViewWidth, ViewHeight);
+        var viewClip = new Rectangle(ViewX, ViewY, ViewWidth, ViewHeight);
+
+        // map, picture and screen effects live inside the 608x448 viewport
         _sb.Begin(samplerState: SamplerState.PointClamp);
         _session?.Draw(_sb, view, _frame);
         DrawPicture();
         _sb.End();
-        DrawTone();
+        DrawTone(viewClip);
         _sb.Begin(samplerState: SamplerState.PointClamp);
-        if (_fx.FlashAlpha > 0) _ui.Fill(_sb, new Rectangle(0, 0, VirtualWidth, VirtualHeight), _fx.FlashColor * _fx.FlashAlpha);
-        if (_fx.Fade > 0) _ui.Fill(_sb, new Rectangle(0, 0, VirtualWidth, VirtualHeight), _fx.FadeColor * _fx.Fade);
+        if (_fx.FlashAlpha > 0) _ui.Fill(_sb, viewClip, _fx.FlashColor * _fx.FlashAlpha);
+        if (_fx.Fade > 0) _ui.Fill(_sb, viewClip, _fx.FadeColor * _fx.Fade);
+        // frame on top of the picture (as in the original), then windows and cursor
+        if (_session is { } s)
+            _ui.ScreenFrame(_sb, s.Camera.Y > 0, s.Camera.Y < s.PixelHeight - ViewHeight,
+                s.Camera.X > 0, s.Camera.X < s.PixelWidth - ViewWidth);
         DrawMessage();
         DrawChoice();
         DrawStatus();
         if (_debug) DrawDebug();
+        if (_opts.Screenshot is null && IsActive)
+            _ui.Cursor(_sb, _mouseVirtual, _runner?.Message is not null, _frame);
         _sb.End();
 
         if (_opts.Screenshot is { } shot && _shotAdvance == 0 && _frame > 2)
@@ -214,18 +226,26 @@ public sealed class ErumaniGame : Game
         float scale = Math.Min((float)bb.Width / VirtualWidth, (float)bb.Height / VirtualHeight);
         if (_integerScale && scale >= 1) scale = MathF.Floor(scale);
         int w = (int)(VirtualWidth * scale), h = (int)(VirtualHeight * scale);
+        _dest = new Rectangle((bb.Width - w) / 2, (bb.Height - h) / 2, w, h);
         _sb.Begin(samplerState: SamplerState.PointClamp);
-        _sb.Draw(_screen, new Rectangle((bb.Width - w) / 2, (bb.Height - h) / 2, w, h), Color.White);
+        _sb.Draw(_screen, _dest, Color.White);
         _sb.End();
         base.Draw(gameTime);
     }
+
+    Rectangle _dest = new(0, 0, VirtualWidth, VirtualHeight);
+    Point _mouseVirtual;
+
+    /// <summary>Window pixel -> 640x480 virtual pixel.</summary>
+    Point ToVirtual(Point p) => _dest.Width == 0 ? p : new Point(
+        (p.X - _dest.X) * VirtualWidth / _dest.Width, (p.Y - _dest.Y) * VirtualHeight / _dest.Height);
 
     void DrawPicture()
     {
         if (_fx.Picture is null || _fx.PictureAlpha <= 0) return;
         var t = _tex.Get(_fx.Picture, _fx.PictureTransparent);
         if (t is null) return;
-        // Numeric-keypad positions: 7 8 9 / 4 5 6 / 1 2 3.
+        // Numeric-keypad positions on the full 640x480 screen: 7 8 9 / 4 5 6 / 1 2 3.
         int p = Math.Clamp(_fx.PicturePosition, 1, 9) - 1;
         int col = p % 3, row = 2 - p / 3;
         int x = col switch { 0 => 0, 1 => (VirtualWidth - t.Width) / 2, _ => VirtualWidth - t.Width };
@@ -234,81 +254,81 @@ public sealed class ErumaniGame : Game
     }
 
     /// <summary>Colour tone: multiply for channels under 100 %, add for channels over (vividness not applied yet).</summary>
-    void DrawTone()
+    void DrawTone(Rectangle area)
     {
         var tone = _fx.Tone;
         if (tone.X == 100 && tone.Y == 100 && tone.Z == 100) return;
-        var full = new Rectangle(0, 0, VirtualWidth, VirtualHeight);
         static int Mul(float v) => (int)(Math.Clamp(v, 0, 100) * 2.55f);
         static int Add(float v) => (int)(Math.Clamp(v - 100, 0, 100) * 2.55f);
         _sb.Begin(blendState: Multiply);
-        _ui.Fill(_sb, full, new Color(Mul(tone.X), Mul(tone.Y), Mul(tone.Z)));
+        _ui.Fill(_sb, area, new Color(Mul(tone.X), Mul(tone.Y), Mul(tone.Z)));
         _sb.End();
         _sb.Begin(blendState: BlendState.Additive);
-        _ui.Fill(_sb, full, new Color(Add(tone.X), Add(tone.Y), Add(tone.Z)));
+        _ui.Fill(_sb, area, new Color(Add(tone.X), Add(tone.Y), Add(tone.Z)));
         _sb.End();
     }
 
-    // Provisional layout (T17 asks for screenshots of the original): 5 lines x 20 px,
-    // 128x128 face inside the window, windows at top / centre / bottom.
+    // Layout measured from screenshots of the original (FORMAT_NOTES T17):
+    // window 414x126 at y 33 / 177 / 321 (top / centre / bottom); x 113 without a face,
+    // x 193 with a face on the left (face 128x128 at (32, y-1), speech tail on the window's
+    // left edge). Text: GDI MS Gothic 18 px bold, colour (16,16,0), origin (+17, +11), 22 px lines.
+    // Face-on-the-right placement is mirrored and still unverified.
     void DrawMessage()
     {
         if (_runner?.Message is not { } msg) return;
-        const int h = 144;
-        int y = msg.Window switch { 0 => 8, 1 => (VirtualHeight - h) / 2, _ => VirtualHeight - h - 8 };
-        var r = new Rectangle(8, y, VirtualWidth - 16, h);
-        _ui.Window(_sb, r);
-        int textX = r.X + 16;
-        if (msg.Face > 0 && _tex.Get($"FACE_{msg.Face:000}.BMP") is { } face)
+        int y = msg.Window switch { 0 => 33, 1 => 177, _ => 321 };
+        var face = msg.Face > 0 ? _tex.Get($"FACE_{msg.Face:000}.BMP") : null;
+        int x = face is null ? 113 : msg.FaceRight ? VirtualWidth - 193 - Ui.Ui.MessageWidth : 193;
+        _ui.MessageWindow(_sb, new Point(x, y), tail: face is not null && !msg.FaceRight);
+        if (face is not null)
         {
-            int fx = msg.FaceRight ? r.Right - 8 - 128 : r.X + 8;
-            _sb.Draw(face, new Rectangle(fx, r.Y + 8, 128, 128), null, Color.White, 0, Vector2.Zero,
+            int fx = msg.FaceRight ? VirtualWidth - 32 - 128 : 32;
+            _sb.Draw(face, new Rectangle(fx, y - 1, 128, 128), null, Color.White, 0, Vector2.Zero,
                 msg.FaceFlip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
-            if (!msg.FaceRight) textX = r.X + 8 + 128 + 16;
         }
         for (int i = 0; i < msg.Lines.Count; i++)
-            _ui.Text(_sb, msg.Lines[i], new Vector2(textX, r.Y + 14 + i * Ui.Ui.LineHeight), Color.White);
-        if (_frame / 20 % 2 == 0)
-            _ui.Text(_sb, "▼", new Vector2(r.Right - 28, r.Bottom - 26), Color.White);
+            _ui.DrawText(_sb, msg.Lines[i], new Vector2(x + 17, y + 11 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
     }
 
+    // No reference screenshot of a choice menu yet: same window skin, provisional layout.
     void DrawChoice()
     {
         if (_runner?.Choice is not { } opts) return;
-        int w = (int)opts.Max(o => _ui.Measure(o).X) + 56, h = opts.Length * Ui.Ui.LineHeight + 24;
+        int w = opts.Max(o => _ui.Text.Measure(o)) + 56, h = opts.Length * Ui.Ui.LineHeight + 20;
         var r = new Rectangle((VirtualWidth - w) / 2, (VirtualHeight - h) / 2, w, h);
         _ui.Window(_sb, r);
         for (int i = 0; i < opts.Length; i++)
         {
-            var pos = new Vector2(r.X + 32, r.Y + 12 + i * Ui.Ui.LineHeight);
+            var pos = new Vector2(r.X + 32, r.Y + 10 + i * Ui.Ui.LineHeight);
             if (i == _runner.ChoiceIndex)
             {
-                _ui.Fill(_sb, new Rectangle(r.X + 8, (int)pos.Y - 1, w - 16, Ui.Ui.LineHeight), new Color(120, 140, 255) * 0.4f);
-                _ui.Text(_sb, "▶", pos - new Vector2(20, 0), Color.White);
+                _ui.Fill(_sb, new Rectangle(r.X + 8, (int)pos.Y - 2, w - 16, Ui.Ui.LineHeight - 2), new Color(255, 255, 255) * 0.5f);
+                _ui.DrawText(_sb, "▶", pos - new Vector2(20, 0), Ui.Ui.TextColor);
             }
-            _ui.Text(_sb, opts[i], pos, Color.White);
+            _ui.DrawText(_sb, opts[i], pos, Ui.Ui.TextColor);
         }
     }
 
     void DrawStatus()
     {
         if (_status.Length == 0) return;
-        var r = new Rectangle(8, VirtualHeight - 36, VirtualWidth - 16, 28);
-        _ui.Window(_sb, r, 0.9f);
-        _ui.Text(_sb, _status, new Vector2(r.X + 10, r.Y + 6), new Color(255, 240, 160));
+        int w = _ui.Text.Measure(_status) + 32;
+        var r = new Rectangle((VirtualWidth - w) / 2, ViewY + ViewHeight - 44, w, 36);
+        _ui.Window(_sb, r);
+        _ui.DrawText(_sb, _status, new Vector2(r.X + 16, r.Y + 10), Ui.Ui.TextColor);
     }
 
     void DrawDebug()
     {
         var lines = new List<string>
         {
-            $"SMAP_{_mapIndices[_mapPos] + 1:000} {_session?.Map.Name}  BGM {_audio.CurrentBgm ?? "-"}  font {_ui.FontName}",
+            $"SMAP_{_mapIndices[_mapPos] + 1:000} {_session?.Map.Name}  BGM {_audio.CurrentBgm ?? "-"}  font {_ui.Text.FaceName}",
             $"gold {_state.Gold}  party {string.Join(",", _state.Party)}  event {_runner?.Name} {(_runner?.Running == true ? "running" : "idle")}",
         };
         lines.AddRange(_runner?.Log.TakeLast(8) ?? Enumerable.Empty<string>());
-        _ui.Fill(_sb, new Rectangle(0, 0, VirtualWidth, 8 + lines.Count * 18), Color.Black * 0.7f);
+        _ui.Fill(_sb, new Rectangle(0, 0, VirtualWidth, 8 + lines.Count * 18), Color.Black * 0.75f);
         for (int i = 0; i < lines.Count; i++)
-            _ui.Font.DrawText(_sb, lines[i], new Vector2(6, 4 + i * 18), Color.LightGreen);
+            _ui.DrawText(_sb, lines[i], new Vector2(6, 4 + i * 18), Color.LightGreen);
     }
 
     protected override void UnloadContent()

@@ -36,7 +36,8 @@ public sealed class ScreenEffects
     /// <summary>Erase screen (to colour) or screen display (from colour). Effect variants are drawn as fades for now.</summary>
     public void StartFade(bool toCovered, int color, int effect)
     {
-        FadeColor = color == 1 ? Color.White : Color.Black;
+        // Erased-to-black screens show (16,16,0) in the original (0話 screenshot); white is unverified.
+        FadeColor = color == 1 ? Color.White : new Color(16, 16, 0);
         _fadeFrom = Fade;
         _fadeTo = toCovered ? 1 : 0;
         _fadeFrames = 30;

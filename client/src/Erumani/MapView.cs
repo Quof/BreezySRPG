@@ -69,14 +69,14 @@ public sealed class MapSession : IMapContext
 
     public void ScrollTo(int x, int y)
     {
-        Camera = new Point(x * Tile + Tile / 2 - ErumaniGame.VirtualWidth / 2, y * Tile + Tile / 2 - ErumaniGame.VirtualHeight / 2);
+        Camera = new Point(x * Tile + Tile / 2 - ErumaniGame.ViewWidth / 2, y * Tile + Tile / 2 - ErumaniGame.ViewHeight / 2);
         ClampCamera();
     }
 
     public void ClampCamera()
     {
-        Camera.X = Math.Clamp(Camera.X, 0, Math.Max(0, PixelWidth - ErumaniGame.VirtualWidth));
-        Camera.Y = Math.Clamp(Camera.Y, 0, Math.Max(0, PixelHeight - ErumaniGame.VirtualHeight));
+        Camera.X = Math.Clamp(Camera.X, 0, Math.Max(0, PixelWidth - ErumaniGame.ViewWidth));
+        Camera.Y = Math.Clamp(Camera.Y, 0, Math.Max(0, PixelHeight - ErumaniGame.ViewHeight));
     }
 
     public void QueueMove(int unit, IReadOnlyList<byte> steps)

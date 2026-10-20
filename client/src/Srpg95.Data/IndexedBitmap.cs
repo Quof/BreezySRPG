@@ -45,13 +45,17 @@ public sealed class IndexedBitmap
         return new IndexedBitmap(w, h, pal, px);
     }
 
-    /// <summary>RGBA8888 pixels (R,G,B,A byte order), index 0 transparent if requested.</summary>
+    /// <summary>
+    /// RGBA8888 pixels (R,G,B,A byte order), premultiplied: transparent pixels (index 0 when
+    /// requested) are all-zero, as alpha-blending renderers expect.
+    /// </summary>
     public byte[] ToRgba(bool index0Transparent)
     {
         var o = new byte[Width * Height * 4];
         for (int i = 0; i < Pixels.Length; i++)
         {
             byte idx = Pixels[i];
+            if (index0Transparent && idx == 0) continue;   // stays 0,0,0,0
             uint c = Palette[idx];
             o[i * 4] = (byte)(c >> 16);
             o[i * 4 + 1] = (byte)(c >> 8);
