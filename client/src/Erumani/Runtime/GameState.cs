@@ -15,6 +15,9 @@ public sealed class GameState
     public Dictionary<int, int> ClassOverride { get; } = new();
     public Dictionary<int, int> WeaponOverride { get; } = new();
 
+    /// <summary>The player's army between maps (save-file roster, FORMAT_NOTES §14), by unit id.</summary>
+    public Dictionary<int, RosterEntry> Roster { get; } = new();
+
     public int ItemCount(int item) => Items.TryGetValue(item, out var n) ? n : 0;
 
     public void AddItem(int item, int count)
@@ -23,6 +26,9 @@ public sealed class GameState
         if (n == 0) Items.Remove(item); else Items[item] = n;
     }
 }
+
+/// <summary>A party member's persistent state between maps.</summary>
+public sealed record RosterEntry(int ClassId, int Level, int Exp, int[] Base, int Weapon, int Armor, int Accessory);
 
 /// <summary>Battle-map state the event conditions can look at.</summary>
 public interface IMapContext

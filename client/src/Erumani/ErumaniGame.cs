@@ -34,6 +34,11 @@ public sealed class ErumaniGame : Game
     ScreenEffects _fx = new();
     MapSession? _session;
     EventRunner? _runner;
+    BattleController? _battle;
+    Queue<string> _script = new();
+    readonly List<string> _trace = new();
+    int _scriptWait, _idleFrames;
+    MapOutcome _seenOutcome;
     int[] _mapIndices = Array.Empty<int>();
     int _mapPos, _frame, _shotAdvance;
     bool _integerScale = true, _debug;
@@ -62,6 +67,7 @@ public sealed class ErumaniGame : Game
         IsFixedTimeStep = true;
         TargetElapsedTime = TimeSpan.FromSeconds(1.0 / 60);
         _shotAdvance = opts.Advance;
+        foreach (var tok in (opts.Keys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _script.Enqueue(tok.ToLowerInvariant());
     }
 
     protected override void LoadContent()
@@ -85,10 +91,14 @@ public sealed class ErumaniGame : Game
         int idx = _mapIndices[_mapPos];
         var map = MapData.Load(_folder.MapPath(idx));
         _fx = new ScreenEffects();
-        _session = new MapSession(map, _db, _state, _tex);
+        _session = new MapSession(map, _db, _state, _tex, _folder.Chipset(map.Tileset));
         _runner = new EventRunner(_state, _session, _audio, _fx);
-        if (map.Scripts.TryGetValue(_opts.Event ?? "OPENING", out var opening)) _runner.Start(opening);
-        if (!_runner.Running) _audio.PlayBgm(map.Bgm[1]);   // player-turn BGM
+        if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
+        _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex);
+        _audio.PlayBgm(map.Bgm[1]);   // player-turn BGM; the opening usually sets its own
+        _battle.Start(_opts.Event);
+        _seenOutcome = MapOutcome.None;
+        _pendingMap = null;
         Window.Title = $"Erumani — SMAP_{idx + 1:000} {map.Name}";
         _status = "";
     }
@@ -122,63 +132,134 @@ public sealed class ErumaniGame : Game
             Down: Pressed(Keys.Down),
             FastForward: k.IsKeyDown(Keys.Tab));
 
-        if (_opts.Screenshot is not null && _shotAdvance > 0 && _runner is { Message: not null } or { Choice: not null })
+        if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
+        if (_opts.Screenshot is not null && _shotAdvance != 0 && _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null })
         {
             input = input with { Confirm = true };
             _shotAdvance--;
         }
 
         if (input.Up || input.Down) _choiceActive = true;
+        var battleInput = new BattleInput(
+            Confirm: input.Confirm, Cancel: input.Cancel, Up: Pressed(Keys.Up), Down: Pressed(Keys.Down),
+            Left: Pressed(Keys.Left), Right: Pressed(Keys.Right), MouseTile: MouseTile(),
+            MouseMoved: m.Position != _prevMouse.Position, Click: click, RightClick: rclick, FastForward: input.FastForward);
+        if (_battle is not null) _battle.MouseVirtual = _mouseVirtual;
+        if (_opts.Screenshot is not null)   // ignore the real mouse while scripted
+            battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, false));
+
+        if (_pendingMap is int pm && battleInput.Confirm)
+        {
+            _pendingMap = null;
+            LoadMap(pm);
+            input = input with { Confirm = false };
+            battleInput = battleInput with { Confirm = false, Click = false };
+        }
+
         // Fast-forward: several simulation steps per frame while Tab is held.
         int steps = input.FastForward ? 4 : 1;
         for (int i = 0; i < steps; i++)
         {
-            Step(k, i == 0 ? input : input with { Confirm = false, Up = false, Down = false, Cancel = false });
+            if (i == 0) Step(k, input, battleInput);
+            else Step(k, input with { Confirm = false, Up = false, Down = false, Cancel = false },
+                battleInput with { Confirm = false, Cancel = false, Up = false, Down = false, Left = false, Right = false, Click = false, RightClick = false, MouseMoved = false });
         }
-
         _prevKeys = k;
         _prevMouse = m;
         base.Update(gameTime);
     }
 
-    void Step(KeyboardState k, EventInput input)
+    /// <summary>Screenshot mode: feeds the --keys queue, one token every 10 frames while the map is idle.</summary>
+    BattleInput Scripted(BattleInput bi)
+    {
+        if (_script.TryPeek(out var next) && next.StartsWith("shot+")) { _script.Dequeue(); _shotAt = _frame + int.Parse(next[5..]); }
+        bool idle = _battle is { Busy: false } && _runner is { Message: null, Choice: null };
+        _idleFrames = idle ? _idleFrames + 1 : 0;
+        if (!idle || _script.Count == 0 || ++_scriptWait < 10) return bi;
+        _scriptWait = 0;
+        _idleFrames = 0;
+        var tok = _script.Dequeue();
+        _trace.Add($"{_frame}: {tok} in {_battle!.DebugState.Split('\n')[0]}");
+        return tok switch
+        {
+            "up" => bi with { Up = true },
+            "down" => bi with { Down = true },
+            "left" => bi with { Left = true },
+            "right" => bi with { Right = true },
+            "enter" => bi with { Confirm = true },
+            "esc" => bi with { Cancel = true },
+            _ when tok.StartsWith("at:") && tok[3..].Split('.') is [var x, var y] =>
+                bi with { MouseTile = new Point(int.Parse(x), int.Parse(y)), MouseMoved = true },
+            _ => bi,
+        };
+    }
+
+    int _shotAt = int.MaxValue;
+    bool ShotReady => _frame > 6000 || _frame >= _shotAt ||
+        (_frame > 2 && (_opts.Keys is null ? _shotAdvance <= 0 && (_shotAdvance == 0 || _idleFrames > 30) : _script.Count == 0 && _idleFrames > 30));
+
+    /// <summary>Map tile under the mouse, or null outside the viewport.</summary>
+    Point? MouseTile()
+    {
+        if (_session is null) return null;
+        var v = _mouseVirtual;
+        if (v.X < ViewX || v.Y < ViewY || v.X >= ViewX + ViewWidth || v.Y >= ViewY + ViewHeight) return null;
+        int tx = (v.X - ViewX + _session.Camera.X) / MapSession.Tile, ty = (v.Y - ViewY + _session.Camera.Y) / MapSession.Tile;
+        return tx < _session.Map.Width && ty < _session.Map.Height ? new Point(tx, ty) : null;
+    }
+
+    void Step(KeyboardState k, EventInput input, BattleInput battleInput)
     {
         _frame++;
         _fx.Update();
         _audio.Update();
-        if (_session is null || _runner is null) return;
+        if (_session is null || _battle is null) return;
         _session.Update();
+        _battle.Update(battleInput, input);
 
-        if (_runner.Running)
+        if (_battle.Outcome != _seenOutcome)
         {
-            _runner.Update(input);
-            if (!_runner.Running) OnEventFinished();
-            return;
+            _seenOutcome = _battle.Outcome;
+            OnMapEnded();
         }
 
+        // camera: WASD, or the mouse at the viewport's edge (provisional), when nothing is animating
+        if (_battle.Busy) return;
         const int speed = 8;
-        if (k.IsKeyDown(Keys.Left) || k.IsKeyDown(Keys.A)) _session.Camera.X -= speed;
-        if (k.IsKeyDown(Keys.Right) || k.IsKeyDown(Keys.D)) _session.Camera.X += speed;
-        if (k.IsKeyDown(Keys.Up) || k.IsKeyDown(Keys.W)) _session.Camera.Y -= speed;
-        if (k.IsKeyDown(Keys.Down) || k.IsKeyDown(Keys.S)) _session.Camera.Y += speed;
+        var mv = _mouseVirtual;
+        bool inView = IsActive && mv.X >= 0 && mv.Y >= 0 && mv.X < VirtualWidth && mv.Y < VirtualHeight;
+        if (k.IsKeyDown(Keys.A) || (inView && mv.X < ViewX + 4)) _session.Camera.X -= speed;
+        if (k.IsKeyDown(Keys.D) || (inView && mv.X >= ViewX + ViewWidth - 4)) _session.Camera.X += speed;
+        if (k.IsKeyDown(Keys.W) || (inView && mv.Y < ViewY + 4)) _session.Camera.Y -= speed;
+        if (k.IsKeyDown(Keys.S) || (inView && mv.Y >= ViewY + ViewHeight - 4)) _session.Camera.Y += speed;
         _session.ClampCamera();
     }
 
-    void OnEventFinished()
+    void OnMapEnded()
     {
-        var r = _runner!;
-        _status = r.End switch
+        int idx = _mapIndices[_mapPos];
+        switch (_battle!.Outcome)
         {
-            EventEnd.MapWon or EventEnd.MapLost =>
-                $"Map complete ({(r.End == EventEnd.MapWon ? "win" : "lose")})" +
-                (r.NextMap is int n ? $" → next map SMAP_{n + 1:000} {SafeName(n)}  [PageDown/Enter]" : ""),
-            EventEnd.GameOver => "GAME OVER",
-            EventEnd.ReturnToTitle => "Return to title",
-            _ => "Opening finished — battle gameplay is the next milestone",
-        };
-        if (r.End is EventEnd.None or EventEnd.EndEvent) _audio.PlayBgm(_session!.Map.Bgm[1]);   // back to player-turn BGM
-        if (r.End is EventEnd.MapWon or EventEnd.MapLost && r.NextMap is int next && Array.IndexOf(_mapIndices, next) is var p and >= 0)
-            _pendingMap = p;
+            case MapOutcome.Won:
+                int next = _battle.NextMap ?? idx + 1;   // provisional: no "Next Map" means the following map
+                _audio.PlayBgm(_session!.Map.Bgm[6]);    // victory
+                _status = $"MAP CLEAR → SMAP_{next + 1:000} {SafeName(next)}  [Enter]";
+                if (Array.IndexOf(_mapIndices, next) is var p and >= 0) _pendingMap = p;
+                break;
+            case MapOutcome.Lost:
+                _status = "Map lost" + (_battle.NextMap is int n ? $" → SMAP_{n + 1:000}  [Enter]" : "  [Enter: retry]");
+                _pendingMap = _battle.NextMap is int n2 && Array.IndexOf(_mapIndices, n2) is var p2 and >= 0 ? p2 : _mapPos;
+                break;
+            case MapOutcome.GameOver:
+                _audio.PlayBgm(_session!.Map.Bgm[7]);    // game over
+                _status = "GAME OVER  [Enter: retry]";
+                _pendingMap = _mapPos;
+                break;
+            case MapOutcome.ReturnToTitle:
+                _status = "Return to title  [Enter: restart]";
+                _pendingMap = Math.Max(0, Array.IndexOf(_mapIndices, _db.StartMap));
+                break;
+        }
     }
 
     int? _pendingMap;
@@ -187,12 +268,6 @@ public sealed class ErumaniGame : Game
 
     protected override void Draw(GameTime gameTime)
     {
-        if (_pendingMap is int pm && _prevKeys.IsKeyDown(Keys.Enter))
-        {
-            _pendingMap = null;
-            LoadMap(pm);
-        }
-
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
         var view = new Rectangle(ViewX + _fx.ShakeOffset.X, ViewY + _fx.ShakeOffset.Y, ViewWidth, ViewHeight);
@@ -200,7 +275,12 @@ public sealed class ErumaniGame : Game
 
         // map, picture and screen effects live inside the 608x448 viewport
         _sb.Begin(samplerState: SamplerState.PointClamp);
-        _session?.Draw(_sb, view, _frame);
+        if (_session is not null)
+        {
+            _session.DrawTiles(_sb, view);
+            _battle?.DrawOverlays(_sb, view, _frame);
+            _session.DrawUnits(_sb, view, _frame);
+        }
         DrawPicture();
         _sb.End();
         DrawTone(viewClip);
@@ -211,6 +291,7 @@ public sealed class ErumaniGame : Game
         if (_session is { } s)
             _ui.ScreenFrame(_sb, s.Camera.Y > 0, s.Camera.Y < s.PixelHeight - ViewHeight,
                 s.Camera.X > 0, s.Camera.X < s.PixelWidth - ViewWidth);
+        _battle?.DrawUi(_sb, view, _frame);
         DrawMessage();
         DrawChoice();
         DrawStatus();
@@ -219,10 +300,11 @@ public sealed class ErumaniGame : Game
             _ui.Cursor(_sb, _mouseVirtual, _runner?.Message is not null, _frame);
         _sb.End();
 
-        if (_opts.Screenshot is { } shot && _shotAdvance == 0 && _frame > 2)
+        if (_opts.Screenshot is { } shot && ShotReady)
         {
             GraphicsDevice.SetRenderTarget(null);
             using (var f = File.Create(shot)) _screen.SaveAsPng(f, VirtualWidth, VirtualHeight);
+            File.WriteAllText(Path.ChangeExtension(shot, ".txt"), $"frame={_frame} script-left={_script.Count} {_battle?.DebugState}\n" + string.Join("\n", _trace) + "\n");
             Exit();
             return;
         }

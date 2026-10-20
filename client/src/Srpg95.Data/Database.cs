@@ -32,7 +32,7 @@ public sealed record Item(int Index, string Name, ItemType Type, int Price, stri
 {
     public static readonly (int Min, int Max)[] WeaponRanges = { (1, 1), (1, 2), (1, 3), (2, 2), (2, 3), (2, 4), (2, 5), (3, 10) };
 
-    internal static Item Parse(int i, ReadOnlySpan<byte> r) => new(
+    public static Item Parse(int i, ReadOnlySpan<byte> r) => new(
         i, Bin.Str(r, 0, 32), (ItemType)Bin.I32(r, 0x20), Bin.I32(r, 0x24), Bin.Str(r, 0x28, 0x50),
         r.Slice(0x78, 200).ToArray(), ItemStats.Parse(r));
 }
@@ -45,7 +45,7 @@ public sealed record ItemStats(
     int MedHp, int MedMp, int MedDefUp, int MedMdefUp, byte[] MedCure, int MedRange,
     int[] StatUp, int[] ClassChange, int ClassChangeLevel, int MagicSpell)
 {
-    internal static ItemStats Parse(ReadOnlySpan<byte> r) => new(
+    public static ItemStats Parse(ReadOnlySpan<byte> r) => new(
         Bin.I32(r, 0x140), Bin.I32(r, 0x144), Bin.I32(r, 0x148), Bin.I32(r, 0x14c), Bin.I32(r, 0x150), r.Slice(0x154, 6).ToArray(),
         Bin.I32(r, 0x15c), Bin.I32(r, 0x160), Bin.I32(r, 0x164), Bin.I32(r, 0x168), r.Slice(0x16c, 6).ToArray(),
         Bin.I32(r, 0x174), Bin.I32(r, 0x178), Bin.I32(r, 0x17c), Bin.I32(r, 0x180), Bin.I32(r, 0x184), Bin.I32(r, 0x188), r.Slice(0x25c, 4).ToArray(),

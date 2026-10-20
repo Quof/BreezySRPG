@@ -1,4 +1,4 @@
-﻿using Srpg95.Data;
+using Srpg95.Data;
 
 namespace Erumani;
 
@@ -29,12 +29,17 @@ public static class Program
 ///               --screenshot FILE.png  (render one frame at 640x480, save it, exit)
 ///               --advance N            (with --screenshot: auto-confirm N messages/choices first)
 ///               --event NAME           (run this script on load instead of OPENING, e.g. EV000202)
+///               --advance -1           (confirm every message/choice)
+///               --keys "a,b,..."       (with --screenshot: scripted input once the map is idle;
+///                                       up/down/left/right/enter/esc, at:X,Y moves the cursor to a tile,
+///                                       wait skips a beat, shot+N takes the shot N frames later even mid-animation;
+///                                       otherwise the shot is taken once the queue is done and the map is idle)
 /// </summary>
-public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event)
+public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null)
 {
     public static Options Parse(string[] args)
     {
-        string? game = null, rtp = null, shot = null, ev = null;
+        string? game = null, rtp = null, shot = null, ev = null, keys = null;
         int? map = null;
         int advance = 0;
         for (int i = 0; i + 1 < args.Length; i += 2)
@@ -47,12 +52,13 @@ public sealed record Options(string GameDir, string? RtpDir, int? StartMap, stri
                 case "--screenshot": shot = args[i + 1]; break;
                 case "--advance": advance = int.Parse(args[i + 1]); break;
                 case "--event": ev = args[i + 1]; break;
+                case "--keys": keys = args[i + 1]; break;
             }
         }
         game ??= FindGameFolder() ?? throw new DirectoryNotFoundException(
             "Game folder not found. Pass --game <folder containing SRPGEXEC.EXE>.");
         rtp ??= FindUp(AppContext.BaseDirectory, Path.Combine("srpg maker 95", "RTP"));
-        return new Options(game, rtp, map, shot, advance, ev);
+        return new Options(game, rtp, map, shot, advance, ev, keys);
     }
 
     /// <summary>Next to the exe, or in a parent directory (development layout: ./えるまに).</summary>

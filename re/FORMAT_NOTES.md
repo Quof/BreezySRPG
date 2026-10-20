@@ -617,6 +617,26 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 
 Python: `parse_save()` in `re/srpg95_data.py`.
 
+## 15. Battle runtime (client behaviour, mostly provisional)
+
+What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/src/Erumani/BattleController.cs`). "Data" rows follow from the files or the help text; the rest are guesses until T19 checks them against the original.
+
+| Behaviour | Client | Basis |
+|---|---|---|
+| Stat formulas (Attack, Accuracy, Defense, MDef) | §14 formulas | confirmed on 172 save records |
+| Hit, crit, damage, double attack, EXP, level-up | help "Battle Algorithm" formulas | help text, not yet checked in play |
+| Movement range | Dijkstra over the class's terrain costs; enemies block, allies can be passed but not stopped on | inferred |
+| Undo a move | cancel at the command menu returns the unit to where it started | guess (T19b) |
+| End of player turn | automatic once every ally has acted; ターン終了 from the menu on an empty tile | guess (T19a) |
+| Range overlay | SYSTEM.BMP range tiles at 55 % opacity: cyan = move, salmon = attack targets | guess (T19c) |
+| Strike results | one-line popups (damage, miss, 撃破, EXP, level-up) until the battle-scene milestone | placeholder |
+| Death events vs victory | a unit's "dies" events play first, then the victory events, then the map ends | inferred from map 1 (the boss ナス's last words are its death event) |
+| Losing | every ally down, or a unit from the map's character list down | guess. Map 1's EV000101 (ルーティ dies: 「いきなり負けちゃった～？」) hints that losing her ends the map, though she is in no list (T19d) |
+| Winning without a "Next map" command | goes on to the next map number | guess (T19e) |
+| Enemy phase | each enemy moves in map-object order; the camera does not follow yet | guess (T19f) |
+
+Every scripted run is reproducible: in screenshot mode the client seeds the battle RNG with 1, ignores the real keyboard and mouse, and `--keys` feeds input. The client writes the state and a token trace next to the PNG as `.txt`.
+
 ## Test log (completed, oldest first)
 
 All tests are done in `えるまに - Copy/` and diffed byte-for-byte against the untouched `えるまに/`. Unit/item/etc. numbers in instructions are the editor's 1-based numbers.
@@ -870,7 +890,16 @@ The only non-zero byte in 0x580–0x7CF of the new SAVE2 is **0x602 = 1** = vari
 
 ## Active tests
 
-None right now. The save format is mapped well enough for the client: switches, variables, inventory, gold, party roster, unit state and map state.
+### Phase 4, round 1 — instructions (T19: battle flow on map 1)
+
+Play map 1 (１話) in `えるまに - Save testplay` with the original runtime. Load save slot 3 (map 1, turn 1) or start a new game. The minions are weakened there, but ナス (the boss) has its real stats. Screenshots help wherever something appears on screen.
+
+- **T19a — end of turn.** Move both ルーティ and ジュナ and end each one's action. Does the enemy turn start by itself, or do you have to pick ターン終了 from the menu?
+- **T19b — undo.** Select ジュナ, move her a few tiles, and press Esc or right-click at the command menu. Does she go back to where she started, or stay put with the menu closed?
+- **T19c — overlays.** Screenshot (1) ジュナ selected, showing her movement range, and (2) the target choice after picking 攻撃 next to an enemy.
+- **T19d — losing ルーティ.** Let ルーティ be defeated, for example by leaving her next to ナス for a few turns. After her 「いきなり負けちゃった～？」 lines, what happens: a game-over screen, back to the title, or the map carries on with ジュナ alone?
+- **T19e — winning.** Reload and beat ナス. After his last lines, what comes next: victory music, a "map clear" message, a camp screen, or map 2's opening straight away?
+- **T19f — enemy turn.** While the enemies move, does the screen scroll to each one? Is there a pause or a cursor on each enemy before it moves?
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

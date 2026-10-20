@@ -2,27 +2,23 @@ using Erumani.Runtime;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Srpg95.Data;
+using Srpg95.Rules;
 
 namespace Erumani;
 
-/// <summary>A unit (or "Other" object) on the battle map, with its live position.</summary>
-public sealed class MapUnit(MapObject source)
+/// <summary>Per-unit animation state (the rules state lives in <see cref="BattleUnit"/>).</summary>
+public sealed class UnitVisual
 {
-    public MapObject Source { get; } = source;
-    public int Unit => Source.Unit;
-    public int X { get; set; } = source.X;
-    public int Y { get; set; } = source.Y;
     /// <summary>Sprite-sheet row: 0 down (facing viewer), 1 up, 2 left, 4 right (inferred).</summary>
-    public int Facing { get; set; }
-    public bool Dead { get; set; }
-    // movement animation
-    public Queue<byte> PendingSteps { get; } = new();
-    public Queue<byte> RunningSteps { get; } = new();
-    public Vector2 Offset;              // pixel offset while stepping
+    public int Facing;
+    public Queue<byte> Pending { get; } = new();
+    public Queue<byte> Running { get; } = new();
+    public Vector2 Offset;
+    public Vector2 StepFrom;   // pixel offset at the start of the current step
     public int StepFrames;
 }
 
-/// <summary>Runtime state of one battle map plus its drawing.</summary>
+/// <summary>Runtime state of one battle map: the rules battlefield plus drawing and animation.</summary>
 public sealed class MapSession : IMapContext
 {
     public const int Tile = Chipset.ChipSize;   // 32 px
@@ -35,35 +31,105 @@ public sealed class MapSession : IMapContext
     readonly Dictionary<int, Texture2D?> _unitSheets = new();
 
     public MapData Map { get; }
-    public List<MapUnit> Units { get; }
+    public Battlefield Field { get; }
+    public Dictionary<BattleUnit, UnitVisual> Visuals { get; } = new();
+    /// <summary>Units already dead in the rules but still drawn until their defeat has been shown.</summary>
+    public HashSet<BattleUnit> Ghosts { get; } = new();
+    /// <summary>"Other" objects (event tiles, graphics).</summary>
+    public List<MapObject> Others { get; }
     public Point Camera;
-    public int Phase { get; set; } = 1;
+    public int Phase => Field.Phase;
     public int PixelWidth => Map.Width * Tile;
     public int PixelHeight => Map.Height * Tile;
 
-    public MapSession(MapData map, Database db, GameState state, Textures tex)
+    public MapSession(MapData map, Database db, GameState state, Textures tex, byte[]? chipTerrain)
     {
         Map = map;
         _db = db;
         _state = state;
         _tex = tex;
         _chips = tex.Get($"MAPC_{map.Tileset:000}.BMP", transparent: false);
-        Units = map.Objects.Where(o => o.InUse).Select(o => new MapUnit(o)).ToList();
+        Field = new Battlefield(map, db, chipTerrain);
+        Others = map.Objects.Where(o => o.InUse && o.Type == ObjectType.Other).ToList();
+        foreach (var o in map.Objects.Where(o => o.InUse && o.Type != ObjectType.Other))
+            Add(CreateUnit(o.Unit, o.Type switch { ObjectType.Ally => Side.Ally, ObjectType.Enemy => Side.Enemy, _ => Side.Neutral },
+                o.X, o.Y, o));
+        DeployRoster();
+        UpdateVisibility();
     }
 
-    /// <summary>Objects with a switch condition only appear while that switch is ON.</summary>
-    public bool Visible(MapUnit u) => !u.Dead && (u.Source.SwitchCondition < 0 || _state.Switches[u.Source.SwitchCondition]);
+    void Add(BattleUnit u)
+    {
+        Field.Units.Add(u);
+        Visuals[u] = new UnitVisual();
+    }
 
-    IEnumerable<MapUnit> Present(int unit) =>
-        Units.Where(u => u.Source.Type != ObjectType.Other && u.Unit == unit && Visible(u));
+    /// <summary>Builds a unit from UNIT.DAT, or from the roster for party members (allies only).</summary>
+    BattleUnit CreateUnit(int unitId, Side side, int x, int y, MapObject? o)
+    {
+        var u = _db.Units[Math.Clamp(unitId, 0, _db.Units.Length - 1)];
+        var r = side == Side.Ally && _state.Roster.TryGetValue(unitId, out var e) ? e : null;
+        var baseStats = (int[])(r?.Base ?? u.BaseStats).Clone();
+        return new BattleUnit
+        {
+            Unit = unitId, Side = side, MapObject = o?.Index ?? -1, Name = u.Name,
+            ClassId = _state.ClassOverride.TryGetValue(unitId, out var c) ? c : r?.ClassId ?? u.ClassId,
+            Level = r?.Level ?? u.Level, Exp = r?.Exp ?? u.Exp, Base = baseStats, Growth = u.GrowthPct,
+            Hp = baseStats[0], Mp = baseStats[1],
+            Weapon = _state.WeaponOverride.TryGetValue(unitId, out var w) ? w : r?.Weapon ?? u.Weapon,
+            Armor = r?.Armor ?? u.Armor, Accessory = r?.Accessory ?? u.Accessory,
+            X = x, Y = y, Leader = o?.Leader ?? false, Guest = o?.Guest ?? false, Unattackable = o?.Unattackable ?? false,
+            MovePatterns = o?.MovePatterns ?? Array.Empty<MovePattern>(),
+        };
+    }
+
+    /// <summary>
+    /// Party members not placed by the map itself go onto the map's start positions, in roster
+    /// order (provisional: the camp's sortie screen chooses this in the original).
+    /// </summary>
+    void DeployRoster()
+    {
+        var placed = Field.Units.Select(u => u.Unit).ToHashSet();
+        var free = new Queue<(int X, int Y)>(Map.StartPositions.Where(p => Field.UnitAt(p.X, p.Y) is null));
+        foreach (var id in _state.Roster.Keys)
+        {
+            if (placed.Contains(id) || free.Count == 0) continue;
+            var p = free.Dequeue();
+            Add(CreateUnit(id, Side.Ally, p.X, p.Y, null));
+        }
+    }
+
+    /// <summary>Objects with a switch condition are only on the map while that switch is ON.</summary>
+    public void UpdateVisibility()
+    {
+        foreach (var u in Field.Units)
+        {
+            if (u.MapObject < 0) continue;
+            var o = Map.Objects.First(x => x.Index == u.MapObject);
+            u.Hidden = o.SwitchCondition >= 0 && o.SwitchCondition < GameState.SwitchCount && !_state.Switches[o.SwitchCondition];
+        }
+    }
+
+    public bool OtherVisible(MapObject o) => o.SwitchCondition < 0 || _state.Switches[o.SwitchCondition];
+
+    /// <summary>Allies that survive a won map join (or update) the roster, unless they're guests.</summary>
+    public void SaveRoster()
+    {
+        foreach (var u in Field.Units.Where(u => u.Side == Side.Ally && !u.Guest && !u.Dead))
+            _state.Roster[u.Unit] = new RosterEntry(u.ClassId, u.Level, u.Exp, (int[])u.Base.Clone(), u.Weapon, u.Armor, u.Accessory);
+    }
+
+    // ---------------- IMapContext (event interpreter) ----------------
+
+    IEnumerable<BattleUnit> Present(int unit) => Field.Alive.Where(u => u.Unit == unit);
 
     public bool UnitState(int unit, int state) => state switch
     {
         0 => Present(unit).Any(),
-        1 => Units.Any(u => u.Unit == unit && u.Dead),
+        1 => Field.Units.Any(u => u.Unit == unit && u.Dead),
         2 => !Present(unit).Any(),
-        3 => Present(unit).Any(u => u.Source.Type == ObjectType.Ally),
-        4 => Present(unit).Any(u => u.Source.Type is ObjectType.Enemy or ObjectType.Neutral),
+        3 => Present(unit).Any(u => u.Side == Side.Ally),
+        4 => Present(unit).Any(u => u.Side != Side.Ally),
         _ => false,
     };
 
@@ -83,46 +149,57 @@ public sealed class MapSession : IMapContext
     {
         var u = Present(unit).FirstOrDefault();
         if (u is null) return;
-        foreach (var s in steps) u.PendingSteps.Enqueue(s);
+        foreach (var s in steps) Visuals[u].Pending.Enqueue(s);
     }
 
     public void ExecuteMoves()
     {
-        foreach (var u in Units)
-            while (u.PendingSteps.Count > 0) u.RunningSteps.Enqueue(u.PendingSteps.Dequeue());
+        foreach (var v in Visuals.Values)
+            while (v.Pending.Count > 0) v.Running.Enqueue(v.Pending.Dequeue());
     }
 
-    public bool MovesRunning => Units.Any(u => u.RunningSteps.Count > 0 || u.StepFrames > 0);
+    public bool MovesRunning => Visuals.Values.Any(v => v.Running.Count > 0 || v.StepFrames > 0);
+
+    /// <summary>Animates a unit along a path of tiles (battle movement).</summary>
+    public void Walk(BattleUnit u, IReadOnlyList<(int X, int Y)> path)
+    {
+        int x = u.X, y = u.Y;
+        foreach (var p in path)
+        {
+            byte dir = (p.X - x, p.Y - y) switch { (0, -1) => 0, (1, 0) => 1, (0, 1) => 2, _ => 3 };
+            Visuals[u].Running.Enqueue(dir);
+            (x, y) = p;
+        }
+    }
 
     static readonly int[] FacingRow = { 1, 4, 0, 2 };          // step dir up/right/down/left -> sheet row
     static readonly Point[] StepDelta = { new(0, -1), new(1, 0), new(0, 1), new(-1, 0) };
 
     public void Update()
     {
-        foreach (var u in Units)
+        foreach (var (u, v) in Visuals)
         {
-            if (u.StepFrames > 0)
+            if (v.StepFrames > 0)
             {
-                u.StepFrames--;
-                var d = StepDelta[ReverseFacing(u.Facing)];
-                u.Offset = new Vector2(-d.X, -d.Y) * Tile * u.StepFrames / FramesPerTile;
+                v.StepFrames--;
+                v.Offset = v.StepFrom * v.StepFrames / FramesPerTile;
                 continue;
             }
-            if (u.RunningSteps.Count == 0) continue;
-            int s = u.RunningSteps.Dequeue();
+            if (v.Running.Count == 0) continue;
+            int s = v.Running.Dequeue();
             int dir = s % 4;
-            u.Facing = FacingRow[dir];
+            v.Facing = FacingRow[dir];
             if (s < 4)
             {
                 u.X += StepDelta[dir].X;
                 u.Y += StepDelta[dir].Y;
-                u.StepFrames = FramesPerTile;
-                u.Offset = new Vector2(-StepDelta[dir].X, -StepDelta[dir].Y) * Tile;
+                v.StepFrames = FramesPerTile;
+                v.Offset = v.StepFrom = new Vector2(-StepDelta[dir].X, -StepDelta[dir].Y) * Tile;
             }
         }
     }
 
-    static int ReverseFacing(int row) => Array.IndexOf(FacingRow, row) is var i and >= 0 ? i : 2;
+    // ---------------- drawing ----------------
 
     static Rectangle ChipRect(int chip)
     {
@@ -130,19 +207,18 @@ public sealed class MapSession : IMapContext
         return new(cx * Tile, cy * Tile, Tile, Tile);
     }
 
-    Texture2D? UnitSheet(int unitId)
+    Texture2D? UnitSheet(BattleUnit u)
     {
-        if (unitId < 0 || unitId >= _db.Units.Length) return null;
-        int cls = _state.ClassOverride.TryGetValue(unitId, out var c) ? c : _db.Units[unitId].ClassId;
-        if (cls < 0 || cls >= _db.Classes.Length) return null;
-        int g = _db.Classes[cls].UnitGraphic;
+        int g = _db.Classes[Math.Clamp(u.ClassId, 0, _db.Classes.Length - 1)].UnitGraphic;
         if (!_unitSheets.TryGetValue(g, out var t))
             _unitSheets[g] = t = _tex.Get($"UNIT_{g:000}.BMP");
         return t;
     }
 
-    /// <param name="frame">global frame counter for the idle animation</param>
-    public void Draw(SpriteBatch sb, Rectangle viewport, int frame)
+    public Vector2 ScreenPos(int x, int y, Rectangle viewport) =>
+        new(viewport.X + x * Tile - Camera.X, viewport.Y + y * Tile - Camera.Y);
+
+    public void DrawTiles(SpriteBatch sb, Rectangle viewport)
     {
         if (_chips is null) return;
         int x0 = Math.Max(0, Camera.X / Tile), y0 = Math.Max(0, Camera.Y / Tile);
@@ -150,22 +226,36 @@ public sealed class MapSession : IMapContext
         int y1 = Math.Min(Map.Height - 1, (Camera.Y + viewport.Height) / Tile);
         for (int y = y0; y <= y1; y++)
             for (int x = x0; x <= x1; x++)
-                sb.Draw(_chips, new Vector2(viewport.X + x * Tile - Camera.X, viewport.Y + y * Tile - Camera.Y),
-                    ChipRect(Map.Tiles[y, x]), Color.White);
+                sb.Draw(_chips, ScreenPos(x, y, viewport), ChipRect(Map.Tiles[y, x]), Color.White);
+        foreach (var o in Others)
+            if (o.Graphic >= 0 && OtherVisible(o)) sb.Draw(_chips, ScreenPos(o.X, o.Y, viewport), ChipRect(o.Graphic), Color.White);
+    }
 
-        foreach (var u in Units.Where(Visible).OrderBy(u => u.Y))
+    /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan, 1 salmon, 2 orange, 3 blue.
+    /// Opacity is provisional.</summary>
+    public void DrawRange(SpriteBatch sb, Rectangle viewport, IEnumerable<(int X, int Y)> tiles, int colour, int frame)
+    {
+        var sys = _tex.Get("SYSTEM.BMP", transparent: false);
+        if (sys is null) return;
+        var src = new Rectangle(colour * 64 + (frame / 20 % 2) * 32, 64, 32, 32);
+        foreach (var (x, y) in tiles)
+            sb.Draw(sys, ScreenPos(x, y, viewport), src, Color.White * 0.55f);
+    }
+
+    public void DrawUnits(SpriteBatch sb, Rectangle viewport, int frame)
+    {
+        var sys = _tex.Get("SYSTEM.BMP");
+        foreach (var u in Field.Alive.Concat(Ghosts).OrderBy(u => u.Y))
         {
-            var pos = new Vector2(viewport.X + u.X * Tile - Camera.X, viewport.Y + u.Y * Tile - Camera.Y) + u.Offset;
-            if (u.Source.Type == ObjectType.Other)
-            {
-                if (u.Source.Graphic >= 0) sb.Draw(_chips, pos, ChipRect(u.Source.Graphic), Color.White);
-                continue;
-            }
-            var sheet = UnitSheet(u.Unit);
+            var v = Visuals[u];
+            var pos = ScreenPos(u.X, u.Y, viewport) + v.Offset;
+            var sheet = UnitSheet(u);
             if (sheet is null) continue;
             // 3 frames x 5 poses of 64x64 cells, character centred; idle cycles frames 0-1-2-1.
-            int col = (frame / 15 % 4) switch { 0 => 0, 1 => 1, 2 => 2, _ => 1 };
-            sb.Draw(sheet, pos - new Vector2(16, 16), new Rectangle(col * 64, u.Facing * 64, 64, 64), Color.White);
+            int col = u.Acted ? 1 : (frame / 15 % 4) switch { 0 => 0, 1 => 1, 2 => 2, _ => 1 };
+            sb.Draw(sheet, pos - new Vector2(16, 16), new Rectangle(col * 64, v.Facing * 64, 64, 64), Color.White);
+            if (u.Acted && u.Side == Side.Ally && sys is not null)
+                sb.Draw(sys, pos + new Vector2(6, 19), new Rectangle(70, 19, 22, 10), Color.White);   // "END"
         }
     }
 }

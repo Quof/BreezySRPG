@@ -45,24 +45,37 @@ Options:
 - `--game DIR`: the game folder. By default it searches next to and above the executable for a folder containing `SRPGEXEC.EXE`.
 - `--rtp DIR`: the RTP folder used as a fallback for graphics and audio. Default `srpg maker 95/RTP`.
 - `--map N`: the map to open (1-based, as in `SMAP_nnn`).
-- `--screenshot FILE.png`: render one frame at 640×480, save it and exit.
+- `--screenshot FILE.png`: render one frame at 640×480, save it and exit. It also writes `FILE.txt` with the battle state (units, HP, EXP) and a trace of the scripted input. In this mode the real keyboard and mouse are ignored and the battle RNG is seeded, so runs are reproducible.
+- `--advance N`: used with `--screenshot`, auto-confirms N event messages or choices before capturing. `-1` confirms all of them.
+- `--keys "a,b,..."`: used with `--screenshot`, scripted input fed one token every 10 frames while the map is idle:
+  - `up`, `down`, `left`, `right`, `enter`, `esc`;
+  - `at:X.Y` puts the cursor on tile (X,Y);
+  - `wait` skips a beat;
+  - `shot+N` captures N frames later, even mid-animation.
+
+  Example: select ジュナ on map 1 and move her 3 tiles up:
+
+  ```bash
+  dotnet run --project client/src/Erumani -- --map 1 --advance -1 --keys "at:7.12,enter,at:7.9,enter" --screenshot shot.png
+  ```
+- `--event NAME`: run this script on load instead of `OPENING`.
 
 Set `SRPG95_REQUIRE_DATA=1` to make the tests fail instead of silently passing when the game data or `re/json` is missing.
-
-- `--advance N`: used with `--screenshot`, auto-confirms N messages or choices before capturing.
 
 Controls:
 
 | Keys | Action |
 |---|---|
-| Enter / Space / Z / left click | confirm |
-| Esc / X / right click | cancel |
-| Arrows | choose in menus. Scroll the map when no event is running (also WASD) |
+| Enter / Space / Z / left click | confirm. On a unit: select it, or show its status if it can't act. On an empty tile: the turn menu (ターン終了) |
+| Esc / X / right click | cancel or back (at the command menu: undo the move). Right click on a unit: status |
+| Arrows | move the map cursor; choose in menus |
+| Mouse | point at a tile or menu entry. Holding it at the viewport edge scrolls |
+| WASD | scroll the map |
 | PageUp / PageDown | previous / next map |
 | F3 | debug overlay (map, BGM, event log) |
 | F4 or Alt+Enter | fullscreen (F4 was the original's window toggle) |
 | F5 | integer scaling on/off |
-| Tab (hold) | fast-forward (4× speed, auto-advances messages) |
+| Tab (hold) | fast-forward (4× speed: messages, walking, enemy turns, result popups) |
 | Alt+F4 / close window | quit |
 
 ## Roadmap
@@ -81,11 +94,18 @@ Controls:
    - BGM (MCI MIDI, looping) and sound effects;
    - map flow.
 
-   Still to do: object events triggered during battle (comes with milestone 4).
-4. **Tactics gameplay:** turn flow, movement ranges from terrain/class costs, attacks and magic with range/effect grids, AI movement patterns, event triggers, win/lose conditions, level-ups.
+   Object events triggered during battle came with milestone 4.
+4. 🟡 **Tactics gameplay:** done:
+   - player turn: cursor, unit selection, movement range from class terrain costs, walking, command menu (攻撃 / 行動終了), move undo, turn menu (ターン終了), status window;
+   - attacks: target choice, hit/crit/damage, counter-attacks, double attacks, EXP and level-ups (help formulas);
+   - enemy phase: AI move patterns (rush, wait, go to a point);
+   - event triggers: turn, switch, contact, death, pass/stop on a tile, before/after attack, victory;
+   - win/lose, then on to the next map.
+
+   Still to do: magic and items in battle, the other turn-menu entries, and checking the provisional rules against the original (FORMAT_NOTES §15, test T19).
 5. **Battle scenes:** ANIME.DAT frame playback over BACK_nnn backgrounds, hit/miss sounds, damage per the help's Battle Algorithm.
 6. **Camp and saving:** sortie, equipment, shop, and save/load in the original `SAVEn.DAT` format (pending save-file research, test T16).
-7. **Title, game over, map transitions.**
+7. **Title, game over, map transitions.** A basic version is done: after a win, Enter goes on to the next map, and after a loss Enter retries.
 8. **Modern features:** fast-forward (basic version done), rebindable controls with a config file, resolution and scaling options, SoundFont music, and a self-contained `dotnet publish` build.
 
 Faithfulness rule: replicate the original's behaviour, including its bugs (see FORMAT_NOTES §11.4), by default. Any fixes are opt-in.
