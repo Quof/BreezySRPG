@@ -94,6 +94,7 @@ public sealed class MapSession : IMapContext
         foreach (var id in _state.Roster.Keys)
         {
             if (placed.Contains(id) || free.Count == 0) continue;
+            if (_state.Sortie is { } chosen && !chosen.Contains(id)) continue;   // left at camp
             var p = free.Dequeue();
             Add(CreateUnit(id, Side.Ally, p.X, p.Y, null));
         }

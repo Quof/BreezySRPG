@@ -61,6 +61,8 @@ public sealed class BattleScene
 
     public Action<string>? PlaySound { get; set; }
     public bool Done => _phase == Phase.Done;
+    /// <summary>A death message is up, waiting for a click.</summary>
+    public bool WaitingForClick => _phase == Phase.Death;
     /// <summary>True while only the map (darkened) should show under the scene: before and after it.</summary>
     public bool OverMap => _phase is Phase.DimMap or Phase.MapIn;
 

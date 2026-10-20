@@ -619,9 +619,16 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 | [43], [44] | weapon range min, max | inferred | ルーティ 1–2, ジュナ 1–1 |
 | [50] | movement left this turn | confirmed | 6 → 5 after a 1-tile move |
 | [54], [55] | position before moving this turn | confirmed | (7,12) |
+| [52] | unknown battle leftover (2 on ジュリア in SAVE5) | unknown | |
 | [56] | unknown (set on defeated units) | unknown | |
-| [60]–[129] | movement cost per terrain (70) | inferred | |
-| [13] | unknown (1 on roster copies) | unknown | |
+| [60]–[129] | movement cost per terrain (70): the class override, else the terrain's cost for the class's move type | confirmed | rebuilt exactly for every roster unit of every camp save |
+| [130]–[149] | known spells (MAGIC ids, in the class skill list's order) | confirmed | グレイ 8 (活性波); ジュリア 1 (剣の舞), then 1, 2 (虎伏演舞) at level 4 |
+| [150] | number of known spells | confirmed | 1 → 2 for ジュリア |
+| [13] | 1 on roster copies | inferred | every roster record |
+
+**Writing saves (client):** a camp save sets header 0x000 = 1, 0x004 (camps), 0x010 (next map, 1-based), switches, inventory and its count, gold, party size, BGM name, tone and variables. Each roster record is rebuilt from unit, class, level, EXP, base stats and equipment: in-use flags, stats with the accessory, Attack/Accuracy/Defense/MDef, range, movement, terrain costs and known spells. Fields that are leftovers of the last battle ([5], [6], [50], [52], [54]–[56]) and unknown header fields are kept from the slot's previous file or the last save loaded. Checks (`SaveFileTests`):
+- Re-saving SAVE6 at its own camp reproduces the original file byte for byte.
+- Every camp save's roster records rebuild from nothing exactly, apart from those leftovers.
 
 Python: `parse_save()` in `re/srpg95_data.py`.
 
@@ -669,6 +676,11 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Battle scene: HP drain | the HP bar doesn't jump: from the hit it drains 1 HP per tick (weapon, ナス on ジュナ: 5 HP in 5 ticks) or 1 HP per 2 ticks (spell: 18 HP in ~34 ticks), stopping at 0. The number shows the full damage even when it exceeds the HP left (37 on an 18-HP minion) | measured, two samples; the rule behind the two rates (weapon vs spell?) is a guess |
 | Battle music | map BGM slot 3 (player-battle) when an ally starts the fight, 4 (enemy-battle) when an enemy does, 5 (boss-battle) when an enemy leader takes part; the phase music returns afterwards | battle music confirmed to start (T20b); slot choice inferred from the map header's slot names |
 | Enemy spells | an enemy casts a known, affordable damage spell when its predicted total damage beats its best weapon attack, and a heal when it restores ≥ ⅓ of someone's HP | guess |
+| Camp | CAMP_nnn full screen, camp BGM (map slot 0). Menu at (16,16) as measured (T17b). Shown before a map whose camp_before_battle is set, after the previous map's COMPLETE!!. The save / load lists match the T17b screenshots | menu, background and file lists confirmed. The rest is provisional |
+| Camp: unit screen (ユニット編成) | pick a unit (name, Lv), then 武器 / 防具 / 装飾品を替える (inventory items of that type the class may use, plus 「（装備をはずす）」; the old item goes back to the inventory), 道具を使う (stat-up and class-change items: needs the level, the class must be in the item's list, 「〜に昇格」), 技を見る (known spells with TP cost). The status window shows beside | guess: layout and rules need a camp recording |
+| Camp: shop | アイテム購入 lists the map's shop items with their price ("n肉": WORD 31's leading comma marks the number); アイテム売却 lists owned items with a price, at half price (下取り額). Gold shows under the menu | guess (sale price, layout) |
+| Camp: sortie | 次のステージ: if the army is bigger than the map's start positions (and party changes aren't disabled), pick who sorties (出撃ユニット数 n／max, 出撃 / ――). Then 「キャンプを終了して／進撃を開始します」 はい／いいえ. Units the map places itself always come | guess |
+| Fallen allies | an ally that died on the map doesn't rejoin the army afterwards | guess: needs checking (does the original bring them back?) |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
 Every scripted run is reproducible: in screenshot mode the client seeds the battle RNG with 1, ignores the real keyboard and mouse, and `--keys` feeds input. The client writes the state and a token trace next to the PNG as `.txt`.
@@ -1022,7 +1034,13 @@ From a 2-minute 60 fps recording of map 1, `recordings/` (frames via `re/tools/f
 
 ## Active tests
 
-None right now.
+### Phase 6, round 1 — instructions (T23: the camp)
+
+A screen recording of the camp before map 3 or 4 (save slot 7 or 8 in `えるまに - Save testplay`) would settle most of the camp layout. Please go through:
+- **T23a:** ユニット編成: pick a unit, then each of 武器を替える, 防具を替える, 装飾品を替える, 道具を使う and 技を見る, and back out.
+- **T23b:** アイテム購入: buy something cheap. Then アイテム売却: hover a couple of items (to show the sale price) and sell one.
+- **T23c:** 次のステージ: everything up to the map starting. If a unit-selection screen appears, toggle someone.
+- **T23d:** does a unit that died in the previous map come back at the camp? Say if you remember; no need to test specially.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

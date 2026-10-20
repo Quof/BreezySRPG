@@ -18,6 +18,13 @@ public sealed class GameState
     /// <summary>The player's army between maps (save-file roster, FORMAT_NOTES §14), by unit id.</summary>
     public Dictionary<int, RosterEntry> Roster { get; } = new();
 
+    /// <summary>Camps reached so far (save header 0x004).</summary>
+    public int CampCount { get; set; }
+    /// <summary>Units chosen to sortie on the next map (null = everyone in the roster).</summary>
+    public HashSet<int>? Sortie { get; set; }
+    /// <summary>Bytes of the last save loaded, the template for unknown fields when saving.</summary>
+    public byte[]? LastSave { get; set; }
+
     public int ItemCount(int item) => Items.TryGetValue(item, out var n) ? n : 0;
 
     public void AddItem(int item, int count)

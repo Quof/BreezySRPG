@@ -35,6 +35,7 @@ public sealed class ErumaniGame : Game
     MapSession? _session;
     EventRunner? _runner;
     BattleController? _battle;
+    Camp.CampScreen? _camp;
     bool _gaveItems;
     Queue<string> _script = new();
     readonly List<string> _trace = new();
@@ -82,12 +83,48 @@ public sealed class ErumaniGame : Game
 
         _mapIndices = Directory.GetFiles(Path.Combine(_folder.Root, "MAP"), "SMAP_*.DAT")
             .Select(p => int.Parse(Path.GetFileNameWithoutExtension(p)[5..]) - 1).Order().ToArray();
+        SaveFile.Directory = _opts.SaveDir;
         int start = _opts.StartMap ?? _db.StartMap;
+        if (_opts.LoadSlot is int slot && SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } save) { ApplySave(save); return; }
+        if (_opts.CampBefore is int camp) { OpenCamp(Math.Max(0, Array.IndexOf(_mapIndices, camp))); return; }
         LoadMap(Math.Max(0, Array.IndexOf(_mapIndices, start)));
+    }
+
+    /// <summary>The camp before map <paramref name="pos"/> (index into the map list).</summary>
+    void OpenCamp(int pos, bool countIt = true)
+    {
+        _mapPos = pos;
+        int idx = _mapIndices[pos];
+        var map = MapData.Load(_folder.MapPath(idx));
+        if (countIt) _state.CampCount++;
+        _session = null;
+        _runner = null;
+        _battle = null;
+        _pendingMap = null;
+        _camp = new Camp.CampScreen(_db, _folder, _tex, _ui, _state, map, idx)
+        {
+            StartNext = () => LoadMap(pos),
+            Loaded = ApplySave,
+            Quit = Exit,
+        };
+        _audio.PlayBgm(_camp.Bgm);
+        Window.Title = $"Erumani — camp before SMAP_{idx + 1:000} {map.Name}";
+        _status = "";
+    }
+
+    /// <summary>Loads a SAVEn.DAT: camp saves reopen their camp; battle saves restart their map with the saved army
+    /// (restoring the battle itself comes later).</summary>
+    void ApplySave(SaveFile save)
+    {
+        save.ApplyTo(_state);
+        int pos = Math.Max(0, Array.IndexOf(_mapIndices, save.MapNumber - 1));
+        if (save.AtCamp) OpenCamp(pos, countIt: false);
+        else LoadMap(pos);
     }
 
     void LoadMap(int pos)
     {
+        _camp = null;
         _mapPos = pos;
         int idx = _mapIndices[_mapPos];
         var map = MapData.Load(_folder.MapPath(idx));
@@ -153,7 +190,7 @@ public sealed class ErumaniGame : Game
             FastForward: k.IsKeyDown(Keys.Tab));
 
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
-        if (_opts.Screenshot is not null && _shotAdvance != 0 && _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null })
+        if (_opts.Screenshot is not null && _shotAdvance != 0 && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null }))
         {
             input = input with { Confirm = true };
             _shotAdvance--;
@@ -168,6 +205,23 @@ public sealed class ErumaniGame : Game
         if (_opts.Screenshot is not null)   // ignore the real mouse while scripted
             battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, false));
 
+        if (_camp is not null)
+        {
+            _frame++;
+            _audio.Update();
+            _camp.Update(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && m.Position != _prevMouse.Position }, _mouseVirtual);
+            _prevKeys = k;
+            _prevMouse = m;
+            base.Update(gameTime);
+            return;
+        }
+
+        if (_pendingCamp is int pc && battleInput.Confirm)
+        {
+            _pendingCamp = null;
+            OpenCamp(pc);
+            return;
+        }
         if (_pendingMap is int pm && battleInput.Confirm)
         {
             _pendingMap = null;
@@ -201,13 +255,13 @@ public sealed class ErumaniGame : Game
             _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, telopTok)));
             _shotAt = _frame + int.Parse(tm.Groups[2].Value);
         }
-        bool idle = _battle is { Busy: false } && _runner is { Message: null, Choice: null };
+        bool idle = _camp is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null };
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
-        _trace.Add($"{_frame}: {tok} in {_battle!.DebugState.Split('\n')[0]}");
+        _trace.Add($"{_frame}: {tok} in {(_camp is not null ? "Camp" : _battle!.DebugState.Split('\n')[0])}");
         return tok switch
         {
             "up" => bi with { Up = true },
@@ -271,7 +325,11 @@ public sealed class ErumaniGame : Game
             case MapOutcome.Won:
                 int next = _battle.NextMap ?? idx + 1;   // provisional: no "Next Map" means the following map
                 _status = $"MAP CLEAR → SMAP_{next + 1:000} {SafeName(next)}  [Enter]";
-                if (Array.IndexOf(_mapIndices, next) is var p and >= 0) _pendingMap = p;
+                if (Array.IndexOf(_mapIndices, next) is var p and >= 0)
+                {
+                    if (MapData.Load(_folder.MapPath(next)).CampBeforeBattle) _pendingCamp = p;
+                    else _pendingMap = p;
+                }
                 break;
             case MapOutcome.Lost:
                 _status = "Map lost" + (_battle.NextMap is int n ? $" → SMAP_{n + 1:000}  [Enter]" : "  [Enter: retry]");
@@ -289,7 +347,7 @@ public sealed class ErumaniGame : Game
         }
     }
 
-    int? _pendingMap;
+    int? _pendingMap, _pendingCamp;
 
     string SafeName(int i) => i >= 0 && i < _db.MapNames.Length ? _db.MapNames[i] : "?";
 
@@ -297,6 +355,15 @@ public sealed class ErumaniGame : Game
     {
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
+        if (_camp is not null)
+        {
+            _sb.Begin(samplerState: SamplerState.PointClamp);
+            _camp.Draw(_sb, _frame);
+            if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
+            _sb.End();
+            Present(gameTime);
+            return;
+        }
         var view = new Rectangle(ViewX + _fx.ShakeOffset.X, ViewY + _fx.ShakeOffset.Y, ViewWidth, ViewHeight);
         var viewClip = new Rectangle(ViewX, ViewY, ViewWidth, ViewHeight);
 
@@ -327,11 +394,17 @@ public sealed class ErumaniGame : Game
             _ui.Cursor(_sb, _mouseVirtual, _runner?.Message is not null, _frame);
         _sb.End();
 
+        Present(gameTime);
+    }
+
+    /// <summary>Screenshot (in screenshot mode) or scale the 640x480 screen to the window.</summary>
+    void Present(GameTime gameTime)
+    {
         if (_opts.Screenshot is { } shot && ShotReady)
         {
             GraphicsDevice.SetRenderTarget(null);
             using (var f = File.Create(shot)) _screen.SaveAsPng(f, VirtualWidth, VirtualHeight);
-            File.WriteAllText(Path.ChangeExtension(shot, ".txt"), $"frame={_frame} script-left={_script.Count} {_battle?.DebugState}\n" + string.Join("\n", _trace) + "\n");
+            File.WriteAllText(Path.ChangeExtension(shot, ".txt"), $"frame={_frame} script-left={_script.Count} {(_camp is not null ? $"Camp gold={_state.Gold} items={string.Join(",", _state.Items.Select(kv => $"{kv.Key}x{kv.Value}"))} roster={string.Join(",", _state.Roster.Select(kv => $"{kv.Key}:c{kv.Value.ClassId}/w{kv.Value.Weapon}/a{kv.Value.Armor}/x{kv.Value.Accessory}"))}" : _battle?.DebugState)}\n" + string.Join("\n", _trace) + "\n");
             Exit();
             return;
         }

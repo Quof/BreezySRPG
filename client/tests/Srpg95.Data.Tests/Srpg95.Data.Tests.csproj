@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Srpg95.Data\Srpg95.Data.csproj" />
+    <ProjectReference Include="..\..\src\Erumani\Erumani.csproj" />
   </ItemGroup>
 
 </Project>

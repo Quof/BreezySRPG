@@ -69,6 +69,7 @@ public sealed class BattleController
     BattleScene? _scene;
     State _afterScenes;
     public bool SceneShowing => _scene is not null;
+    public bool WaitingForClick => _scene?.WaitingForClick == true;
     /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
     public bool ShowScenes { get; set; } = true;
 
@@ -929,7 +930,7 @@ public sealed class BattleController
         if (_state_ is State.ActionMenu or State.TurnMenu) DrawMenu(sb);
         if (_state_ is State.SpellList or State.ItemList) DrawList(sb, frame);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
-        if (_state_ == State.Status && _statusUnit is not null) DrawStatus(sb, _statusUnit);
+        if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit);
         if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup); }
         if (Outcome == MapOutcome.GameOver && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go)
             sb.Draw(go, Vector2.Zero, Color.White);   // full screen; provisional
@@ -1030,28 +1031,5 @@ public sealed class BattleController
         var r = new Rectangle(320 - w / 2, 64, w, 33);
         _ui.Panel(sb, r);
         if (_ui.SmallText.Get(text) is { } t) sb.Draw(t, new Vector2(r.X + 16, r.Y + 11), Ui.Ui.PanelText);
-    }
-
-    /// <summary>Status window (screenshot 6 layout, approximate): blue panel with WORD.DAT labels.</summary>
-    void DrawStatus(SpriteBatch sb, BattleUnit u)
-    {
-        var r = new Rectangle(188, 96, 264, 288);
-        _ui.Panel(sb, r, Ui.Ui.PanelColor.Blue);
-        var st = _s.Field.Stats(u);
-        var cls = _s.Field.Class(u);
-        void T(string s, int x, int y) { if (_ui.SmallText.Get(s) is { } t) sb.Draw(t, new Vector2(r.X + x, r.Y + y), Ui.Ui.PanelText); }
-        T(u.Name, 12, 10);
-        T(cls.Name, 12, 38);
-        T($"{Word(1)}  {u.Level} ({u.Exp})", 150, 38);
-        T($"{Word(2)}  {u.Hp}／{u.MaxHp}", 12, 58);
-        T($"{Word(3)}  {u.Mp}／{u.MaxMp}", 150, 58);
-        int[] vals = { st.Attack, st.Speed, st.Defense, st.MagicDefense, st.Str, st.Mag, st.Skl, st.Sta };
-        for (int i = 0; i < 8; i++) T($"{Word(4 + i)}  {vals[i]}", 12, 90 + i * 16 + (i >= 4 ? 8 : 0));
-        string It(int id) => id >= 0 && id < _db.Items.Length ? _db.Items[id].Name : "―";
-        T($"{Word(12)}  {It(u.Weapon)}", 12, 236);
-        T($"{Word(13)}  {It(u.Armor)}", 12, 252);
-        T($"{Word(14)}  {It(u.Accessory)}", 12, 268);
-        int face = _db.Units[u.Unit].Face;
-        if (face > 0 && _tex.Get($"FACE_{face:000}.BMP") is { } f) sb.Draw(f, new Vector2(r.X + 128, r.Y + 90), Color.White);
     }
 }

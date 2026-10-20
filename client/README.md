@@ -60,6 +60,9 @@ Options:
   dotnet run --project client/src/Erumani -- --map 1 --advance -1 --keys "at:7.12,enter,at:7.9,enter" --screenshot shot.png
   ```
 - `--event NAME`: run this script on load instead of `OPENING`.
+- `--load N`: load `SAVEn.DAT` at start (a camp save opens its camp).
+- `--saves DIR`: where `SAVEn.DAT` files are read and written. The default is the game folder, as in the original; point it elsewhere to keep the game folder untouched.
+- `--camp N` (developer): open the camp before map N.
 - `--level N` (developer): allies start the map at level N or higher, e.g. `--level 12` gives ルーティ her spells on map 1.
 - `--place "UNIT:X.Y[.HP],..."` (developer): move a unit (UNIT.DAT id) to a tile, keep it shown, and optionally set its HP. For example, `--map 2 --place 245:15.13,247:16.13.9` puts グレイ next to a hurt ジュリア.
 - `--give "ID:N,..."` (developer): add N of item ID (0-based ITEM.DAT index) to the inventory, e.g. `--give 40:2` for two ポーション.
@@ -113,7 +116,11 @@ Controls:
 
    Still to do: the other turn-menu entries, and checking the provisional rules against the original (FORMAT_NOTES §15, test T21).
 5. 🟡 **Battle scenes:** done in a first version: ANIME.DAT playback from the CA/MAGA sprite strips over BACK_nnn backgrounds, counters mirrored, hit/miss sounds, damage digits, HP panels, battle music. Sides, timing, transitions, panels, hit flash, damage numbers and death messages are matched to a recording of the original (T22). Spell scenes (heals and attack spells, one cast then each target in turn), misses and HP drain are matched too.
-6. **Camp and saving:** sortie, equipment, shop, and save/load in the original `SAVEn.DAT` format (pending save-file research, test T16).
+6. 🟡 **Camp and saving:** done in a first version:
+   - camp menu, army screen (equipment, items, skills), shop (buy/sell) and sortie;
+   - save and load in the original `SAVEn.DAT` format. Re-saving one of the original's camp saves reproduces it byte for byte, and its saves load in the client.
+
+   Still to do: saving and loading during a battle (in-battle saves currently restart their map), and matching the camp's inner screens to a recording (T23).
 7. **Title, game over, map transitions.** A basic version is done: after a win, Enter goes on to the next map, and after a loss Enter retries.
 8. **Modern features:** fast-forward (basic version done), rebindable controls with a config file, resolution and scaling options, SoundFont music, and a self-contained `dotnet publish` build.
 
