@@ -541,6 +541,14 @@ Learned while building the client (phase 3):
 | Without a face | window at x 113 (centred) |
 | Text | GDI **MS Gothic 18 px bold**, no anti-aliasing, colour (16,16,0), origin (window x + 17, y + 11), 22 px line spacing. Appears all at once |
 | Mouse cursor | SYSTEM.BMP arrow (128,0)+n·32, 20×20, hotspot (0,0); hourglass (128,32)+n·32 while a message waits |
+| Fades (screen display / erase) | about 0.5 s (T17b) |
+| Textured panels | SYSTEM.BMP bottom row has four 64×64 tiles at y 224: blue x 0, red x 64, yellow x 128, green x 192. The tile is repeated from the panel's top-left corner (green verified on 400 sampled pixels). Edges are 1 px: light (248,248,224) top/left, dark (0,32,0) bottom/right. Panel text is white (248,248,248) |
+| Choice menu | green panel. Width = widest option + 24, height = 16·n + 16, bottom edge at y 303, x = 292 − w/2 (one sample; rule provisional). Text MS Gothic **12 px regular**, origin (+13, +10), 16-px lines. The message that asked the question stays visible underneath. No highlight shows while the mouse is away. Client matches 99.7 % of the panel's pixels |
+| Camp menu | green panel 96×129 at (16,16): 次のステージ, ユニット編成, アイテム購入, アイテム売却, セーブする, ロードする, ゲーム終了 (WORD.DAT 24–27, 21–23). The background is a full-screen picture (CAMP_nnn) |
+| Save / load list | green panel 96×177: header ("セーブします" / "ロードします", WORD 53/54), a separator line, then ファイル１–８ (WORD 81–88). Empty slots are greyed in the load list |
+| EXP message | green panel 240×33 at (200,64): "{n}の経験値を獲得" (WORD 60) |
+| Acted unit | "END" badge from SYSTEM.BMP drawn on the unit |
+| Battle screen | BACK_nnn background in the top 320 px, attacker/defender sprites from CA sheets. Bottom half: red panel (enemy, left, x 0–319) and blue panel (ally, right, x 320–639), each with name, HP and TP bars ("21／21"), 攻撃力/攻撃精度/物理防御/特殊防御/特殊補正値/地形効果 |
 | Unit hover | name and "HP／max" in small text above the unit, white square cursor on its tile (screenshot 5; to be implemented) |
 | Status window | blue panel with WORD.DAT labels: LV (EXP), HP, TP, Attack/Accuracy/Defense/Magic Defense, the 4 base stats, equipment, and a face (screenshot 6; to be implemented) |
 
@@ -792,6 +800,14 @@ All option lists captured (codes in §11.3, row 2A). T14's Turn branches were Al
   Format in §14. Switches, variables and inventory are still unlocated.
 - **T17:** 7 screenshots. The client now matches them pixel-for-pixel in layout and font (§13). Text appears all at once. The choice-menu screenshot and fade timing weren't captured.
 
+### Phase 3, round 2 — instructions (T17b)
+
+Screenshots of: a choice menu (11話 camp menu), the camp screen, the save/load file lists, a battle in progress and the screen after it, plus fade timing.
+
+### Phase 3, round 2 — results
+
+All delivered (camp menu, save list, load list, 11話 choice menu, a battle screen, an EXP message); fades take about half a second. Findings are in §13. The choice menu was implemented and matched against its screenshot: 12 px text pixels 98 % identical (the rest is the mouse cursor drawn over it), panel 99.7 %.
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
@@ -802,12 +818,6 @@ All option lists captured (codes in §11.3, row 2A). T14's Turn branches were Al
   - the T13 damaged-script behaviour.
 
 ## Active tests
-
-**T17b — remaining reference screenshots** (from the original runtime, Alt+PrintScreen):
-1. **A choice menu**, e.g. the 11話 camp menu (仲間と話す / 城をうろつく / 考える / 試験に行く).
-2. **The camp screen** (the menu shown before a battle) and **the save/load file list**.
-3. **A battle in progress:** the attack animation screen, and the screen right after (damage numbers / EXP message).
-4. **Fade timing:** roughly how long the screen takes to fade out or in at the start of a chapter (half a second? one second?).
 
 **T18 — saves with switches, variables and items.** Continue the save-testplay game, or load SAVE4:
 1. Buy or receive **one item** at camp (note which), then save to File 6.

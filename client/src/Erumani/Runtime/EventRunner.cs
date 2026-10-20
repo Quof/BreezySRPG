@@ -30,12 +30,20 @@ public sealed class EventRunner
 
     public string Name { get; private set; } = "";
     public MessageView? Message { get; private set; }
+    /// <summary>The message that stays visible underneath a character choice (as in the original).</summary>
+    public MessageView? LastMessage { get; private set; }
     public string[]? Choice { get; private set; }
     public int ChoiceIndex { get; private set; }
     public EventEnd End { get; private set; }
     /// <summary>Set by "Next Map" (select_map): 0-based map index to go to on map completion.</summary>
     public int? NextMap { get; private set; }
     public bool Running => _stack.Count > 0;
+
+    /// <summary>Mouse hover over a choice line.</summary>
+    public void HoverChoice(int index)
+    {
+        if (Choice is not null && index >= 0 && index < Choice.Length) ChoiceIndex = index;
+    }
     public List<string> Log { get; } = new();
 
     ChoiceNode? _choiceNode;
@@ -85,6 +93,7 @@ public sealed class EventRunner
             var body = ChoiceIndex < _choiceNode!.Cases.Count ? _choiceNode.Cases[ChoiceIndex] : new List<ScriptNode>();
             Trace($"choice -> {Choice[ChoiceIndex]}");
             Choice = null;
+            LastMessage = null;
             _stack.Push((body, 0));
         }
         if (_waitFrames > 0) { _waitFrames -= input.FastForward ? 4 : 1; if (_waitFrames > 0) return; }
@@ -108,7 +117,7 @@ public sealed class EventRunner
         switch (node)
         {
             case MessageNode m:
-                Message = new MessageView(m.Window, m.Lines, _face, _faceRight, _faceFlip);
+                Message = LastMessage = new MessageView(m.Window, m.Lines, _face, _faceRight, _faceFlip);
                 _messageAge = 0;
                 return true;
             case BranchNode b:

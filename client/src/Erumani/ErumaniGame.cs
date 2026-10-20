@@ -87,7 +87,7 @@ public sealed class ErumaniGame : Game
         _fx = new ScreenEffects();
         _session = new MapSession(map, _db, _state, _tex);
         _runner = new EventRunner(_state, _session, _audio, _fx);
-        if (map.Scripts.TryGetValue("OPENING", out var opening)) _runner.Start(opening);
+        if (map.Scripts.TryGetValue(_opts.Event ?? "OPENING", out var opening)) _runner.Start(opening);
         if (!_runner.Running) _audio.PlayBgm(map.Bgm[1]);   // player-turn BGM
         Window.Title = $"Erumani — SMAP_{idx + 1:000} {map.Name}";
         _status = "";
@@ -103,6 +103,12 @@ public sealed class ErumaniGame : Game
         bool click = IsActive && m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
         bool rclick = IsActive && m.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
 
+        if (_runner?.Choice is { } ch && m.Position != _prevMouse.Position)
+        {
+            var cr = ChoiceRect(ch);
+            _choiceActive = cr.Contains(_mouseVirtual);
+            if (_choiceActive) _runner.HoverChoice((_mouseVirtual.Y - cr.Y - 8) / 16);
+        }
         if (Pressed(Keys.F4) || (alt && Pressed(Keys.Enter))) { _gfx.HardwareModeSwitch = false; _gfx.ToggleFullScreen(); }
         if (Pressed(Keys.F5)) _integerScale = !_integerScale;
         if (Pressed(Keys.F3)) _debug = !_debug;
@@ -122,6 +128,7 @@ public sealed class ErumaniGame : Game
             _shotAdvance--;
         }
 
+        if (input.Up || input.Down) _choiceActive = true;
         // Fast-forward: several simulation steps per frame while Tab is held.
         int steps = input.FastForward ? 4 : 1;
         for (int i = 0; i < steps; i++)
@@ -275,7 +282,8 @@ public sealed class ErumaniGame : Game
     // Face-on-the-right placement is mirrored and still unverified.
     void DrawMessage()
     {
-        if (_runner?.Message is not { } msg) return;
+        var msg = _runner?.Message ?? (_runner?.Choice is not null ? _runner.LastMessage : null);
+        if (msg is null) return;
         int y = msg.Window switch { 0 => 33, 1 => 177, _ => 321 };
         var face = msg.Face > 0 ? _tex.Get($"FACE_{msg.Face:000}.BMP") : null;
         int x = face is null ? 113 : msg.FaceRight ? VirtualWidth - 193 - Ui.Ui.MessageWidth : 193;
@@ -290,22 +298,30 @@ public sealed class ErumaniGame : Game
             _ui.DrawText(_sb, msg.Lines[i], new Vector2(x + 17, y + 11 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
     }
 
-    // No reference screenshot of a choice menu yet: same window skin, provisional layout.
+    // Measured on the 11話 camp menu (T17b): green SYSTEM.BMP panel, 1-px light/dark edges,
+    // white MS Gothic 12 px regular (text pixels match), origin (+13, +10), 16 px lines, width = text + 24.
+    // The panel's bottom sits at y 303, just above the bottom message window. Its x was 208
+    // for a 168-px panel; the rule behind that (centre 292?) is provisional.
+    bool _choiceActive;
+
+    Rectangle ChoiceRect(string[] opts)
+    {
+        int w = opts.Max(o => _ui.SmallText.Measure(o)) + 24, h = opts.Length * 16 + 16;
+        return new Rectangle(292 - w / 2, 304 - h, w, h);
+    }
+
     void DrawChoice()
     {
         if (_runner?.Choice is not { } opts) return;
-        int w = opts.Max(o => _ui.Text.Measure(o)) + 56, h = opts.Length * Ui.Ui.LineHeight + 20;
-        var r = new Rectangle((VirtualWidth - w) / 2, (VirtualHeight - h) / 2, w, h);
-        _ui.Window(_sb, r);
+        var r = ChoiceRect(opts);
+        _ui.Panel(_sb, r);
         for (int i = 0; i < opts.Length; i++)
         {
-            var pos = new Vector2(r.X + 32, r.Y + 10 + i * Ui.Ui.LineHeight);
-            if (i == _runner.ChoiceIndex)
-            {
-                _ui.Fill(_sb, new Rectangle(r.X + 8, (int)pos.Y - 2, w - 16, Ui.Ui.LineHeight - 2), new Color(255, 255, 255) * 0.5f);
-                _ui.DrawText(_sb, "▶", pos - new Vector2(20, 0), Ui.Ui.TextColor);
-            }
-            _ui.DrawText(_sb, opts[i], pos, Ui.Ui.TextColor);
+            var pos = new Vector2(r.X + 13, r.Y + 10 + i * 16);
+            // The reference shows no highlight while the mouse is elsewhere; the hover/keyboard
+            // highlight colour is provisional.
+            var c = _choiceActive && i == _runner.ChoiceIndex ? new Color(255, 255, 120) : Ui.Ui.PanelText;
+            if (_ui.SmallText.Get(opts[i]) is { } t) _sb.Draw(t, pos, c);
         }
     }
 

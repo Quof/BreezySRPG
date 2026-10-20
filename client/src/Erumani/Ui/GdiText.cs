@@ -16,11 +16,11 @@ public sealed class GdiText : IDisposable
     public string FaceName { get; }
     public int Height { get; }
 
-    public GdiText(GraphicsDevice device, int height = 18, int weight = 700)
+    public GdiText(GraphicsDevice device, int height = 18, int weight = 700, string envOverride = "ERUMANI_FONT")
     {
         _device = device;
-        // calibration hook: ERUMANI_FONT="height,weight"
-        if (Environment.GetEnvironmentVariable("ERUMANI_FONT") is { } env && env.Split(',') is [var hs, var ws])
+        // calibration hook: e.g. ERUMANI_FONT="height,weight"
+        if (Environment.GetEnvironmentVariable(envOverride) is { } env && env.Split(',') is [var hs, var ws])
             (height, weight) = (int.Parse(hs), int.Parse(ws));
         Height = height;
         _dc = CreateCompatibleDC(IntPtr.Zero);

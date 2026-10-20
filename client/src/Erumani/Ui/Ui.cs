@@ -23,12 +23,15 @@ public sealed class Ui : IDisposable
     readonly Texture2D _pixel, _messageWindow, _tail;
     readonly Textures _tex;
     public GdiText Text { get; }
+    /// <summary>Menu/panel text (choices, camp menu): smaller than message text.</summary>
+    public GdiText SmallText { get; }
 
     public Ui(GraphicsDevice device, Textures tex)
     {
         _device = device;
         _tex = tex;
         Text = new GdiText(device);
+        SmallText = new GdiText(device, 12, 400, "ERUMANI_SMALLFONT");
         _pixel = new Texture2D(device, 1, 1);
         _pixel.SetData(new[] { Color.White });
         _messageWindow = BuildWindow(MessageWidth, MessageHeight);
@@ -145,9 +148,38 @@ public sealed class Ui : IDisposable
         else sb.Draw(sys, pos.ToVector2(), new Rectangle(128 + f * 32, 0, 20, 20), Color.White);
     }
 
+    /// <summary>Panel textures: 64x64 tiles in SYSTEM.BMP's bottom row (verified for green).</summary>
+    public enum PanelColor { Blue = 0, Red = 1, Yellow = 2, Green = 3 }
+
+    /// <summary>
+    /// Textured panel (menus, choices, EXP messages, battle info): SYSTEM.BMP tile tiled from the
+    /// panel's top-left, 1-px light edge (248,248,224) top/left, dark (0,32,0) bottom/right.
+    /// </summary>
+    public void Panel(SpriteBatch sb, Rectangle r, PanelColor color = PanelColor.Green)
+    {
+        var sys = _tex.Get("SYSTEM.BMP", transparent: false);
+        if (sys is null) { Fill(sb, r, new Color(0, 72, 0)); return; }
+        int tx = (int)color * 64;
+        for (int y = r.Y; y < r.Bottom; y += 64)
+            for (int x = r.X; x < r.Right; x += 64)
+            {
+                int w = Math.Min(64, r.Right - x), h = Math.Min(64, r.Bottom - y);
+                sb.Draw(sys, new Vector2(x, y), new Rectangle(tx, 224, w, h), Color.White);
+            }
+        var light = new Color(248, 248, 224);
+        var dark = new Color(0, 32, 0);
+        Fill(sb, new Rectangle(r.X, r.Y, r.Width, 1), light);
+        Fill(sb, new Rectangle(r.X, r.Y, 1, r.Height), light);
+        Fill(sb, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), dark);
+        Fill(sb, new Rectangle(r.Right - 1, r.Y, 1, r.Height), dark);
+    }
+
+    public static readonly Color PanelText = new(248, 248, 248);
+
     public void Dispose()
     {
         Text.Dispose();
+        SmallText.Dispose();
         _pixel.Dispose();
         _messageWindow.Dispose();
         _tail.Dispose();
