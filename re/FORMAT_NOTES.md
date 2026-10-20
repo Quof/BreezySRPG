@@ -528,7 +528,79 @@ Learned while building the client (phase 3):
 | MAPC_nnn.BMP | 12 × 32 chips of 32×32 in two 6-column halves. Chip k → left half rows for k < 192, right half for k ≥ 192 (§10) | confirmed: user's editor screenshot of map 1 matches exactly. The first version used a 12-wide row-major reading and was **wrong**; the user caught it |
 | UNIT_nnn.BMP | **3 columns × 5 rows of 64×64 cells**, the 32-px character centred, so it overhangs its tile by 16 px each side. Columns are animation frames. Rows are poses: row 0 faces the viewer, row 1 faces away, rows 2/4 are side poses. Row 3's meaning and the exact direction mapping are open | inferred |
 | SYSTEM.BMP | UI atlas: window skin, "END" label, cursor arrows, blue/red damage digits 0–9, PSN/SLP status badges, coloured range-overlay tiles | inferred (visual) |
-| Save files | runtime writes `SAVE<n>.DAT` to the game folder (format string in SRPGEXEC.EXE). The format is pending test T16 | — |
+| Save files | see §14 | — |
+
+**Screen layout of the runtime** (all confirmed by pixel comparison with T17 screenshots, parser/client match ≥ 99.6 % of pixels and 100 % of text pixels):
+
+| Element | Layout |
+|---|---|
+| Screen frame | SFRAME_H/V strips, 16 px on each side. Map viewport 608×448 at (16,16). Strip variants: rows/columns 0–15 = red arrow, 32–47 = grey (red presumably = can scroll that way) |
+| Erased screen | the viewport fills with (16,16,0); the frame stays |
+| Message window | 414×126 including a 1-px outline, at y 33 / 177 / 321 (top / centre / bottom). Fill (184,200,160), rounded radius ≈ 8, outline light (241) on the top/left and dark (96) on the bottom/right |
+| With a face | window at x 193; face 128×128 at (32, y−1); a speech tail on the window's left edge 13 px below its top |
+| Without a face | window at x 113 (centred) |
+| Text | GDI **MS Gothic 18 px bold**, no anti-aliasing, colour (16,16,0), origin (window x + 17, y + 11), 22 px line spacing. Appears all at once |
+| Mouse cursor | SYSTEM.BMP arrow (128,0)+n·32, 20×20, hotspot (0,0); hourglass (128,32)+n·32 while a message waits |
+| Unit hover | name and "HP／max" in small text above the unit, white square cursor on its tile (screenshot 5; to be implemented) |
+| Status window | blue panel with WORD.DAT labels: LV (EXP), HP, TP, Attack/Accuracy/Defense/Magic Defense, the 4 base stats, equipment, and a face (screenshot 6; to be implemented) |
+
+Open: the camera position when a map starts. On map 4 the original showed camera tile (3,4), which isn't the map centre or a start position. It may depend on how the map was entered (editor test play?). To revisit with the battle-start logic.
+
+## 14. Save files — `SAVEn.DAT` (114,400 B, fixed)
+
+Written to the game folder, one file per save slot. There are no timestamps: saving the same state twice gives identical files (T16). Little-endian int32 throughout.
+
+| Off | Size | Content |
+|---|---|---|
+| 0x00000 | 2000 | header |
+| 0x007D0 | 100 × 640 | unit state of each **map object slot** (record i = SMAP object i) |
+| 0x101D0 | 50 × 640 | **roster**: the player's army between maps (map_object = −1) |
+| 0x17ED0 | 100 × 164 | copy of the current map's object table (SMAP §11.1 layout) |
+
+**Header** (known fields; everything else zero in all 5 test saves):
+
+| Off | Field | Conf. | Evidence |
+|---|---|---|---|
+| 0x000, 0x004 | 1 at camp, else 0 | unknown | SAVE4 only |
+| 0x010 | map number (1-based) | inferred | map 1 battle = 1, camp before map 2 = 2 |
+| 0x060 | 0x01000000 (byte 0x63 = 1) in every save | unknown | |
+| 0x20C | phase counter (ally turn t = 2t−1) | inferred | 1 at start, 7 mid-battle, 13 at the end |
+| 0x534 | gold | confirmed | 20 = in-game gold (T16) |
+| 0x538 | party size | inferred | 2 (ルーティ, ジュナ) |
+| 0x53C | current BGM file name (48 B) | confirmed | コミカル.MID in battle, 安らきﾞ.MID at camp |
+| 0x56C | screen tone R, G, B, vividness | inferred | 100,100,100,100 |
+| 0x57C | number of map objects | inferred | 5 on map 1 |
+
+Switches, variables and the item inventory weren't found yet; map 1 doesn't set any (**T18**).
+
+**Unit record** (640 B, int32 index [n] = byte offset 4n):
+
+| Index | Field | Conf. | Evidence (T16 + status screenshot) |
+|---|---|---|---|
+| [0] | in use | inferred | |
+| [1] | present (on the map, alive) | inferred | defeated enemies → 0 |
+| [2] | acted this turn | confirmed | 0 → 1 after ジュナ moved |
+| [3] | computer-controlled | inferred | 1 for enemies |
+| [4] | unknown_010, always −1 | unknown | |
+| [5], [6] | x, y | confirmed | ジュナ y 12 → 11 |
+| [7] | map object index (−1 in the roster) | confirmed | |
+| [8] | unit id | confirmed | 242 ルーティ, 243 ジュナ |
+| [9] | class id | inferred | ルーティ 0, ジュナ 1, ナス 2, minions 3 |
+| [10] | level | confirmed | ルーティ 1; ジュナ 2 → 3 over map 1 |
+| [11] | EXP | confirmed | ルーティ 49 |
+| [19] | movement | inferred | class movement 4 / 6 |
+| [20]–[25] | base stats: max HP, max MP, Str, Mag, Skl, Sta (no equipment) | confirmed | ジュナ 22, 6, 9, 3, 8, 2 |
+| [26]–[31] | current HP, current MP, Str, Mag, Skl, Sta incl. accessory | confirmed | ジュナ Mag 3 + イヤリング 2 = 5. Defeated → HP 0 |
+| [32]–[35] | Attack, Accuracy, Defense, Magic Defense | confirmed | ジュナ 11/17/3/2 = her status window |
+| [40]–[42] | weapon, armor, accessory (ITEM ids) | confirmed | ジュナ 銀のスプーン / 普通の服 / イヤリング |
+| [43], [44] | weapon range min, max | inferred | ルーティ 1–2, ジュナ 1–1 |
+| [50] | movement left this turn | confirmed | 6 → 5 after a 1-tile move |
+| [54], [55] | position before moving this turn | confirmed | (7,12) |
+| [56] | unknown (set on defeated units) | unknown | |
+| [60]–[129] | movement cost per terrain (70) | inferred | |
+| [13] | unknown (1 on roster copies) | unknown | |
+
+Python: `parse_save()` in `re/srpg95_data.py`.
 
 ## Test log (completed, oldest first)
 
@@ -696,36 +768,50 @@ All option lists captured (codes in §11.3, row 2A). T14's Turn branches were Al
 | unit dead | 10 |
 | unit not present | 3 |
 
+### Phase 3, round 1 — instructions (T16, T17)
+
+- **T16 — save files.** In a fresh copy of the game (`えるまに - Save testplay`):
+  1. New game, then save to File 1.
+  2. Save the same state again to File 2.
+  3. Move one unit one tile, end its action, and save to File 3.
+  4. Play to the first camp, save to File 4, and note the gold and one unit's level/HP/EXP/equipment.
+- **T17 — reference screenshots** of the original runtime:
+  - map 1 opening (narration, ルーティ, ナス);
+  - map 4 opening (picture + グレイ);
+  - a choice menu;
+  - a battle-map screen with a unit hovered;
+  - fade timing, and whether text is typed out.
+
+### Phase 3, round 1 — results
+
+- **T16:** 5 saves.
+  - SAVE1 = SAVE2 byte-for-byte, so there's no timestamp.
+  - SAVE2 → SAVE3 changed 5 bytes: ジュナ (7,12) → (7,11). That changed her y, the acted flag, movement left 6 → 5, and the position before the move.
+  - SAVE4 (camp) shows gold 20 and ルーティ Lv 1 with 49 EXP, matching the notes.
+
+  Format in §14. Switches, variables and inventory are still unlocated.
+- **T17:** 7 screenshots. The client now matches them pixel-for-pixel in layout and font (§13). Text appears all at once. The choice-menu screenshot and fade timing weren't captured.
+
 ## Open items with no test planned
 
-Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
+- Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
+- The camera position at map start (§13).
+- Event-side details that need the running game:
+  - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
+  - picture display methods and screen effects beyond the first two;
+  - the T13 damaged-script behaviour.
 
 ## Active tests
 
-**T16 — save files.** The runtime writes saves as `SAVE<n>.DAT` in the game folder (string `%s\SAVE%d.DAT` in SRPGEXEC.EXE). There are none yet, so they have to come from real play.
+**T17b — remaining reference screenshots** (from the original runtime, Alt+PrintScreen):
+1. **A choice menu**, e.g. the 11話 camp menu (仲間と話す / 城をうろつく / 考える / 試験に行く).
+2. **The camp screen** (the menu shown before a battle) and **the save/load file list**.
+3. **A battle in progress:** the attack animation screen, and the screen right after (damage numbers / EXP message).
+4. **Fade timing:** roughly how long the screen takes to fade out or in at the start of a chapter (half a second? one second?).
 
-**Setup:** make a *fresh* copy of the original `えるまに` folder, e.g. `えるまに - Play`. Don't use `えるまに - Copy`, because its test edits change map 1. Run `SRPGEXEC.EXE` from inside it.
+**T18 — saves with switches, variables and items.** Continue the save-testplay game, or load SAVE4:
+1. Buy or receive **one item** at camp (note which), then save to File 6.
+2. Play to the end of **map 2** (story events set switches and variables there), then save at the next camp to File 7.
+3. If you can, also make a save at the **11話 camp** (that chapter's menu uses variable 001 "11話、仲間会話").
 
-1. **New game.** At the first point where Save is offered, save to **File 1**.
-2. **Without doing anything else**, save again to **File 2**. Two saves of the same state show which bytes are timestamps or noise.
-3. **Make exactly one change:** move one unit one tile and end its action. Save to **File 3**. Note which unit, and from where to where.
-4. **Play until the first camp** (after winning a map). Save to **File 4** and note the gold, one unit's level/HP/EXP, and anything in the inventory.
-
-Send all `SAVE*.DAT` files from the Play folder, plus your notes. A screenshot of the save/load screen showing the file labels would also help.
-
-**T17 — reference screenshots from the original runtime.** The new client's windows, fonts and timings are provisional. Please run `SRPGEXEC.EXE` (from the Play copy is fine) and capture:
-1. **Map 1 opening:**
-   - the first narration window (第１話～ / 何？);
-   - ルーティ's first line with her face;
-   - ナス's first line (it appears at the top).
-2. **Map 4 opening:** the first frame with the sky picture and グレイ's line.
-3. **Any choice menu**, e.g. the 11話 camp menu (仲間と話す / 城をうろつく / …).
-4. **One battle-map screen** with the cursor over a unit (status window, if any).
-5. **Timing:** roughly how long a "screen display" fade takes, and whether text appears all at once or letter by letter.
-
-Use Alt+PrintScreen for window-only captures if the game runs windowed (F4 toggles size).
-
-Everything else is decoded. The remaining event-side unknowns will be checked against the running game rather than the editor:
-- the order of event-slot condition codes 6–8 and 9–11 (§11.1);
-- picture display methods and screen effects beyond the first two;
-- the T13 damaged-script behaviour.
+Send the new `SAVE*.DAT` files with a note of what you did between them.

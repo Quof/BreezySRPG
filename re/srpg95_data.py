@@ -663,6 +663,65 @@ def parse_smap(data):
     return hdr, blob
 
 
+SAVE_SIZE = 114400
+SAVE_UNIT_OFF, SAVE_UNIT_SIZE, SAVE_MAP_UNITS, SAVE_ROSTER_UNITS = 0x7d0, 640, 100, 50
+SAVE_OBJECTS_OFF = SAVE_UNIT_OFF + (SAVE_MAP_UNITS + SAVE_ROSTER_UNITS) * SAVE_UNIT_SIZE   # 0x17ed0
+
+SAVE_HEADER_SPEC = [
+    (0x10, 'map_number', 'i32', None),        # 1-based SMAP number (inferred)
+    (0x20c, 'phase', 'i32', None),            # turn/phase counter (inferred)
+    (0x534, 'gold', 'i32', None),             # confirmed (T16: 20)
+    (0x538, 'party_count', 'i32', None),      # inferred (2 = ルーティ + ジュナ)
+    (0x53c, 'bgm', 'str', 0x30),              # current BGM file
+    (0x56c, 'tone', 'i32[]', 4),              # screen tone R, G, B, vividness (inferred)
+    (0x57c, 'object_count', 'i32', None),     # inferred (map 1 has 5 objects)
+]
+
+SAVE_UNIT_SPEC = [
+    (0x00, 'in_use', 'i32', None),
+    (0x04, 'present', 'i32', None),           # on the map and alive (defeated enemy -> 0)
+    (0x08, 'acted', 'i32', None),             # finished its action this turn (confirmed T16)
+    (0x0c, 'computer', 'i32', None),          # 1 for enemies (inferred)
+    (0x10, 'unknown_010', 'i32', None),       # always -1 so far
+    (0x14, 'x', 'i32', None),                 # confirmed T16 (Juna moved up: y 12 -> 11)
+    (0x18, 'y', 'i32', None),
+    (0x1c, 'map_object', 'i32', None),        # SMAP object index, -1 = roster (camp) entry
+    (0x20, 'unit', 'i32', None),              # UNIT.DAT id
+    (0x24, 'class_id', 'i32', None),
+    (0x28, 'level', 'i32', None),             # confirmed (ルーティ 1)
+    (0x2c, 'exp', 'i32', None),               # confirmed (ルーティ 49)
+    (0x4c, 'movement', 'i32', None),
+    (0x50, 'base_stats', 'i32[]', 6),         # max HP, max MP, Str, Mag, Skl, Sta (without equipment)
+    (0x68, 'current_stats', 'i32[]', 6),      # current HP, current MP, Str..Sta incl. accessory
+    (0x80, 'combat', 'i32[]', 4),             # Attack, Accuracy, Defense, Magic Defense (match status screen)
+    (0xa0, 'weapon', 'i32', None),
+    (0xa4, 'armor', 'i32', None),
+    (0xa8, 'accessory', 'i32', None),
+    (0xac, 'range_min', 'i32', None),
+    (0xb0, 'range_max', 'i32', None),
+    (0xc8, 'move_left', 'i32', None),         # confirmed T16 (6 -> 5 after a 1-tile move)
+    (0xd8, 'turn_start_pos', 'i32[]', 2),     # position before moving this turn (confirmed T16)
+    (0xf0, 'terrain_move_cost', 'i32[]', 70),
+]
+
+
+def parse_save(data):
+    """SAVEn.DAT (114,400 B): header, 100 map-unit + 50 roster-unit records of 640 B,
+    then a copy of the map's 100 object records (164 B, SMAP layout)."""
+    if len(data) != SAVE_SIZE:
+        raise ValueError(f'expected {SAVE_SIZE} bytes, got {len(data)}')
+    out = _parse_record(data[:SAVE_UNIT_OFF], SAVE_HEADER_SPEC)
+    units = []
+    for i in range(SAVE_MAP_UNITS + SAVE_ROSTER_UNITS):
+        rec = data[SAVE_UNIT_OFF + i * SAVE_UNIT_SIZE:SAVE_UNIT_OFF + (i + 1) * SAVE_UNIT_SIZE]
+        if any(rec):
+            units.append(dict(slot=i, roster=i >= SAVE_MAP_UNITS, **_parse_record(rec, SAVE_UNIT_SPEC)))
+    out['units'] = units
+    out['map_objects'] = [dict(index=i, **parse_map_object(data[SAVE_OBJECTS_OFF + i * 164:SAVE_OBJECTS_OFF + (i + 1) * 164]))
+                          for i in range(100) if any(data[SAVE_OBJECTS_OFF + i * 164:SAVE_OBJECTS_OFF + (i + 1) * 164])]
+    return out
+
+
 def parse_game(data):
     """GAME.DAT: 200 bytes = 50 int32, mostly unknown."""
     v = _i32s(data, 0, len(data) // 4)
