@@ -5,12 +5,14 @@ namespace Srpg95.Rules;
 /// <summary>One strike in an exchange.</summary>
 public readonly record struct Strike(BattleUnit Attacker, BattleUnit Target, bool Hit, bool Critical, int Damage, bool Killed);
 
-/// <summary>Everything that happened in one attack (strikes, EXP, level-ups).</summary>
+/// <summary>Everything that happened in one action: strikes (attacks), effects (spells/items), EXP, level-ups, new spells.</summary>
 public sealed class ExchangeResult
 {
     public List<Strike> Strikes { get; } = new();
     public Dictionary<BattleUnit, int> ExpGained { get; } = new();
     public Dictionary<BattleUnit, int[]> LevelUps { get; } = new();   // stat increases (6) per unit
+    public List<Effect> Effects { get; } = new();
+    public Dictionary<BattleUnit, List<Magic>> Learned { get; } = new();
 }
 
 /// <summary>
@@ -18,7 +20,7 @@ public sealed class ExchangeResult
 /// Formulas: <see cref="Combat"/> (help "Battle Algorithm"). Everything marked provisional
 /// still needs checking against the original runtime.
 /// </summary>
-public sealed class Battlefield
+public sealed partial class Battlefield
 {
     public MapData Map { get; }
     public Database Db { get; }
@@ -186,12 +188,21 @@ public sealed class Battlefield
             bool hitSomething = r.Strikes.Any(s => s.Attacker == u && s.Hit);
             bool killed = r.Strikes.Any(s => s.Attacker == u && s.Killed);
             if (!hitSomething && !killed) continue;      // provisional: no EXP for misses
-            int exp = Combat.Exp(u.Level, other.Level, killed);
-            r.ExpGained[u] = exp;
-            if (GainExp(u, exp) is { } up) r.LevelUps[u] = up;
+            AwardExp(r, u, Combat.Exp(u.Level, other.Level, killed));
         }
         atk.Acted = true;
         return r;
+    }
+
+    /// <summary>EXP into the result, with any level-up and the spells that level teaches (WORD 73 を習得した).</summary>
+    void AwardExp(ExchangeResult r, BattleUnit u, int exp)
+    {
+        r.ExpGained[u] = exp;
+        var before = KnownSpells(u).ToHashSet();
+        if (GainExp(u, exp) is not { } up) return;
+        r.LevelUps[u] = up;
+        var learned = KnownSpells(u).Where(m => !before.Contains(m)).ToList();
+        if (learned.Count > 0) r.Learned[u] = learned;
     }
 
     /// <summary>Adds EXP; on reaching 100 levels up (max 20) with growth-rate rolls. Returns the stat gains.</summary>
@@ -237,6 +248,7 @@ public sealed class Battlefield
                 u.PoisonTurns--;
             }
             if (u.SleepTurns > 0) u.SleepTurns--;
+            if (u.SleepTurns > 0) u.Acted = true;   // still asleep: loses this turn
             u.PowerUp -= Math.Sign(u.PowerUp);
             u.DefUp -= Math.Sign(u.DefUp);
             u.MdefUp -= Math.Sign(u.MdefUp);

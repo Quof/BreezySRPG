@@ -60,6 +60,8 @@ Options:
   dotnet run --project client/src/Erumani -- --map 1 --advance -1 --keys "at:7.12,enter,at:7.9,enter" --screenshot shot.png
   ```
 - `--event NAME`: run this script on load instead of `OPENING`.
+- `--level N` (developer): allies start the map at level N or higher, e.g. `--level 12` gives ルーティ her spells on map 1.
+- `--give "ID:N,..."` (developer): add N of item ID (0-based ITEM.DAT index) to the inventory, e.g. `--give 40:2` for two ポーション.
 
 Set `SRPG95_REQUIRE_DATA=1` to make the tests fail instead of silently passing when the game data or `re/json` is missing.
 
@@ -105,7 +107,10 @@ Controls:
    - the camera follows each enemy;
    - win/lose, then on to the next map.
 
-   Still to do: magic and items in battle, the other turn-menu entries, and checking the provisional rules against the original (FORMAT_NOTES §15, test T19).
+   - magic (必殺技): spells learned by class level, range/effect grids, damage/degrade/raise effects, MP; enemies cast damage and healing spells;
+   - items (アイテム): medicine and magic items from the shared inventory.
+
+   Still to do: the other turn-menu entries, and checking the provisional rules against the original (FORMAT_NOTES §15, test T21).
 5. **Battle scenes:** ANIME.DAT frame playback over BACK_nnn backgrounds, hit/miss sounds, damage per the help's Battle Algorithm.
 6. **Camp and saving:** sortie, equipment, shop, and save/load in the original `SAVEn.DAT` format (pending save-file research, test T16).
 7. **Title, game over, map transitions.** A basic version is done: after a win, Enter goes on to the next map, and after a loss Enter retries.

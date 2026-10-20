@@ -637,6 +637,13 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Game over | `GAMEOVER.BMP` full screen | confirmed (T20c) |
 | Losing | every ally down, or a unit from the map's character list down. Map 1 goes on without ルーティ: EV000101 is just her remark | confirmed for map 1 (T19d) |
 | Winning without a "Next map" command | goes on to the next map number | guess |
+| Spells known | the class's skill list: every spell whose level the unit has reached. Reaching one on level-up shows 「〜を習得した」 (WORD 73) | data + inferred |
+| Spell targeting | the range grid around the caster, or the whole map. The aim must catch at least one unit the spell affects. The effect grid around the aim, or the whole map, is hit. Target 1 = enemies only for Damage/Degrade, own side for Raise; target 0 = everyone in the area. A harmful spell never hits its caster | grids confirmed (§5). The rest is a guess (T21) |
+| Spell effects | Damage: magic hit/damage formulas, no counter. Degrade: hit roll; class resist or accessory "Safe Against" blocks it. Poison 3 turns; sleep loses 2 of the unit's turns and it acts on the 3rd; Atk/Def Down = −(Value + Mag·Relation/10). Raise: HP heal (capped), Atk/Def Up = Value + Mag·Relation/10, cure poison, cleanse, extra turn (target may act again). Buffs decay 1 per own turn | help text. Heal amount and messages: T21 |
+| Spell EXP | Damage: like an attack (kill or hit, against the highest-level unit caught). Degrade/Raise: the spell's Exp Value per cast. From an item: none | help for Degrade/Raise; the rest is a guess (T21c) |
+| Battle items | ITEM types Medicine and Magic, if the user's class may use them. Medicine targets the user's side within its range (0 = self): HP/MP recovery, Def/MDef Up (resets the counter, cures Def Down), cures. A magic item casts its spell with no MP cost. Using one ends the action and uses up one | help text. Stat-up and class-change items are camp-only (guess) |
+| Menus and overlays | 必殺技 lists spells with ＴＰ cost (greyed when unaffordable or nothing in range); アイテム lists usable items ×count. Spell range = orange tile, area under the cursor = blue tile, medicine range = blue | guess: the layout and colours need T21 screenshots |
+| Enemy spells | an enemy casts a known, affordable damage spell when its predicted total damage beats its best weapon attack, and a heal when it restores ≥ ⅓ of someone's HP | guess |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
 Every scripted run is reproducible: in screenshot mode the client seeds the battle RNG with 1, ignores the real keyboard and mouse, and `--keys` feeds input. The client writes the state and a token trace next to the PNG as `.txt`.
@@ -935,7 +942,18 @@ On map 1, check:
 
 ## Active tests
 
-None right now.
+### Phase 4, round 3 — instructions (T21: magic and items on map 2)
+
+Map 2 (２話) in `えるまに - Save testplay`: start it from your camp save before map 2 (or a new game). ジュリア knows 剣の舞, a Raise Attack spell for her own side, at level 2. Screenshots help wherever something appears on screen.
+
+- **T21a — spell list.** Move ジュリア next to another ally and pick 必殺技. Screenshot the spell list.
+- **T21b — aiming.** Pick 剣の舞. Screenshot the range display, with the cursor on an ally. Can the cursor go on an empty tile, or only onto units?
+- **T21c — result.** Cast it on the ally. What messages appear, in order? Then:
+  - Right-click the ally: what is its 攻撃力 now, compared with before? The data predicts +3 (Value 3, Relation 0).
+  - How much EXP did ジュリア get? The data says 25.
+- **T21d — decay.** On your next turn, check the ally's 攻撃力 again; it should be 1 lower.
+- **T21e — items.** If you have a ポーション, use it from someone next to a hurt ally. Screenshot the item list and the target choice. What messages appear?
+- **T21f — healing.** If グレイ joins during the map, have him cast 活性波 on a hurt ally. How much HP did it restore? The data predicts 7: Value 6 + his Magic 3 × Relation 5 / 10, rounded down, without an accessory.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

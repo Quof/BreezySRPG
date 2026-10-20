@@ -20,7 +20,8 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 /// </summary>
 public sealed class BattleController
 {
-    enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended }
+    enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
+        SpellList, ItemList, Aiming, MedicineTarget }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -265,6 +266,10 @@ public sealed class BattleController
             case State.TurnMenu: UpdateTurnMenu(input); break;
             case State.EnemyPhase: UpdateEnemyPhase(input); break;
             case State.Status: if (input.Confirm || input.Cancel || input.Click || input.RightClick) _state_ = State.Idle; break;
+            case State.SpellList: UpdateSpellList(input); break;
+            case State.ItemList: UpdateItemList(input); break;
+            case State.Aiming: UpdateAiming(input); break;
+            case State.MedicineTarget: UpdateMedicineTarget(input); break;
         }
     }
 
@@ -352,15 +357,186 @@ public sealed class BattleController
     void OpenActionMenu()
     {
         AfterMove(_sel!, _pendingPath);
-        _targets = _s.Field.TargetsFrom(_sel!, _sel!.X, _sel.Y).ToList();
-        // WORD.DAT: 16 攻撃, 17 必殺技 (magic), 18 アイテム, 15 行動終了
-        _menu = new[] { Word(16), Word(17), Word(18), Word(15) };
-        _menuEnabled = new[] { _targets.Count > 0, false, false, true };   // magic/items: next milestone
-        _menuIndex = _targets.Count > 0 ? 0 : 3;
+        BuildActionMenu();
         if (_events.Count > 0) { _resumeMenu = true; _state_ = State.Events; return; }
         _state_ = State.ActionMenu;
     }
     bool _resumeMenu;
+
+    void BuildActionMenu()
+    {
+        var u = _sel!;
+        _targets = _s.Field.TargetsFrom(u, u.X, u.Y).ToList();
+        // WORD.DAT: 16 攻撃, 17 必殺技 (magic), 18 アイテム, 15 行動終了
+        _menu = new[] { Word(16), Word(17), Word(18), Word(15) };
+        _menuEnabled = new[] { _targets.Count > 0, _s.Field.KnownSpells(u).Any(), UsableItems(u).Any(), true };
+        _menuIndex = _targets.Count > 0 ? 0 : 3;
+    }
+
+    // ---------------- magic and items ----------------
+
+    List<Magic> _spells = new();
+    List<Item> _items = new();
+    Magic? _aimSpell;
+    Item? _aimItem;
+    HashSet<(int X, int Y)> _aimRange = new();
+    List<BattleUnit> _medTargets = new();
+
+    IEnumerable<Item> UsableItems(BattleUnit u) =>
+        _state.Items.Where(kv => kv.Value > 0 && kv.Key >= 0 && kv.Key < _db.Items.Length)
+            .Select(kv => _db.Items[kv.Key]).Where(it => _s.Field.CanUseInBattle(u, it)).OrderBy(it => it.Index);
+
+    bool ItemReady(BattleUnit u, Item it) => _s.Field.ItemSpell(it) is { } m
+        ? _s.Field.SpellAims(u, m, u.X, u.Y).Any()
+        : _s.Field.MedicineTargets(u, it).Any();
+
+    void OpenSpellList()
+    {
+        var u = _sel!;
+        _spells = _s.Field.KnownSpells(u).ToList();
+        _menu = _spells.Select(m => $"{m.Name}　{Word(3)}{m.MpCost}").ToArray();
+        _menuEnabled = _spells.Select(m => Battlefield.CanCast(u, m) && _s.Field.SpellAims(u, m, u.X, u.Y).Any()).ToArray();
+        _menuIndex = Math.Max(0, Array.IndexOf(_menuEnabled, true));
+        _state_ = State.SpellList;
+    }
+
+    void OpenItemList()
+    {
+        var u = _sel!;
+        _items = UsableItems(u).ToList();
+        _menu = _items.Select(it => $"{it.Name}　×{_state.ItemCount(it.Index)}").ToArray();
+        _menuEnabled = _items.Select(it => ItemReady(u, it)).ToArray();
+        _menuIndex = Math.Max(0, Array.IndexOf(_menuEnabled, true));
+        _state_ = State.ItemList;
+    }
+
+    void UpdateSpellList(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
+        int pick = MenuNavigate(i, MouseVirtual);
+        if (pick >= 0) BeginAim(_spells[pick], null);
+    }
+
+    void UpdateItemList(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
+        int pick = MenuNavigate(i, MouseVirtual);
+        if (pick < 0) return;
+        var it = _items[pick];
+        if (_s.Field.ItemSpell(it) is { } m) { BeginAim(m, it); return; }
+        _aimItem = it;
+        if (it.S.MedRange <= 0) { DoMedicine(_sel!, it, _sel!); return; }   // range 0 = oneself
+        _medTargets = _s.Field.MedicineTargets(_sel!, it).ToList();
+        _cursor = new Point(_sel!.X, _sel.Y);
+        _state_ = State.MedicineTarget;
+    }
+
+    void BeginAim(Magic m, Item? fromItem)
+    {
+        var u = _sel!;
+        _aimSpell = m;
+        _aimItem = fromItem;
+        _aimRange = _s.Field.SpellRange(m, u.X, u.Y).ToHashSet();
+        // start on a unit the spell would affect (hostile first for harmful spells)
+        var aims = _s.Field.SpellAims(u, m, u.X, u.Y).ToList();
+        var first = aims.OrderBy(a => _s.Field.UnitAt(a.X, a.Y) is { } t && _s.Field.Affects(u, m, t) ? 0 : 1)
+            .ThenBy(a => Math.Abs(a.X - u.X) + Math.Abs(a.Y - u.Y)).FirstOrDefault((u.X, u.Y));
+        _cursor = new Point(first.X, first.Y);
+        _state_ = State.Aiming;
+    }
+
+    void UpdateAiming(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { if (_aimItem is null) OpenSpellList(); else OpenItemList(); return; }
+        MoveCursor(i);
+        if (!Pick(i) || _aimSpell is null) return;
+        var a = (_cursor.X, _cursor.Y);
+        if (!_aimRange.Contains(a) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) return;
+        DoCast(_sel!, _aimSpell, a, _aimItem);
+    }
+
+    void UpdateMedicineTarget(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { OpenItemList(); return; }
+        if (i.Left || i.Up || i.Right || i.Down)
+        {
+            int k = _medTargets.FindIndex(t => t.X == _cursor.X && t.Y == _cursor.Y);
+            k = (k + ((i.Right || i.Down) ? 1 : _medTargets.Count - 1) + _medTargets.Count) % _medTargets.Count;
+            _cursor = new Point(_medTargets[k].X, _medTargets[k].Y);
+        }
+        if (!Pick(i)) return;
+        var target = _medTargets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y);
+        if (target is not null && _aimItem is not null) DoMedicine(_sel!, _aimItem, target);
+    }
+
+    void DoCast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
+    {
+        var hostiles = _s.Field.SpellTargets(caster, m, aim.X, aim.Y).Where(t => Battlefield.Hostile(caster, t)).ToList();
+        foreach (var t in hostiles) AttackTriggers(caster, t, 10);
+        if (item is not null) { _state.AddItem(item.Index, -1); Popup($"{caster.Name}は{item.Name}{Word(58)}"); }   // "を使います"
+        else Popup($"{caster.Name}：{m.Name}");
+        var r = _s.Field.Cast(caster, m, aim.X, aim.Y, fromItem: item is not null);
+        ShowResult(caster, r);
+        foreach (var t in hostiles) AttackTriggers(caster, t, 11);
+        Finish(caster);
+    }
+
+    void DoMedicine(BattleUnit user, Item it, BattleUnit target)
+    {
+        _state.AddItem(it.Index, -1);
+        Popup($"{user.Name}は{it.Name}{Word(58)}");
+        ShowResult(user, _s.Field.UseMedicine(user, it, target));
+        Finish(user);
+    }
+
+    void Finish(BattleUnit actor)
+    {
+        _afterShow = actor.Side == Side.Ally ? State.Idle : State.EnemyPhase;
+        if (actor.Side == Side.Ally) AfterAction(actor);
+        NextPopup();
+    }
+
+    /// <summary>Result popups (WORD.DAT phrases where the game has them; the rest provisional).</summary>
+    void ShowResult(BattleUnit actor, ExchangeResult r)
+    {
+        foreach (var e in r.Effects)
+        {
+            var n = e.Target.Name;
+            string Points(string what, int v, int verb) => $"{n}の{what}{Word(64)}{v}{Word(65)}{Word(verb)}";   // "の攻撃力が3ポイント上昇した"
+            Popup(e.Kind switch
+            {
+                EffectKind.Damage => $"{actor.Name} → {n}：{e.Amount}{(e.Killed ? "　撃破" : "")}",
+                EffectKind.Miss => $"{actor.Name} → {n}：ミス",
+                EffectKind.Resisted => $"{n}：無効",
+                EffectKind.Heal => $"{n}{Word(64)}{e.Amount}{Word(65)}{Word(66)}",          // "が12ポイント回復した"
+                EffectKind.MpHeal => Points(Word(3), e.Amount, 66),
+                EffectKind.PowerUp => Points(Word(4), e.Amount, 68),
+                EffectKind.DefUp => Points(Word(6), e.Amount, 68),
+                EffectKind.MdefUp => Points(Word(7), e.Amount, 68),
+                EffectKind.AttackDown => Points(Word(4), e.Amount, 69),
+                EffectKind.DefenseDown => Points(Word(6), e.Amount, 69),
+                EffectKind.Poison => $"{n}は毒を受けた",
+                EffectKind.Sleep => $"{n}は眠った",
+                EffectKind.CurePoison => $"{n}の{Word(74)}",                                   // "毒が消えた"
+                EffectKind.WakeUp => $"{n}は{Word(76)}",                                       // "目を覚ました"
+                EffectKind.Cleanse => $"{n}の状態異常が回復した",
+                _ => $"{n}は再行動できる",
+            }, e.Killed ? e.Target : null);
+            if (e.Killed) _s.Ghosts.Add(e.Target);
+        }
+        ShowGrowth(r);
+    }
+
+    void ShowGrowth(ExchangeResult r)
+    {
+        foreach (var (u, exp) in r.ExpGained)
+            Popup($"{u.Name}：{exp}{Word(60)}");            // "の経験値を獲得"
+        foreach (var (u, _) in r.LevelUps)
+            Popup($"{u.Name}{Word(70)}{u.Level}{Word(71)}");   // "はレベル" n "になった"
+        foreach (var (u, spells) in r.Learned)
+            foreach (var m in spells)
+                Popup($"{u.Name}は{m.Name}{Word(73)}");         // "を習得した"
+    }
 
     Rectangle MenuRect()
     {
@@ -398,6 +574,8 @@ public sealed class BattleController
         }
         int pick = MenuNavigate(i, MouseVirtual);
         if (pick == 0) { _state_ = State.Targeting; _cursor = new Point(_targets[0].X, _targets[0].Y); }
+        else if (pick == 1) OpenSpellList();
+        else if (pick == 2) OpenItemList();
         else if (pick == 3) FinishAction();
     }
 
@@ -416,7 +594,11 @@ public sealed class BattleController
         DoAttack(_sel!, target);
     }
 
-    void OpenActionMenuAgain() => _state_ = State.ActionMenu;
+    void OpenActionMenuAgain()
+    {
+        BuildActionMenu();
+        _state_ = State.ActionMenu;
+    }
 
     void DoAttack(BattleUnit atk, BattleUnit def)
     {
@@ -429,10 +611,7 @@ public sealed class BattleController
                 : $"{st.Attacker.Name} → {st.Target.Name}：ミス", st.Killed ? st.Target : null);
             if (st.Killed) _s.Ghosts.Add(st.Target);
         }
-        foreach (var (u, exp) in r.ExpGained)
-            Popup($"{u.Name}：{exp}{Word(60)}");            // "の経験値を獲得"
-        foreach (var (u, _) in r.LevelUps)
-            Popup($"{u.Name}{Word(70)}{u.Level}{Word(71)}");   // "はレベル" n "になった"
+        ShowGrowth(r);
         AttackTriggers(atk, def, 11);
         _afterShow = atk.Side == Side.Ally ? State.Idle : State.EnemyPhase;
         if (atk.Side == Side.Ally) AfterAction(atk);
@@ -530,6 +709,12 @@ public sealed class BattleController
             if (p.SwitchToApply >= 0 && p.SwitchToApply < GameState.SwitchCount) _state.Switches[p.SwitchToApply] = true;
             _plan = null;
             p.Unit.Acted = true;
+            if (p.Spell is { } sp && Battlefield.CanCast(p.Unit, sp) && _s.Field.SpellTargets(p.Unit, sp, p.Aim.X, p.Aim.Y).Count > 0)
+            {
+                _cursor = new Point(p.Aim.X, p.Aim.Y);
+                DoCast(p.Unit, sp, p.Aim, null);
+                return;
+            }
             if (p.Target is { Dead: false } t && _s.Field.InRange(p.Unit, p.Unit.X, p.Unit.Y, t)) { DoAttack(p.Unit, t); return; }
             if (CheckPoint()) return;
             _wait = 8;
@@ -571,11 +756,27 @@ public sealed class BattleController
                 }
             _s.DrawRange(sb, viewport, tiles, 1, frame);
         }
+        // provisional colours: spell range orange (tile 2), area under the cursor blue (tile 3); medicine range blue
+        if (_state_ == State.Aiming && _aimSpell is not null && _sel is not null)
+        {
+            _s.DrawRange(sb, viewport, _aimRange, 2, frame);
+            if (_aimRange.Contains((_cursor.X, _cursor.Y)))
+                _s.DrawRange(sb, viewport, _s.Field.SpellArea(_aimSpell, _cursor.X, _cursor.Y), 3, frame);
+        }
+        if (_state_ == State.MedicineTarget && _sel is not null && _aimItem is not null)
+        {
+            int r = _aimItem.S.MedRange;
+            var tiles = new List<(int, int)>();
+            for (int y = _sel.Y - r; y <= _sel.Y + r; y++)
+                for (int x = _sel.X - r; x <= _sel.X + r; x++)
+                    if (Math.Abs(x - _sel.X) + Math.Abs(y - _sel.Y) <= r && _s.Field.InBounds(x, y)) tiles.Add((x, y));
+            _s.DrawRange(sb, viewport, tiles, 3, frame);
+        }
     }
 
     public void DrawUi(SpriteBatch sb, Rectangle viewport, int frame)
     {
-        bool showCursor = _state_ is State.Idle or State.Selected or State.Targeting;
+        bool showCursor = _state_ is State.Idle or State.Selected or State.Targeting or State.Aiming or State.MedicineTarget;
         if (showCursor && _s.Field.InBounds(_cursor.X, _cursor.Y))
         {
             var p = _s.ScreenPos(_cursor.X, _cursor.Y, viewport).ToPoint();
@@ -583,7 +784,7 @@ public sealed class BattleController
             _ui.Frame(sb, new Rectangle(p.X + 1, p.Y + 1, 30, 30), Color.White, 2);
             if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
         }
-        if (_state_ is State.ActionMenu or State.TurnMenu) DrawMenu(sb);
+        if (_state_ is State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList) DrawMenu(sb);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
         if (_state_ == State.Status && _statusUnit is not null) DrawStatus(sb, _statusUnit);
         if (Outcome == MapOutcome.GameOver && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go)

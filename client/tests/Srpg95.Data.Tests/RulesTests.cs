@@ -74,4 +74,102 @@ public class RulesTests
         var plan = EnemyAi.Plan(f, f.Units.Single(u => u.Unit == 3), new bool[500]);
         Assert.True(f.Reachable(plan.Unit).ContainsKey(plan.Destination));
     }
+
+    [Fact]
+    public void Spells_are_learned_by_class_level()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var rutee = f.Units.Single(u => u.Unit == 242);   // class 0: ルーチェ＝フォルツァ at 8, イオンビーム at 12
+        Assert.Empty(f.KnownSpells(rutee));
+        rutee.Level = 12;
+        Assert.Equal(new[] { 4, 45 }, f.KnownSpells(rutee).Select(m => m.Index));
+        // level 11 -> 12 teaches イオンビーム
+        rutee.Level = 11;
+        rutee.Exp = 99;
+        var enemy = f.Units.First(u => u.Unit == 4);
+        enemy.X = rutee.X; enemy.Y = rutee.Y - 1;
+        enemy.SleepTurns = 3;                      // asleep: always hit, so EXP (and the level-up) is certain
+        var ex = f.Attack(rutee, enemy);
+        Assert.Equal(12, rutee.Level);
+        Assert.Equal("イオンビーム", Assert.Single(ex.Learned[rutee]).Name);
+    }
+
+    [Fact]
+    public void Damage_spell_costs_mp_hits_the_area_and_gives_exp()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var rutee = f.Units.Single(u => u.Unit == 242);
+        rutee.Level = 12;
+        rutee.Mp = 20;
+        var ion = db.Magic[45];
+        var enemy = f.Units.First(u => u.Unit == 4);
+        // put the enemy on a tile the spell can be aimed at
+        var aim = f.SpellRange(ion, rutee.X, rutee.Y).First(a => f.UnitAt(a.X, a.Y) is null);
+        enemy.X = aim.X; enemy.Y = aim.Y;
+        Assert.Contains(aim, f.SpellAims(rutee, ion, rutee.X, rutee.Y));
+        int hpBefore = enemy.Hp;
+        var r = f.Cast(rutee, ion, aim.X, aim.Y);
+        Assert.Equal(20 - ion.MpCost, rutee.Mp);
+        var e = Assert.Single(r.Effects);
+        Assert.Same(enemy, e.Target);
+        if (e.Kind == EffectKind.Damage)
+        {
+            Assert.Equal(f.PredictSpellDamage(rutee, ion, enemy), hpBefore - enemy.Hp);
+            Assert.True(r.ExpGained.ContainsKey(rutee));
+        }
+        Assert.True(rutee.Acted);
+        Assert.DoesNotContain(r.Effects, x => x.Target.Side == Side.Ally);   // イオンビーム is "enemies only"
+    }
+
+    [Fact]
+    public void Sleep_skips_two_turns_and_wakes_on_the_third()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var enemy = f.Units.First(u => u.Unit == 4);
+        enemy.SleepTurns = 3;                      // what a landed Sleep spell sets during the ally phase
+        var acted = new List<bool>();
+        for (int turn = 0; turn < 3; turn++)
+        {
+            f.NextPhase();                         // enemy phase starts
+            acted.Add(enemy.Acted);                // Acted at phase start = can't move
+            f.NextPhase();                         // back to the allies
+        }
+        Assert.Equal(new[] { true, true, false }, acted);
+    }
+
+    [Fact]
+    public void Potion_heals_up_to_max_hp_within_range()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        var rutee = f.Units.Single(u => u.Unit == 242);
+        var potion = db.Items[40];                 // ポーション: HP 8, range 1
+        Assert.True(f.CanUseInBattle(juna, potion));
+        Assert.Contains(rutee, f.MedicineTargets(juna, potion));   // (7,12) and (8,12) are adjacent
+        rutee.Hp = rutee.MaxHp - 3;
+        var r = f.UseMedicine(juna, potion, rutee);
+        Assert.Equal(rutee.MaxHp, rutee.Hp);
+        Assert.Equal(3, Assert.Single(r.Effects).Amount);
+        Assert.True(juna.Acted);
+    }
+
+    [Fact]
+    public void Enemy_casts_a_spell_when_it_beats_its_weapon()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var nasu = f.Units.Single(u => u.Unit == 3);   // class 2: ナスビーム at level 10
+        nasu.Level = 10;
+        nasu.Mp = 30;
+        nasu.Weapon = -1;                              // bare-handed, so the spell clearly wins
+        foreach (var a in f.Units.Where(u => u.Side == Side.Ally)) { a.X = nasu.X; a.Y = nasu.Y + 3 + (a.Unit - 242); }
+        var plan = EnemyAi.Plan(f, nasu, new bool[500]);
+        var m = Assert.IsType<Magic>(plan.Spell);
+        Assert.Equal("ナスビーム", m.Name);
+        Assert.NotEmpty(f.SpellTargets(nasu, m, plan.Aim.X, plan.Aim.Y));
+    }
 }

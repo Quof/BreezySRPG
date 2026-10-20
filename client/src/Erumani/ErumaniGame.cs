@@ -35,6 +35,7 @@ public sealed class ErumaniGame : Game
     MapSession? _session;
     EventRunner? _runner;
     BattleController? _battle;
+    bool _gaveItems;
     Queue<string> _script = new();
     readonly List<string> _trace = new();
     int _scriptWait, _idleFrames;
@@ -96,6 +97,15 @@ public sealed class ErumaniGame : Game
         if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
         _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex);
         _audio.PlayBgm(map.Bgm[1]);   // player-turn BGM; the opening usually sets its own
+        // developer options (--level, --give): set up situations for testing
+        if (_opts.Level is int lv)
+            foreach (var u in _session.Field.Units.Where(u => u.Side == Srpg95.Rules.Side.Ally && u.Level < lv)) u.Level = lv;
+        if (_opts.Give is { } give && !_gaveItems)
+        {
+            _gaveItems = true;
+            foreach (var g in give.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                if (g.Split(':') is [var id, var n]) _state.AddItem(int.Parse(id), int.Parse(n));
+        }
         _battle.PlayMapBgm = slot => _audio.PlayBgm(map.Bgm[slot]);
         _battle.Start(_opts.Event);
         _seenOutcome = MapOutcome.None;
