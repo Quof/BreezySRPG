@@ -660,8 +660,10 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Battle scene: hit | the target flickers as a white silhouette for `flash_time` frames centred on `hit_frame`. At `hit_frame` the damage number appears in SYSTEM.BMP's purple digits (y 128, 24 px apart, centred on the target's x), drops onto the ground line (cell top y 268), bounces once and stays until the stage wipes out. The actor freezes on its last frame | measured (T22) |
 | Battle scene: defeat | 1 s after a killing blow, the defeated unit's UNIT.DAT death message replaces the panels: bottom message layout with its face, waiting for a click. The dead unit stays visible until the wipe-out | measured (T22) |
 | Battle scene: after | the EXP message appears back on the map, at the top, with no name and full-width digits: 「１７の経験値を獲得」 | confirmed (T22) |
-| Battle scene: miss | shown as a purple 0, like the damage number | seen twice in the T22 recording: ナス on ジュナ (HP unchanged) and ルーティ on a 1-HP minion (survived) |
-| Battle scene: still guessed | spells: the caster's cast animation, then the spell animation per target, one scene per target. The recovery number in the red digits (y 160). The background coming from the defender's terrain | needs a spell/miss recording |
+| Battle scene: miss | a purple 0 like a damage number, with the animation's miss sound instead of the hit sound | confirmed (user, T22) |
+| Battle scene: background | `BACK_nnn` of the terrain under the unit being attacked or targeted | confirmed (user) |
+| Battle scene: spells on one's own side | two halves, each with a single unit on the right and only its (blue) panel; the left half of the panels stays black. First the caster alone plays its class magic-to-ally animation: 11-tick pause, the animation, then straight into the wipe-out with no hold. The stage stays black ~0.45 s while the panel switches to the target. Then the target alone: 8-tick pause, the spell animation (authored landing on the left, so mirrored to the right), a 10-tick hold. The target flashes white like a hit. The recovery number uses the red digits (y 160) and bounces the same way, centred at x 511 on the right (the left-side damage number centres at 159; one sample each). TP drops when the cast animation starts. EXP afterwards = the spell's Exp Value (活性波: 「１０の経験値を獲得」) | measured from the T22 heal recording (グレイ's 活性波 on ジュリア) |
+| Battle scene: still guessed | damage / degrade spells on enemies: both units on the stage like an attack, cast animation then the spell animation on the enemy. Area spells: one scene per affected unit | needs a recording of an attack spell |
 | Battle music | map BGM slot 3 (player-battle) when an ally starts the fight, 4 (enemy-battle) when an enemy does, 5 (boss-battle) when an enemy leader takes part; the phase music returns afterwards | battle music confirmed to start (T20b); slot choice inferred from the map header's slot names |
 | Enemy spells | an enemy casts a known, affordable damage spell when its predicted total damage beats its best weapon attack, and a heal when it restores ≥ ⅓ of someone's HP | guess |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
@@ -999,6 +1001,8 @@ From a 2-minute 60 fps recording of map 1, `recordings/` (frames via `re/tools/f
 - **T22e — enemy attacks:** the enemy stays on the left and its animation is mirrored.
 - **T22f — the panels:** as in §15.
 - **T22g — after the battle:** the EXP message appears on the map. A death message appears inside the scene first.
+- **Follow-ups from the user:** the background is the attacked unit's terrain. A miss is a 0 with a different sound effect.
+- **Heal recording** (グレイ's 活性波 on ジュリア): as in §15 "spells on one's own side".
 
 ## Open items with no test planned
 
@@ -1006,7 +1010,7 @@ From a 2-minute 60 fps recording of map 1, `recordings/` (frames via `re/tools/f
 - The camera position at map start (§13).
 - Save variables: 16-bit at 0x5DC vs 8-bit at 0x5EF. Any later save with another variable set (e.g. at the 11話 camp, variable 0) settles it.
 - Save header fields 0x008, 0x00C, 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
-- Battle scene details not in the recording: spell scenes, how a recovery number looks, and which unit's terrain picks the background (forest fights did show the forest background). A later recording of a spell, a miss and a heal would settle them.
+- Battle scene: attack spells on enemies and area spells (only an own-side heal has been recorded so far). A later recording of a spell, a miss and a heal would settle them.
 - Event-side details that need the running game:
   - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
   - picture display methods and screen effects beyond the first two;

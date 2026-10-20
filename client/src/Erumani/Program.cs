@@ -32,17 +32,18 @@ public static class Program
 ///               --advance -1           (confirm every message/choice)
 ///               --level N              (developer: allies start the map at level N or higher)
 ///               --give "ID:N,.."      (developer: add N of ITEM.DAT item ID (0-based) to the inventory)
+///               --place "UNIT:X.Y,.."  (developer: move a unit (UNIT.DAT id) to a tile and keep it shown; :X.Y.HP also sets HP)
 ///               --keys "a,b,..."       (with --screenshot: scripted input once the map is idle;
 ///                                       up/down/left/right/enter/esc, at:X,Y moves the cursor to a tile,
 ///                                       wait skips a beat, shot+N takes the shot N frames later even mid-animation;
 ///                                       telop+N / telopK+N wait for the next caption (any, or TELOPK.BMP) and shoot N frames in;
 ///                                       otherwise the shot is taken once the queue is done and the map is idle)
 /// </summary>
-public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null, int? Level = null, string? Give = null)
+public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null, int? Level = null, string? Give = null, string? Place = null)
 {
     public static Options Parse(string[] args)
     {
-        string? game = null, rtp = null, shot = null, ev = null, keys = null, give = null;
+        string? game = null, rtp = null, shot = null, ev = null, keys = null, give = null, place = null;
         int? level = null;
         int? map = null;
         int advance = 0;
@@ -59,12 +60,13 @@ public sealed record Options(string GameDir, string? RtpDir, int? StartMap, stri
                 case "--keys": keys = args[i + 1]; break;
                 case "--level": level = int.Parse(args[i + 1]); break;
                 case "--give": give = args[i + 1]; break;
+                case "--place": place = args[i + 1]; break;
             }
         }
         game ??= FindGameFolder() ?? throw new DirectoryNotFoundException(
             "Game folder not found. Pass --game <folder containing SRPGEXEC.EXE>.");
         rtp ??= FindUp(AppContext.BaseDirectory, Path.Combine("srpg maker 95", "RTP"));
-        return new Options(game, rtp, map, shot, advance, ev, keys, level, give);
+        return new Options(game, rtp, map, shot, advance, ev, keys, level, give, place);
     }
 
     /// <summary>Next to the exe, or in a parent directory (development layout: ./えるまに).</summary>

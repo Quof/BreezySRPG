@@ -32,9 +32,13 @@ public sealed class BattleScene
 {
     const int Cell = 192, StageWidth = 640, StageHeight = 320, TickFrames = 2;
 
-    /// <summary>One animation to play: who acts, on whom, and what the rules decided.</summary>
+    /// <summary>
+    /// One animation to play: who acts, on whom, and what the rules decided. <paramref name="Solo"/> puts a
+    /// single unit on the stage (on the right, its panel only): a spell on one's own side plays as the caster
+    /// alone, then the target alone (T22 heal recording). Pause / Hold are the ticks before and after it.
+    /// </summary>
     public sealed record Step(BattleUnit Actor, BattleUnit Target, Animation Anim, string Sheet,
-        bool Hit, int Amount, bool Recovery, string? Caption = null);
+        bool Hit, int Amount, bool Recovery, string? Caption = null, BattleUnit? Solo = null, int Pause = 10, int Hold = 15);
 
     enum Phase { DimMap, PanelsIn, WipeIn, Pause, Anim, Hold, WipeOut, Gap, Death, EndHold, MapIn, Done }
 
@@ -44,6 +48,9 @@ public sealed class BattleScene
     readonly Battlefield _field;
     readonly List<Step> _steps;
     readonly Dictionary<BattleUnit, int> _hp = new();
+    /// <summary>TP shown before the caster's animation starts (the cost comes off when it begins, T22 heal).</summary>
+    readonly Dictionary<BattleUnit, int> _mp = new();
+    public void ShowMpBefore(BattleUnit u, int mp) => _mp[u] = mp;
     readonly BattleUnit _right, _left;
     readonly Texture2D? _back;
     int _stepIndex = -1, _frame, _sub, _phaseTicks;
@@ -89,6 +96,14 @@ public sealed class BattleScene
 
     Step? Current => _stepIndex >= 0 && _stepIndex < _steps.Count ? _steps[_stepIndex] : null;
 
+    /// <summary>The step whose units are on stage now (the next one while the stage is wiping in or black).</summary>
+    Step? Shown => _phase is Phase.DimMap or Phase.PanelsIn or Phase.WipeIn or Phase.Gap
+        ? (_stepIndex + 1 < _steps.Count ? _steps[_stepIndex + 1] : _steps.LastOrDefault())
+        : Current ?? _steps.LastOrDefault();
+
+    BattleUnit? StageRight => Shown?.Solo ?? _right;
+    BattleUnit? StageLeft => Shown?.Solo is not null ? null : _left;
+
     // ---------------- update ----------------
 
     public void Update(bool fastForward, bool confirm)
@@ -122,11 +137,11 @@ public sealed class BattleScene
                     Go(Phase.Pause);
                 }
                 break;
-            case Phase.Pause: if (_phaseTicks >= 10) Go(Phase.Anim); break;
+            case Phase.Pause: if (_phaseTicks >= (Current?.Pause ?? 10)) Go(Phase.Anim); break;
             case Phase.Anim: AnimTick(); break;
             case Phase.Hold:
                 if (_dying is not null && _phaseTicks >= 30) { Go(Phase.Death); break; }
-                if (_dying is null && _phaseTicks >= 15) Go(Phase.WipeOut);
+                if (_dying is null && _phaseTicks >= (Current?.Hold ?? 15)) Go(Phase.WipeOut);
                 break;
             case Phase.WipeOut:
                 if (_phaseTicks >= 5)
@@ -135,7 +150,7 @@ public sealed class BattleScene
                     Go(_stepIndex + 1 < _steps.Count && _dying is null ? Phase.Gap : Phase.EndHold);
                 }
                 break;
-            case Phase.Gap: if (_phaseTicks >= 12) Go(Phase.WipeIn); break;
+            case Phase.Gap: if (_phaseTicks >= 12) Go(Phase.WipeIn); break;   // the panels already show the next step's units
             case Phase.EndHold: if (_phaseTicks >= 13) Go(Phase.MapIn); break;
             case Phase.MapIn: if (_phaseTicks >= 4) Go(Phase.Done); break;
         }
@@ -145,6 +160,7 @@ public sealed class BattleScene
     {
         if (Current is not { } st) { Go(Phase.Hold); return; }
         var a = st.Anim;
+        if (_frame == 0) _mp.Remove(st.Actor);
         if (st.Hit && _frame == a.HitSoundFrame && a.HitSound.Length > 0) PlaySound?.Invoke(a.HitSound);
         if (!st.Hit && _frame == a.MissSoundFrame && a.MissSound.Length > 0) PlaySound?.Invoke(a.MissSound);
         if (_frame == a.HitFrame)
@@ -167,7 +183,7 @@ public sealed class BattleScene
     /// <summary>White-silhouette flicker: flash_time frames centred on hit_frame, with a normal frame now and then.</summary>
     bool Flashing(BattleUnit u)
     {
-        if (_phase != Phase.Anim || Current is not { } st || st.Target != u || !st.Hit || st.Recovery) return false;
+        if (_phase != Phase.Anim || Current is not { } st || st.Target != u || !st.Hit || st.Caption is not null && !st.Recovery) return false;
         int start = st.Anim.HitFrame - st.Anim.FlashTime / 2, k = _frame - start;
         return k >= 0 && k < Math.Max(1, st.Anim.FlashTime) && !(k % 3 == 1 && k < 6);
     }
@@ -216,19 +232,28 @@ public sealed class BattleScene
         sb.End();
         sb.Begin(samplerState: SamplerState.PointClamp, rasterizerState: Scissor);
         sb.GraphicsDevice.ScissorRectangle = clip;
-        if (_back is not null) sb.Draw(_back, Vector2.Zero, Color.White);
+        if (Background() is { } back) sb.Draw(back, Vector2.Zero, Color.White);
         var st = Current;
         bool showActor = st is not null && (_phase == Phase.Anim || (_actorFrozen && _phase is Phase.Hold or Phase.Death or Phase.WipeOut));
-        foreach (var u in new[] { _right, _left }.Distinct())
+        foreach (var (u, right) in new[] { (StageRight, true), (StageLeft, false) })
         {
+            if (u is null) continue;
             bool inAnim = showActor && st!.Actor == u && !st.Anim.IsSpell;
-            if (!inAnim) DrawIdle(sb, u, u == _right);
+            if (!inAnim) DrawIdle(sb, u, right);
         }
         if (showActor) DrawFrame(sb, st!);
         DrawNumber(sb);
         sb.End();
         sb.GraphicsDevice.ScissorRectangle = old;
         sb.Begin(samplerState: SamplerState.PointClamp);
+    }
+
+    /// <summary>BACK_nnn of the terrain under the unit being acted on (confirmed by the user, T22).</summary>
+    Texture2D? Background()
+    {
+        var target = Shown?.Target ?? _left;
+        int back = _field.TerrainAt(target.X, target.Y).BattleBackground;
+        return back > 0 ? _tex.Get($"BACK_{back:000}.BMP", transparent: false) : _back;
     }
 
     static readonly RasterizerState Scissor = new() { ScissorTestEnable = true, CullMode = CullMode.None };
@@ -254,7 +279,7 @@ public sealed class BattleScene
         int f = Math.Min(_frame, st.Anim.Frames.Length - 1);
         if (sheet is null) return;
         // weapon/cast animations: actor authored on the right; spells: authored landing on the left
-        bool mirror = st.Anim.IsSpell ? st.Target == _right && _left != _right : st.Actor == _left;
+        bool mirror = st.Anim.IsSpell ? st.Target == StageRight : st.Actor == StageLeft;
         foreach (var l in st.Anim.Frames[f])
         {
             if (l.Cell < 0) continue;
@@ -270,13 +295,14 @@ public sealed class BattleScene
     }
 
     // bounce of the damage number per tick, relative to resting on the ground line (T22)
-    static readonly int[] Bounce = { -72, -40, -40, 0, -8, -20, -30, -30, -30, -8, 0 };
+    static readonly int[] Bounce = { -72, -72, -40, -16, 0, -8, -20, -30, -30, -20, -8, 0 };
 
     /// <summary>SYSTEM.BMP digits: 24x32 cells, digit k at x 24k; purple y 128 = damage (T22), red y 160 = recovery (guess).</summary>
     void DrawNumber(SpriteBatch sb)
     {
         if (_number is not { } n) return;
-        int cx = n.On == _right ? StageWidth - 160 : 160;
+        // centre measured once per side: 159 on the left (T22 attack), 511 on the right (T22 heal)
+        int cx = n.On == StageRight ? 511 : 160;
         int y = 268 + Bounce[Math.Min(n.Age, Bounce.Length - 1)];
         var sys = _tex.Get("SYSTEM.BMP");
         if (sys is null) return;
@@ -316,8 +342,9 @@ public sealed class BattleScene
     /// </summary>
     void DrawPanels(SpriteBatch sb, float alpha)
     {
-        foreach (var (u, r) in new[] { (_left, new Rectangle(0, 320, 320, 160)), (_right, new Rectangle(320, 320, 320, 160)) })
+        foreach (var (unit, r) in new[] { (StageLeft, new Rectangle(0, 320, 320, 160)), (StageRight, new Rectangle(320, 320, 320, 160)) })
         {
+            if (unit is not { } u) continue;
             var color = u.Side == Side.Ally ? Ui.Ui.PanelColor.Blue : Ui.Ui.PanelColor.Red;
             _ui.Panel(sb, r, color);
             var (light, dark) = Ui.Ui.EdgeColors(color);
@@ -335,8 +362,9 @@ public sealed class BattleScene
             T(_ui.SmallText, $"{hp}／{u.MaxHp,2}", 307, 35, right: true);
             Bar(sb, r.X + 12, r.Y + 48, hp, u.MaxHp, HpFull, light, dark);
             T(_ui.SmallText, _db.Words[3], 14, 75);
-            T(_ui.SmallText, $"{u.Mp}／{u.MaxMp,2}", 307, 75, right: true);
-            Bar(sb, r.X + 12, r.Y + 88, u.Mp, u.MaxMp, TpFull, light, dark);
+            int mp = _mp.TryGetValue(u, out var m0) ? m0 : u.Mp;
+            T(_ui.SmallText, $"{mp}／{u.MaxMp,2}", 307, 75, right: true);
+            Bar(sb, r.X + 12, r.Y + 88, mp, u.MaxMp, TpFull, light, dark);
             var s = _field.Stats(u);
             int terrain = _field.TerrainAt(u.X, u.Y).DefenseBonus;
             (int Word, int Value)[,] stats =

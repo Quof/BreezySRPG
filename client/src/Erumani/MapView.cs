@@ -104,7 +104,7 @@ public sealed class MapSession : IMapContext
     {
         foreach (var u in Field.Units)
         {
-            if (u.MapObject < 0) continue;
+            if (u.MapObject < 0 || u.ForceShown) { if (u.ForceShown) u.Hidden = false; continue; }
             var o = Map.Objects.First(x => x.Index == u.MapObject);
             u.Hidden = o.SwitchCondition >= 0 && o.SwitchCondition < GameState.SwitchCount && !_state.Switches[o.SwitchCondition];
         }

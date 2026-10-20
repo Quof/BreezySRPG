@@ -29,6 +29,8 @@ public sealed class BattleUnit
     public bool Dead { get; set; }
     /// <summary>Not on the map right now (its object's switch condition is OFF).</summary>
     public bool Hidden { get; set; }
+    /// <summary>Developer option (--place): stays on the map whatever its object's switch condition says.</summary>
+    public bool ForceShown { get; set; }
     public bool Leader { get; init; }
     public bool Guest { get; init; }
     public bool Unattackable { get; init; }

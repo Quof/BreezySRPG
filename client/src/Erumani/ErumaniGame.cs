@@ -100,6 +100,14 @@ public sealed class ErumaniGame : Game
         // developer options (--level, --give): set up situations for testing
         if (_opts.Level is int lv)
             foreach (var u in _session.Field.Units.Where(u => u.Side == Srpg95.Rules.Side.Ally && u.Level < lv)) u.Level = lv;
+        if (_opts.Place is { } place)
+            foreach (var e in place.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                if (e.Split(':') is [var id, var at] && at.Split('.') is [var px, var py, ..] parts
+                    && _session.Field.Units.FirstOrDefault(u => u.Unit == int.Parse(id)) is { } pu)
+                {
+                    (pu.X, pu.Y, pu.ForceShown, pu.Hidden) = (int.Parse(px), int.Parse(py), true, false);
+                    if (parts.Length > 2) pu.Hp = int.Parse(parts[2]);
+                }
         if (_opts.Give is { } give && !_gaveItems)
         {
             _gaveItems = true;

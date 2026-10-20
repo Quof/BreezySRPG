@@ -557,8 +557,13 @@ public sealed class BattleController
         foreach (var t in hostiles) AttackTriggers(caster, t, 10);
         if (item is not null) { _state.AddItem(item.Index, -1); Popup($"{caster.Name}は{item.Name}{Word(58)}"); }   // "を使います"
         var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
+        int mpBefore = caster.Mp;
         var r = _s.Field.Cast(caster, m, aim.X, aim.Y, fromItem: item is not null);
-        if (ShowScenes && r.Effects.Count > 0) QueueSpellScenes(caster, m, r, before);
+        if (ShowScenes && r.Effects.Count > 0)
+        {
+            QueueSpellScenes(caster, m, r, before);
+            if (_scenes.Count > 0) _scenes.Peek().ShowMpBefore(caster, mpBefore);
+        }
         ShowResult(caster, r, numbersShown: ShowScenes);
         foreach (var t in hostiles) AttackTriggers(caster, t, 11);
         Finish(caster);
@@ -580,9 +585,12 @@ public sealed class BattleController
     }
 
     /// <summary>
-    /// Spell scenes: the caster's class cast animation (magic-to-enemy for harmful spells, magic-to-ally
-    /// otherwise), then the spell's own animation (ANIME 80 + Magic.Animation) on each affected unit in turn.
-    /// One scene per target (provisional).
+    /// Spell scenes (T22 heal recording): the caster's class cast animation (magic-to-ally for own-side
+    /// spells, magic-to-enemy otherwise), wipe, then the spell animation (ANIME 80 + Magic.Animation) on the
+    /// target. On one's own side each part shows a single unit on the right with its own panel; the target
+    /// flashes and a recovery number (red digits) bounces. One scene per affected unit. Against enemies
+    /// both stand on the stage like an attack (guess).
+    /// Timing measured on the heal: 11-tick pause, cast, no hold; 8-tick pause, spell, 10-tick hold.
     /// </summary>
     void QueueSpellScenes(BattleUnit caster, Magic m, ExchangeResult r, Dictionary<BattleUnit, int> before)
     {
@@ -590,22 +598,23 @@ public sealed class BattleController
         bool harmful = m.Type is 0 or 1;
         var cast = _db.Animations[Math.Clamp(harmful ? cls.AnimMagicEnemy : cls.AnimMagicAlly, 0, _db.Animations.Length - 1)];
         var spell = _db.Animations[Math.Clamp(m.AnimeIndex, 0, _db.Animations.Length - 1)];
-        bool first = true;
         foreach (var e in r.Effects)
         {
+            bool ownSide = !Battlefield.Hostile(caster, e.Target);
             bool numeric = e.Kind is EffectKind.Damage or EffectKind.Heal or EffectKind.Miss;
-            var steps = new List<BattleScene.Step>();
-            if (first) steps.Add(new BattleScene.Step(caster, e.Target, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true, 0, false, Caption: ""));
-            steps.Add(new BattleScene.Step(caster, e.Target, spell, BattleScene.SheetFor(_db, _s.Field, caster, spell),
-                e.Kind != EffectKind.Miss && e.Kind != EffectKind.Resisted, e.Amount, e.Kind == EffectKind.Heal,
-                Caption: numeric ? null : ""));
+            var steps = new List<BattleScene.Step>
+            {
+                new(caster, e.Target, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true, 0, false,
+                    Caption: "", Solo: ownSide ? caster : null, Pause: 11, Hold: 0),
+                new(caster, e.Target, spell, BattleScene.SheetFor(_db, _s.Field, caster, spell),
+                    e.Kind != EffectKind.Miss && e.Kind != EffectKind.Resisted, e.Amount, e.Kind == EffectKind.Heal,
+                    Caption: numeric ? null : "", Solo: ownSide ? e.Target : null, Pause: 8, Hold: 10),
+            };
             _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, caster, e.Target, steps, before));
-            first = false;
         }
         BattleMusic(caster, r.Effects[0].Target);
     }
 
-    /// <summary>Result popups (WORD.DAT phrases where the game has them; the rest provisional).</summary>
     void ShowResult(BattleUnit actor, ExchangeResult r, bool numbersShown = false)
     {
         foreach (var e in r.Effects)
