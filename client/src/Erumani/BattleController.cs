@@ -585,12 +585,11 @@ public sealed class BattleController
     }
 
     /// <summary>
-    /// Spell scenes (T22 heal recording): the caster's class cast animation (magic-to-ally for own-side
-    /// spells, magic-to-enemy otherwise), wipe, then the spell animation (ANIME 80 + Magic.Animation) on the
-    /// target. On one's own side each part shows a single unit on the right with its own panel; the target
-    /// flashes and a recovery number (red digits) bounces. One scene per affected unit. Against enemies
-    /// both stand on the stage like an attack (guess).
-    /// Timing measured on the heal: 11-tick pause, cast, no hold; 8-tick pause, spell, 10-tick hold.
+    /// Spell scene (T22 heal and spell recordings): one scene per cast. First the caster alone on its side plays
+    /// its class cast animation (magic-to-ally / magic-to-enemy) and goes straight into the wipe; then each
+    /// affected unit alone on its side in turn: pause, the spell animation (ANIME 80 + Magic.Animation),
+    /// flash, number, drain, and a death message if it dies. Pauses: cast 11 ticks (heal) / 7 (attack spell);
+    /// each target 10, hold 10.
     /// </summary>
     void QueueSpellScenes(BattleUnit caster, Magic m, ExchangeResult r, Dictionary<BattleUnit, int> before)
     {
@@ -598,21 +597,21 @@ public sealed class BattleController
         bool harmful = m.Type is 0 or 1;
         var cast = _db.Animations[Math.Clamp(harmful ? cls.AnimMagicEnemy : cls.AnimMagicAlly, 0, _db.Animations.Length - 1)];
         var spell = _db.Animations[Math.Clamp(m.AnimeIndex, 0, _db.Animations.Length - 1)];
+        var first = r.Effects[0].Target;
+        var steps = new List<BattleScene.Step>
+        {
+            new(caster, first, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true, 0, false,
+                Caption: "", Solo: caster, Pause: harmful ? 7 : 11, Hold: 0),
+        };
         foreach (var e in r.Effects)
         {
-            bool ownSide = !Battlefield.Hostile(caster, e.Target);
             bool numeric = e.Kind is EffectKind.Damage or EffectKind.Heal or EffectKind.Miss;
-            var steps = new List<BattleScene.Step>
-            {
-                new(caster, e.Target, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true, 0, false,
-                    Caption: "", Solo: ownSide ? caster : null, Pause: 11, Hold: 0),
-                new(caster, e.Target, spell, BattleScene.SheetFor(_db, _s.Field, caster, spell),
-                    e.Kind != EffectKind.Miss && e.Kind != EffectKind.Resisted, e.Amount, e.Kind == EffectKind.Heal,
-                    Caption: numeric ? null : "", Solo: ownSide ? e.Target : null, Pause: 8, Hold: 10),
-            };
-            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, caster, e.Target, steps, before));
+            steps.Add(new(caster, e.Target, spell, BattleScene.SheetFor(_db, _s.Field, caster, spell),
+                e.Kind != EffectKind.Miss && e.Kind != EffectKind.Resisted, e.Amount, e.Kind == EffectKind.Heal,
+                Caption: numeric ? null : "", Solo: e.Target, Pause: 10, Hold: 10));
         }
-        BattleMusic(caster, r.Effects[0].Target);
+        _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, caster, first, steps, before));
+        BattleMusic(caster, first);
     }
 
     void ShowResult(BattleUnit actor, ExchangeResult r, bool numbersShown = false)

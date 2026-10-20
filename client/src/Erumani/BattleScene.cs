@@ -34,8 +34,8 @@ public sealed class BattleScene
 
     /// <summary>
     /// One animation to play: who acts, on whom, and what the rules decided. <paramref name="Solo"/> puts a
-    /// single unit on the stage (on the right, its panel only): a spell on one's own side plays as the caster
-    /// alone, then the target alone (T22 heal recording). Pause / Hold are the ticks before and after it.
+    /// single unit on the stage, on its own side with only its panel: a spell plays as the caster alone, then
+    /// each target alone in turn (T22 heal and spell recordings). Pause / Hold are the ticks before and after it.
     /// </summary>
     public sealed record Step(BattleUnit Actor, BattleUnit Target, Animation Anim, string Sheet,
         bool Hit, int Amount, bool Recovery, string? Caption = null, BattleUnit? Solo = null, int Pause = 10, int Hold = 15);
@@ -101,8 +101,9 @@ public sealed class BattleScene
         ? (_stepIndex + 1 < _steps.Count ? _steps[_stepIndex + 1] : _steps.LastOrDefault())
         : Current ?? _steps.LastOrDefault();
 
-    BattleUnit? StageRight => Shown?.Solo ?? _right;
-    BattleUnit? StageLeft => Shown?.Solo is not null ? null : _left;
+    // a solo unit stands on its own side (allies right, enemies left), the other half empty (T22 spell recordings)
+    BattleUnit? StageRight => Shown?.Solo is { } s ? (s.Side == Side.Ally ? s : null) : _right;
+    BattleUnit? StageLeft => Shown?.Solo is { } s ? (s.Side == Side.Ally ? null : s) : _left;
 
     // ---------------- update ----------------
 
@@ -120,9 +121,26 @@ public sealed class BattleScene
 
     void Go(Phase p) { _phase = p; _phaseTicks = 0; }
 
+    // Displayed HP drains toward the real value from the hit on: 1 HP per tick for weapons, 1 per 2 ticks for
+    // spells (two samples in the T22 recordings; approximate).
+    readonly Dictionary<BattleUnit, int> _shown = new();
+    int _drainTick;
+
+    void Drain()
+    {
+        bool slow = Current?.Anim.IsSpell == true;
+        if (slow && ++_drainTick % 2 != 0) return;
+        foreach (var (u, target) in _hp)
+        {
+            int shown = _shown.TryGetValue(u, out var s) ? s : target;
+            if (shown != target) _shown[u] = shown + Math.Sign(target - shown);
+        }
+    }
+
     void Tick()
     {
         _phaseTicks++;
+        Drain();
         if (_number is { } n) _number = n with { Age = n.Age + 1 };
         switch (_phase)
         {
@@ -147,10 +165,11 @@ public sealed class BattleScene
                 if (_phaseTicks >= 5)
                 {
                     _number = null;
-                    Go(_stepIndex + 1 < _steps.Count && _dying is null ? Phase.Gap : Phase.EndHold);
+                    _dying = null;   // after a death message the next target still follows (area spells)
+                    Go(_stepIndex + 1 < _steps.Count ? Phase.Gap : Phase.EndHold);
                 }
                 break;
-            case Phase.Gap: if (_phaseTicks >= 12) Go(Phase.WipeIn); break;   // the panels already show the next step's units
+            case Phase.Gap: if (_phaseTicks >= 14) Go(Phase.WipeIn); break;   // the panels already show the next step's units
             case Phase.EndHold: if (_phaseTicks >= 13) Go(Phase.MapIn); break;
             case Phase.MapIn: if (_phaseTicks >= 4) Go(Phase.Done); break;
         }
@@ -167,6 +186,7 @@ public sealed class BattleScene
         {
             if (st.Hit)
             {
+                _shown[st.Target] = Hp(st.Target);
                 _hp[st.Target] = st.Recovery
                     ? Math.Min(st.Target.MaxHp, Hp(st.Target) + st.Amount)
                     : Math.Max(0, Hp(st.Target) - st.Amount);
@@ -377,7 +397,7 @@ public sealed class BattleScene
             T(_ui.NameText, u.Name, 12, 8);
             _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 28, 296, 1), dark);
             _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 29, 296, 1), light);
-            int hp = Math.Max(0, Hp(u));
+            int hp = Math.Max(0, _shown.TryGetValue(u, out var shownHp) ? shownHp : Hp(u));
             T(_ui.SmallText, _db.Words[2], 14, 35);
             T(_ui.SmallText, $"{hp}／{u.MaxHp,2}", 307, 35, right: true);
             Bar(sb, r.X + 12, r.Y + 48, hp, u.MaxHp, HpFull, light, dark);
