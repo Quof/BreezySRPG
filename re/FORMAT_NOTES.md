@@ -842,7 +842,19 @@ Buy or receive an item at camp and save to File 6; play to the end of map 2 and 
 ## Active tests
 
 **T18b — variables and the inventory layout.** Continue from SAVE7:
-1. At the current camp, buy **one more ポーション** and **one different item** (note which). Save to **File 8**. This shows whether a second Potion becomes count 2 or a new entry.
+1. At the current camp, buy **one more ポーション** (the shop only sells Potions here). Save to **File 8**. This shows whether a second Potion becomes count 2 or a new entry. If a later camp sells a different item, buying one there and saving would also help.
 2. Play **maps 3 and 4** and save at the camp after map 4 (overwriting File 8 is fine if you copy it aside first, or use File 5). Map 4 is the first map whose events change a variable: variable 19 「ルーティサバイヴ条件」.
 
 Send the new `SAVE*.DAT` files with a note of what you bought.
+
+**Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
+
+```bash
+python re/tools/wintool.py weaken
+```
+
+Every enemy-only unit then has 1 HP and no attack or defense, so one hit beats each one, while all story events still run. Party members, anyone who ever fights on your side, and neutral NPCs keep their real stats. It only edits `えるまに - Save testplay/UNIT.DAT`, keeps the original in `_wintool_backup/`, and refuses to touch the original game. Undo with:
+
+```bash
+python re/tools/wintool.py restore
+```
