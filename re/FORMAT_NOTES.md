@@ -293,7 +293,7 @@ Several of these are sentence fragments the engine glues to names and numbers (e
 
 ## 9. MAPC_nnn.DAT — 384 B
 
-One u8 per chip of `MAPC_nnn.BMP` (12 chips wide × 32 rows, row-major), value = GEOLOGY id. Inferred (strong): sizes match exactly and the max value is 69 (70 terrains).
+One u8 per chip of `MAPC_nnn.BMP`, indexed by **chip number** (same numbering as map tiles, see §10), value = GEOLOGY id. Inferred (strong): sizes match exactly and the max value is 69 (70 terrains).
 
 ## 10. SMAP_nnn.DAT — maps (variable size, always a multiple of 100 B)
 
@@ -326,7 +326,9 @@ Lists keep stale entries past their count (e.g. 4 x-coords with count 1), so alw
 
 ### Tile grid 0x4B0–0x112F (confirmed layout)
 
-40×40 uint16, row-major, stride 40, independent of width. Value = chip index into MAPC_tileset.BMP (0–383, chip k at column k%12, row k//12 — chip→pixel mapping inferred). Single layer; no separate upper layer has turned up.
+40×40 uint16, row-major, stride 40, independent of width. Value = chip number in MAPC_tileset.BMP (0–383). Single layer; no separate upper layer has turned up.
+
+**Chip numbering (confirmed against an editor screenshot of map 1):** the 12 × 32-chip sheet is two 6-column halves, the editor's "A" and "B" tabs. Chip k < 192 is at column k % 6, row k / 6 of the left half. Chip k ≥ 192 is at column 6 + (k−192) % 6, row (k−192) / 6. An earlier straight 12-wide reading produced scrambled maps.
 
 ### Event area 0x1130–EOF
 
@@ -523,7 +525,7 @@ Learned while building the client (phase 3):
 |---|---|---|
 | BMP format | All 1,026 game + RTP BMPs are BITMAPINFOHEADER, 8-bit, uncompressed, bottom-up (2 `Thumbs.db` aside) | confirmed |
 | Transparency | palette **index 0** is the colour key of sprite sheets (fills cell backgrounds; most common index in UNIT/CA/MAGA/SYSTEM) | inferred (strong) |
-| MAPC_nnn.BMP | 12 × 32 chips of 32×32. Tile value k → chip at (k % 12, k / 12). Rendering every map with this matches its look | confirmed (visual) |
+| MAPC_nnn.BMP | 12 × 32 chips of 32×32 in two 6-column halves. Chip k → left half rows for k < 192, right half for k ≥ 192 (§10) | confirmed: user's editor screenshot of map 1 matches exactly. The first version used a 12-wide row-major reading and was **wrong**; the user caught it |
 | UNIT_nnn.BMP | **3 columns × 5 rows of 64×64 cells**, the 32-px character centred, so it overhangs its tile by 16 px each side. Columns are animation frames. Rows are poses: row 0 faces the viewer, row 1 faces away, rows 2/4 are side poses. Row 3's meaning and the exact direction mapping are open | inferred |
 | SYSTEM.BMP | UI atlas: window skin, "END" label, cursor arrows, blue/red damage digits 0–9, PSN/SLP status badges, coloured range-overlay tiles | inferred (visual) |
 | Save files | runtime writes `SAVE<n>.DAT` to the game folder (format string in SRPGEXEC.EXE). The format is pending test T16 | — |

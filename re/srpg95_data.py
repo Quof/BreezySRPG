@@ -352,12 +352,20 @@ def parse_anime(data):
     return out
 
 
+def chip_cell(chip):
+    """Chip number -> (column, row) in MAPC_xxx.BMP (12 x 32 chips of 32 px).
+    The sheet is two 6-column halves (editor tabs A/B): chips 0-191 run through
+    the left half row by row, 192-383 through the right half."""
+    half, r = divmod(chip, 192)
+    return half * 6 + r % 6, r // 6
+
+
 def parse_mapc(data):
-    """MAPC_xxx.DAT: terrain (GEOLOGY id) for each of the 384 32x32 chips of
-    MAPC_xxx.BMP (384x1024 px = 12 columns x 32 rows), row-major."""
+    """MAPC_xxx.DAT: terrain (GEOLOGY id) of each of the 384 chips of
+    MAPC_xxx.BMP, indexed by chip number (see chip_cell for the layout)."""
     if len(data) != 384:
         raise ValueError(f'expected 384 bytes, got {len(data)}')
-    return {'chip_terrain': [list(data[r * 12:(r + 1) * 12]) for r in range(32)]}
+    return {'chip_terrain': list(data)}
 
 
 SMAP_HEADER_SPEC = [

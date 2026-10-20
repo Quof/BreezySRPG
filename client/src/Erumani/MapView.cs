@@ -27,8 +27,11 @@ public sealed class MapView
         _chips = tex.Get($"MAPC_{map.Tileset:000}.BMP", transparent: false);
     }
 
-    static Rectangle ChipRect(int chip) =>
-        new(chip % Chipset.ChipsPerRow * Tile, chip / Chipset.ChipsPerRow * Tile, Tile, Tile);
+    static Rectangle ChipRect(int chip)
+    {
+        var (cx, cy) = Chipset.ChipCell(chip);
+        return new(cx * Tile, cy * Tile, Tile, Tile);
+    }
 
     Texture2D? UnitSheet(int unitId)
     {

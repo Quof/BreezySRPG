@@ -137,5 +137,16 @@ public static class Chipset
     public static byte[] ParseTerrain(byte[] data) =>
         data.Length == 384 ? data : throw new InvalidDataException($"MAPC: expected 384 bytes, got {data.Length}");
 
-    public const int ChipSize = 32, ChipsPerRow = 12;
+    public const int ChipSize = 32, HalfColumns = 6, HalfChips = 192;
+
+    /// <summary>
+    /// Chip number -> (column, row) in MAPC_nnn.BMP (12x32 chips). The sheet is two
+    /// 6-column halves (the editor's "A" and "B" tabs): chips 0-191 run left-to-right,
+    /// top-to-bottom through the left half, 192-383 through the right half.
+    /// </summary>
+    public static (int Col, int Row) ChipCell(int chip)
+    {
+        int half = chip / HalfChips, r = chip % HalfChips;
+        return (half * HalfColumns + r % HalfColumns, r / HalfColumns);
+    }
 }
