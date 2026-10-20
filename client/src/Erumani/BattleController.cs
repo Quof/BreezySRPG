@@ -73,11 +73,31 @@ public sealed class BattleController
     Action? _afterTelop;
     bool _announcePlayer;
 
+    // T20a: captions slide in from the right and pause about a second in the middle.
+    // Slide speed and the exit (out to the left) are guesses; COMPLETE!! stays in the middle.
+    const int TelopSlide = 16, TelopHold = 60;
+    int _telopTotal;
+    bool _telopExits;
+
     void Telop(int n, int frames, Action then)
     {
         _telop = $"TELOP{n}.BMP";
-        _telopFrames = frames;
+        _telopFrames = _telopTotal = frames;
+        _telopExits = n != 3;
         _afterTelop = then;
+        if (n is 1 or 2) PlayMapBgm?.Invoke(n);   // player / enemy turn music (T20b)
+    }
+
+    void TurnTelop(int n, Action then) => Telop(n, TelopSlide * 2 + TelopHold, then);
+
+    /// <summary>Caption x offset from centred: from off the right edge, to 0, then off the left edge.</summary>
+    float TelopOffset(int width, Rectangle viewport)
+    {
+        int elapsed = _telopTotal - _telopFrames;
+        float from = viewport.Width / 2f + width / 2f;
+        if (elapsed < TelopSlide) return from * (1 - (float)elapsed / TelopSlide);
+        if (_telopExits && _telopFrames < TelopSlide) return -from * (1 - (float)_telopFrames / TelopSlide);
+        return 0;
     }
 
     bool UpdateTelop(BattleInput i)
@@ -98,7 +118,7 @@ public sealed class BattleController
     {
         _state_ = State.Ended;
         PlayMapBgm?.Invoke(6);
-        Telop(3, 240, () => End(MapOutcome.Won));
+        Telop(3, TelopSlide + 540, () => End(MapOutcome.Won));   // ~9 s with the fanfare (T20d)
     }
 
     public BattleController(MapSession s, EventRunner runner, GameState state, Database db, Ui.Ui ui, Textures tex)
@@ -275,7 +295,7 @@ public sealed class BattleController
         if (_s.Field.AllyPhase)
         {
             _state_ = State.Idle;
-            if (_announcePlayer) { _announcePlayer = false; Telop(1, 60, () => { }); }
+            if (_announcePlayer) { _announcePlayer = false; TurnTelop(1, () => { }); }
             return;
         }
         _state_ = State.EnemyPhase;
@@ -475,7 +495,7 @@ public sealed class BattleController
         _state_ = State.EnemyPhase;
         _enemyQueue.Clear();
         _plan = null;
-        Telop(2, 60, () =>
+        TurnTelop(2, () =>
         {
             QueuePhaseEvents();
             if (CheckPoint()) return;
@@ -527,7 +547,7 @@ public sealed class BattleController
         // enemy phase over: back to the player
         _s.Field.NextPhase();
         _state_ = State.Idle;
-        Telop(1, 60, () =>
+        TurnTelop(1, () =>
         {
             QueuePhaseEvents();
             CheckPoint();
@@ -569,7 +589,13 @@ public sealed class BattleController
         if (Outcome == MapOutcome.GameOver && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go)
             sb.Draw(go, Vector2.Zero, Color.White);   // full screen; provisional
         if (_telop is not null && _tex.Get(_telop) is { } t)
-            sb.Draw(t, new Vector2(viewport.Center.X - t.Width / 2, viewport.Center.Y - t.Height / 2), Color.White);
+        {
+            // clipped to the viewport so the slide doesn't cover the screen frame
+            int x = viewport.Center.X - t.Width / 2 + (int)TelopOffset(t.Width, viewport);
+            int left = Math.Max(x, viewport.Left), right = Math.Min(x + t.Width, viewport.Right);
+            if (right > left)
+                sb.Draw(t, new Vector2(left, viewport.Center.Y - t.Height / 2), new Rectangle(left - x, 0, right - left, t.Height), Color.White);
+        }
     }
 
     /// <summary>Name and "HP／max" above the hovered unit (screenshot 5; font and offsets provisional).</summary>

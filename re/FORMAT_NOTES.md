@@ -631,9 +631,10 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Range overlay | SYSTEM.BMP range tile (16-px two-colour checker) drawn on the tile's **odd pixel rows only**, opaque; even rows show the map. Move = cyan tile (x 0), attack = salmon tile (x 64), covering the weapon's whole range, not just the enemies. Units are drawn on top | confirmed, pixel-matched (T19c) |
 | Strike results | one-line popups (damage, miss, 撃破, EXP, level-up) until the battle-scene milestone | placeholder |
 | Death events vs victory | a unit's "dies" events play first, then the victory events, then COMPLETE!! | confirmed on map 1 (T19e) |
-| Victory | `TELOP3.BMP` "COMPLETE!!" (512×96, index 0 transparent) with the victory fanfare (map BGM slot 6), then the camp menu | confirmed (T19e). The client centres it in the viewport for 4 s (or until confirm); position and timing unverified. The camp is milestone 6, so the client goes straight to the next map |
-| Turn captions | `TELOP1.BMP` "PLAYER TURN" / `TELOP2.BMP` "ENEMY TURN" for 1 s, centred, at each phase start (PLAYER TURN after the opening) | guess: the files ship with the game (T20a) |
-| Game over | `GAMEOVER.BMP` full screen | guess (T20c) |
+| Victory | `TELOP3.BMP` "COMPLETE!!" (512×96, index 0 transparent) with the victory fanfare (map BGM slot 6), then the camp menu | confirmed (T19e, T20d): it slides in from the right like the turn captions and stays about 9 s (the fanfare) in the middle. The client also lets a click skip it. The camp is milestone 6, so the client goes straight to the next map |
+| Turn captions | `TELOP1.BMP` "PLAYER TURN" / `TELOP2.BMP` "ENEMY TURN" at each phase start: slide in from the right, pause about a second in the middle, leave | confirmed (T20a). The client slides for 16 frames, holds 60 and slides out left; speeds and exit direction are guesses. PLAYER TURN after the opening is also a guess |
+| Turn music | player-turn BGM (map slot 1) / enemy-turn BGM (slot 2) start with each turn caption, replacing whatever an event played; the music also changes when a battle starts | confirmed (T20b). Battle music comes with the battle-scene milestone |
+| Game over | `GAMEOVER.BMP` full screen | confirmed (T20c) |
 | Losing | every ally down, or a unit from the map's character list down. Map 1 goes on without ルーティ: EV000101 is just her remark | confirmed for map 1 (T19d) |
 | Winning without a "Next map" command | goes on to the next map number | guess |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
@@ -905,6 +906,22 @@ In `えるまに - Save testplay` with the original runtime, play map 1 and repo
   4. the camp menu.
 - **T19f:** the screen scrolls to each moving enemy.
 
+### Phase 4, round 2 — instructions (T20)
+
+On map 1, check:
+- **T20a:** the PLAYER TURN / ENEMY TURN captions;
+- **T20b:** whether the music changes per turn;
+- **T20c:** the game-over screen;
+- **T20d:** COMPLETE!! position and timing.
+
+### Phase 4, round 2 — results
+
+- **T20a:** both captions appear. They slide in from the right and pause about a second in the middle.
+- **T20b:** the music changes with each turn, and also when a battle starts.
+- **T20c:** the game-over screen is just `GAMEOVER.BMP`.
+- **T20d:** COMPLETE!! slides in at the same speed as the turn captions and stays about 9 s while the fanfare plays, then the camp menu.
+- **Aside:** the runtime once reported `CAMP_003.BMP` missing. That file only exists in the editor's RTP folder (`srpg maker 95/RTP/BMP`), which the runtime finds through `HKCU\Software\Enterbrain\SRPG95\MyPath`. Every map's camp uses background 7, which the game folder has, so it was a one-off; nothing had changed on disk.
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
@@ -918,19 +935,7 @@ In `えるまに - Save testplay` with the original runtime, play map 1 and repo
 
 ## Active tests
 
-### Phase 4, round 2 — instructions (T20: captions and music on map 1)
-
-Same setup as T19: map 1 in `えるまに - Save testplay`, save slot 3 or a new game. The game ships `TELOP1.BMP` "PLAYER TURN", `TELOP2.BMP` "ENEMY TURN", `TELOP3.BMP` "COMPLETE!!" and `GAMEOVER.BMP`.
-
-- **T20a — turn captions.** Do PLAYER TURN and ENEMY TURN appear? If so:
-  - Does PLAYER TURN show on turn 1 right after the opening dialogue, or only from turn 2?
-  - Does each caption slide in or just appear?
-  - Roughly how long does it stay? Is it centred?
-
-  A screenshot of one, mid-display, would be ideal.
-- **T20b — turn music.** When the enemy turn starts, does the music change? Does it change back on your turn, even though the opening started コミカル.MID?
-- **T20c — game over.** Let ジュナ fall too, with ルーティ already down. Screenshot whatever comes up (`GAMEOVER.BMP`?), and say what a click does after that.
-- **T20d — COMPLETE!!** A screenshot while COMPLETE!! is on screen, to check its position. Roughly how long until the camp menu appears? Does a click skip it?
+None right now.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 
