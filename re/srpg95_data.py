@@ -677,7 +677,7 @@ SAVE_HEADER_SPEC = [
     (0x538, 'party_count', 'i32', None),      # inferred (2 = ルーティ + ジュナ)
     (0x53c, 'bgm', 'str', 0x30),              # current BGM file
     (0x56c, 'tone', 'i32[]', 4),              # screen tone R, G, B, vividness (inferred)
-    (0x57c, 'object_count', 'i32', None),     # inferred (map 1 has 5 objects)
+    (0x5dc, '_variables', 'i16[]', 250),      # variables 0-249 as int16 (inferred T18c: var 19 = 1 at 0x602)
 ]
 
 SAVE_UNIT_SPEC = [
@@ -714,6 +714,8 @@ def parse_save(data):
     if len(data) != SAVE_SIZE:
         raise ValueError(f'expected {SAVE_SIZE} bytes, got {len(data)}')
     out = _parse_record(data[:SAVE_UNIT_OFF], SAVE_HEADER_SPEC)
+    var = out.pop('_variables')
+    out['variables_set'] = {i: v for i, v in enumerate(var) if v}
     sw = out.pop('switches')
     out['switches_on'] = [i for i, v in enumerate(sw) if v]
     inv = out.pop('_inventory')

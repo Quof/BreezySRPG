@@ -583,9 +583,10 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 | 0x538 | party size | inferred | 2 (ルーティ, ジュナ) |
 | 0x53C | current BGM file name (48 B) | confirmed | コミカル.MID in battle, 安らきﾞ.MID at camp |
 | 0x56C | screen tone R, G, B, vividness | inferred | 100,100,100,100 |
-| 0x57C | number of map objects | inferred | 5 on map 1 |
+| 0x57C | unknown (5, 0, 1 across saves) | unknown | was guessed as the object count, but it's 1 on map 4 |
+| 0x5DC | **variables 0–249**, int16 each | inferred | T18c: choosing the option that adds 1 to variable 19 set byte 0x602 = 0x5DC + 19·2, and nothing else in 0x580–0x7CF. Scripts only use variables 0–33 (names exist up to 233), so 250 slots is plenty. Unresolved: 8-bit storage at 0x5EF would also put var 19 at 0x602; a save with variable 0 set (11話) settles it |
 
-**Variables** are not located yet. The header (2000 B) has no room for 500 int32s. The only variable command on the maps played so far (99, 1–4) is in map 4's opening, inside the choice case 「ジュリアの選んだ服を買う」. T18b took the other option, so nothing was written (**T18c**).
+**Variables** were located with T18c: 16-bit values at 0x5DC (see the header table).
 
 **Unit record** (640 B, int32 index [n] = byte offset 4n):
 
@@ -848,10 +849,20 @@ Buy a second ポーション and save; play maps 3 and 4 and save at the camp af
 - **Header:** 0x004 counts camps (1→4); 0x000 is 1 only at a camp.
 - **Variables:** still not seen. Map 4's only variable command is in the choice case the player didn't pick (see §14).
 
+### Phase 3, round 5 — instructions (T18c)
+
+From SAVE8, replay map 4's opening choosing 「ジュリアの選んだ服を買う」 (which adds 1 to variable 19), then save to File 2 as soon as the map starts.
+
+### Phase 3, round 5 — results
+
+The only non-zero byte in 0x580–0x7CF of the new SAVE2 is **0x602 = 1** = variable 19 in a 16-bit table at 0x5DC. SAVE1 (other choice) has none, and the switch and inventory fields agree. The other differences were unit movement, because SAVE1 had been saved later in that battle. `parse_save()` now reports `variables_set`.
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
 - The camera position at map start (§13).
+- Save variables: 16-bit at 0x5DC vs 8-bit at 0x5EF. Any later save with another variable set (e.g. at the 11話 camp, variable 0) settles it.
+- Save header fields 0x008, 0x00C, 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
 - Event-side details that need the running game:
   - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
   - picture display methods and screen effects beyond the first two;
@@ -859,12 +870,7 @@ Buy a second ポーション and save; play maps 3 and 4 and save at the camp af
 
 ## Active tests
 
-**T18c — find the variables.** Back up SAVE1 and SAVE8 first (copy them somewhere), then:
-1. Load **SAVE8** (camp before map 4) and start map 4. Make the **same purchase as last time** (the second ポーション) if you did it at this camp.
-2. In the opening's clothes choice pick **「ジュリアの選んだ服を買う」** (last time it was the other option). This option adds 1 to variable 19.
-3. As soon as you have control of the map, before moving anyone, save to **File 2**. SAVE2's old contents aren't needed any more.
-
-SAVE2 vs SAVE1 should then differ in little more than that variable.
+None right now. The save format is mapped well enough for the client: switches, variables, inventory, gold, party roster, unit state and map state.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 
