@@ -9,7 +9,7 @@ namespace Erumani;
 /// <summary>Per-frame input for the battle map.</summary>
 public readonly record struct BattleInput(
     bool Confirm, bool Cancel, bool Up, bool Down, bool Left, bool Right,
-    Point? MouseTile, bool MouseMoved, bool Click, bool RightClick, bool FastForward);
+    Point? MouseTile, bool MouseMoved, bool Click, bool RightClick, bool FastForward, bool Info = false, int Wheel = 0);
 
 public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 
@@ -21,7 +21,7 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
-        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm }
+        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -67,11 +67,17 @@ public sealed class BattleController
 
     readonly Queue<BattleScene> _scenes = new();
     BattleScene? _scene;
-    State _afterScenes;
     public bool SceneShowing => _scene is not null;
+    /// <summary>Cancel would do something now (for the CANCEL sound).</summary>
+    public bool AcceptsCancel => _state_ is State.Selected or State.ActionMenu or State.Targeting or State.TurnMenu or State.Status
+        or State.SpellList or State.ItemList or State.Aiming or State.MedicineTarget or State.Files or State.QuitConfirm or State.EquipList;
+    /// <summary>A menu has keyboard focus (W/S move in it instead of the camera).</summary>
+    public bool MenuOpen => _state_ is State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
+        or State.QuitConfirm or State.EquipList;
     public bool WaitingForClick => _scene?.WaitingForClick == true;
     /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
     public bool ShowScenes { get; set; } = true;
+    public bool FastForwardSkipsScenes { get; set; } = true;
 
     /// <summary>Battle music while a scene plays: map BGM slot 3 (player attacks), 4 (enemy attacks), 5 (a leader is involved).</summary>
     void BattleMusic(BattleUnit actor, BattleUnit other)
@@ -90,6 +96,8 @@ public sealed class BattleController
 
     void UpdateScene(BattleInput i)
     {
+        // skipping (modern): cancel / right click, or fast-forward when that option is on
+        if (i.Cancel || i.RightClick || (i.FastForward && FastForwardSkipsScenes)) _scene!.Skip();
         _scene!.Update(i.FastForward, i.Confirm || i.Click);
         if (!_scene.Done) return;
         _scene = null;
@@ -358,6 +366,7 @@ public sealed class BattleController
             case State.Status: if (input.Confirm || input.Cancel || input.Click || input.RightClick) _state_ = State.Idle; break;
             case State.SpellList: UpdateSpellList(input); break;
             case State.ItemList: UpdateItemList(input); break;
+            case State.EquipList: UpdateEquipList(input); break;
             case State.Aiming: UpdateAiming(input); break;
             case State.MedicineTarget: UpdateMedicineTarget(input); break;
             case State.Scene: UpdateScene(input); break;
@@ -420,8 +429,9 @@ public sealed class BattleController
     {
         MoveCursor(i);
         var u = _s.Field.UnitAt(_cursor.X, _cursor.Y);
-        if (i.RightClick && u is not null) { _statusUnit = u; _state_ = State.Status; return; }
+        if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; _state_ = State.Status; return; }
         if (!Pick(i)) return;
+        Sfx.Click();
         if (u is { Side: Side.Ally, Acted: false })
         {
             _sel = u;
@@ -441,6 +451,7 @@ public sealed class BattleController
         var t = (_cursor.X, _cursor.Y);
         if (!_reach.ContainsKey(t)) { _state_ = State.Idle; _sel = null; return; }
         var path = Battlefield.PathTo(_reach, t);
+        Sfx.Click();
         _s.Walk(_sel, path);
         _pendingPath = path;
         _state_ = State.Moving;
@@ -460,10 +471,12 @@ public sealed class BattleController
     {
         var u = _sel!;
         _targets = _s.Field.TargetsFrom(u, u.X, u.Y).ToList();
-        // WORD.DAT: 16 攻撃, 17 必殺技 (magic), 18 アイテム, 15 行動終了
-        _menu = new[] { Word(16), Word(17), Word(18), Word(15) };
-        _menuEnabled = new[] { _targets.Count > 0, _s.Field.KnownSpells(u).Any(), UsableItems(u).Any(), true };
-        _menuIndex = _targets.Count > 0 ? 0 : 3;
+        // WORD.DAT: 16 攻撃, 17 必殺技, 89 装備, 18 アイテム, 15 行動終了. The original's order (T23 recording) is
+        // 行動終了 / 攻撃 / 必殺技 / 装備 / アイテム; 行動終了 is moved to the bottom here (player request).
+        _menu = new[] { Word(16), Word(17), Word(89), Word(18), Word(15) };
+        _menuEnabled = new[] { _targets.Count > 0, _s.Field.KnownSpells(u).Any(), WeaponChoices(u).Count > 1 || WeaponChoices(u).Any(w => w.Index != u.Weapon),
+            UsableItems(u).Any(), true };
+        _menuIndex = _targets.Count > 0 ? 0 : 4;
     }
 
     // ---------------- magic and items ----------------
@@ -482,6 +495,45 @@ public sealed class BattleController
     bool ItemReady(BattleUnit u, Item it) => _s.Field.ItemSpell(it) is { } m
         ? _s.Field.SpellAims(u, m, u.X, u.Y).Any()
         : _s.Field.MedicineTargets(u, it).Any();
+
+    /// <summary>Weapons the unit can switch to: the one in hand, then usable ones from the inventory.</summary>
+    List<Item> WeaponChoices(BattleUnit u)
+    {
+        var cls = u.ClassId;
+        var list = new List<Item>();
+        if (u.Weapon >= 0 && u.Weapon < _db.Items.Length) list.Add(_db.Items[u.Weapon]);
+        list.AddRange(_state.Items.Keys.Where(id => id >= 0 && id < _db.Items.Length && id != u.Weapon).Select(id => _db.Items[id])
+            .Where(it => it.Type == ItemType.Weapon && cls >= 0 && cls < it.ClassUsable.Length && it.ClassUsable[cls] != 0).OrderBy(it => it.Index));
+        return list;
+    }
+
+    /// <summary>装備: switch weapons without ending the action (provisional: the original's 装備 screen wasn't recorded).</summary>
+    void OpenEquipList()
+    {
+        _items = WeaponChoices(_sel!);
+        _menu = _items.Select(it => it.Name).ToArray();
+        _menuEnabled = _items.Select(_ => true).ToArray();
+        _menuIndex = 0;
+        _itemPage = 0;
+        _state_ = State.EquipList;
+    }
+
+    void UpdateEquipList(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
+        int pick = ListNavigate(i);
+        if (pick < 0) return;
+        var u = _sel!;
+        var it = _items[pick];
+        if (it.Index != u.Weapon)
+        {
+            if (u.Weapon >= 0) _state.AddItem(u.Weapon, 1);
+            _state.AddItem(it.Index, -1);
+            u.Weapon = it.Index;
+        }
+        OpenActionMenuAgain();
+        _menuIndex = 0;
+    }
 
     void OpenSpellList()
     {
@@ -519,7 +571,9 @@ public sealed class BattleController
 
     static readonly Rectangle ItemListRect = new(352, 224, 180, 240);
 
-    Rectangle RowRect(int row) => _state_ == State.ItemList
+    bool ItemLike => _state_ is State.ItemList or State.EquipList;
+
+    Rectangle RowRect(int row) => ItemLike
         ? new Rectangle(ItemListRect.X + 4, ItemListRect.Y + 8 + (row % ItemRows) * 16, ItemListRect.Width - 8, 16)
         : new Rectangle(SpellListRect().X + 6, SpellListRect().Y + 8 + row * 16, SpellListRect().Width - 12, 16);
 
@@ -529,19 +583,23 @@ public sealed class BattleController
         if (n == 0) return -1;
         if (i.Up) _menuIndex = (_menuIndex + n - 1) % n;
         if (i.Down) _menuIndex = (_menuIndex + 1) % n;
-        if (_state_ == State.ItemList)
+        if (ItemLike)
         {
             int pages = (n + ItemRows - 1) / ItemRows;
             if (i.Left || i.Right) _menuIndex = Math.Min(n - 1, ((_menuIndex / ItemRows + (i.Right ? 1 : pages - 1)) % pages) * ItemRows);
             _itemPage = _menuIndex / ItemRows;
         }
-        int first = _state_ == State.ItemList ? _itemPage * ItemRows : 0;
-        int count = _state_ == State.ItemList ? Math.Min(ItemRows, n - first) : n;
+        int first = ItemLike ? _itemPage * ItemRows : 0;
+        int count = ItemLike ? Math.Min(ItemRows, n - first) : n;
         int hover = -1;
         for (int r = 0; r < count; r++)
             if (RowRect(first + r).Contains(MouseVirtual)) hover = first + r;
         if (i.MouseMoved && hover >= 0) _menuIndex = hover;
-        if ((i.Confirm || (i.Click && hover >= 0)) && _menuEnabled[_menuIndex]) return _menuIndex;
+        if (i.Confirm || (i.Click && hover >= 0))
+        {
+            if (_menuEnabled[_menuIndex]) { Sfx.Click(); return _menuIndex; }
+            Sfx.Buzzer();
+        }
         return -1;
     }
 
@@ -586,7 +644,8 @@ public sealed class BattleController
         MoveCursor(i);
         if (!Pick(i) || _aimSpell is null) return;
         var a = (_cursor.X, _cursor.Y);
-        if (!_aimRange.Contains(a) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) return;
+        if (!_aimRange.Contains(a) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) { Sfx.Buzzer(); return; }
+        Sfx.Click();
         DoCast(_sel!, _aimSpell, a, _aimItem);
     }
 
@@ -601,7 +660,7 @@ public sealed class BattleController
         }
         if (!Pick(i)) return;
         var target = _medTargets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y);
-        if (target is not null && _aimItem is not null) DoMedicine(_sel!, _aimItem, target);
+        if (target is not null && _aimItem is not null) { Sfx.Click(); DoMedicine(_sel!, _aimItem, target); }
     }
 
     void DoCast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
@@ -708,7 +767,7 @@ public sealed class BattleController
         foreach (var (u, exp) in r.ExpGained)
             Popup($"{Wide(exp)}{Word(60)}");             // 「１７の経験値を獲得」: no name, full-width digits (T22)
         foreach (var (u, _) in r.LevelUps)
-            Popup($"{u.Name}{Word(70)}{u.Level}{Word(71)}");   // "はレベル" n "になった"
+            Popup($"{u.Name}{Word(70)}{u.Level}{Word(71)}", sound: Sfx.LevelUp);   // "はレベル" n "になった"
         foreach (var (u, spells) in r.Learned)
             foreach (var m in spells)
                 Popup($"{u.Name}は{m.Name}{Word(73)}");         // "を習得した"
@@ -732,7 +791,11 @@ public sealed class BattleController
         if (i.Down) _menuIndex = (_menuIndex + 1) % _menu.Length;
         var r = MenuRect();
         if (i.MouseMoved && r.Contains(mouseVirtual)) _menuIndex = Math.Clamp((mouseVirtual.Y - r.Y - 8) / 16, 0, _menu.Length - 1);
-        if ((i.Confirm || (i.Click && r.Contains(mouseVirtual))) && _menuEnabled[_menuIndex]) return _menuIndex;
+        if (i.Confirm || (i.Click && r.Contains(mouseVirtual)))
+        {
+            if (_menuEnabled[_menuIndex]) { Sfx.Click(); return _menuIndex; }
+            Sfx.Buzzer();
+        }
         return -1;
     }
 
@@ -751,8 +814,9 @@ public sealed class BattleController
         int pick = MenuNavigate(i, MouseVirtual);
         if (pick == 0) { _state_ = State.Targeting; _cursor = new Point(_targets[0].X, _targets[0].Y); }
         else if (pick == 1) OpenSpellList();
-        else if (pick == 2) OpenItemList();
-        else if (pick == 3) FinishAction();
+        else if (pick == 2) OpenEquipList();
+        else if (pick == 3) OpenItemList();
+        else if (pick == 4) FinishAction();
     }
 
     void UpdateTargeting(BattleInput i)
@@ -767,6 +831,7 @@ public sealed class BattleController
         if (!Pick(i)) return;
         var target = _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y);
         if (target is null) return;
+        Sfx.Click();
         DoAttack(_sel!, target);
     }
 
@@ -806,16 +871,19 @@ public sealed class BattleController
         RunScenes();
     }
 
-    void Popup(string text, BattleUnit? kill = null)
+    readonly Queue<Action?> _popupSounds = new();
+
+    void Popup(string text, BattleUnit? kill = null, Action? sound = null)
     {
         _popups.Enqueue(text);
         _popupKills.Enqueue(kill);
+        _popupSounds.Enqueue(sound ?? (kill is not null ? Sfx.Down : null));
     }
 
     void NextPopup()
     {
         if (_popupKill is not null) { _s.Ghosts.Remove(_popupKill); _popupKill = null; }
-        if (_popups.Count > 0) { _popup = _popups.Dequeue(); _popupKill = _popupKills.Dequeue(); _popupFrames = 0; _state_ = State.Showing; }
+        if (_popups.Count > 0) { _popup = _popups.Dequeue(); _popupKill = _popupKills.Dequeue(); _popupSounds.Dequeue()?.Invoke(); _popupFrames = 0; _state_ = State.Showing; }
         else
         {
             _popup = null;
@@ -843,8 +911,9 @@ public sealed class BattleController
     void OpenTurnMenu()
     {
         // WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了
-        _menu = new[] { Word(19), Word(20), Word(21), Word(22), Word(23) };
-        _menuEnabled = new[] { true, false, true, true, true };   // 全体マップ: not yet
+        // ゲーム終了 removed by request (quit from the title or the window instead)
+        _menu = new[] { Word(19), Word(20), Word(21), Word(22) };
+        _menuEnabled = new[] { true, false, true, true };   // 全体マップ: not yet
         _menuIndex = 0;
         _sel = null;
         _state_ = State.TurnMenu;
@@ -997,7 +1066,7 @@ public sealed class BattleController
             if (_ui.SmallText.Get(Word(57)) is { } q) sb.Draw(q, new Vector2(_quit.Rect.X + 13, _quit.Rect.Y + 9), Ui.Ui.PanelText);
             _ui.Fill(sb, new Rectangle(_quit.Rect.X + 12, _quit.Rect.Y + 29, _quit.Rect.Width - 24, 1), Ui.Ui.PanelText);
         }
-        if (_state_ is State.SpellList or State.ItemList) DrawList(sb, frame);
+        if (_state_ is State.SpellList or State.ItemList or State.EquipList) DrawList(sb, frame);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
         if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit);
         if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup); }
@@ -1043,7 +1112,7 @@ public sealed class BattleController
 
     void DrawList(SpriteBatch sb, int frame)
     {
-        bool items = _state_ == State.ItemList;
+        bool items = ItemLike;
         var r = items ? ItemListRect : SpellListRect();
         _ui.Panel(sb, r);
         var bar = frame / 8 % 2 == 0 ? new Color(160, 248, 96) : new Color(248, 248, 248);   // flashing (T21)
@@ -1062,7 +1131,8 @@ public sealed class BattleController
             if (hot) _ui.Fill(sb, row, bar);
             var c = hot ? new Color(0, 32, 0) : !_menuEnabled[i] ? new Color(120, 140, 120) : Ui.Ui.PanelText;
             T(_menu[i], row.X + 8, row.Y + 2, c);
-            if (items) T($"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
+            if (_state_ == State.EquipList) T(_items[i].Index == _sel?.Weapon ? Word(89) : $"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
+            else if (items) T($"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
             else
             {
                 T(Word(3), row.X + 140, row.Y + 2, c);                                     // ＴＰ

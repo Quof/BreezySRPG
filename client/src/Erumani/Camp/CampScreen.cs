@@ -22,6 +22,7 @@ public sealed class MenuList
     public string? Header;           // a title line with a rule under it (save / load lists)
     public string[]? HeaderColumns;  // a column header row with a rule (shop: アイテム / 値段 / 所持数)
     public int TopPad, Indent = 9, RowInset = 4;
+    public bool SkipDisabled;   // keyboard movement jumps over disabled rows (headers in the options)
 
     int RowsTop => Rect.Y + 9 + TopPad + (Header is not null ? 34 : 0) + (HeaderColumns is not null ? 24 : 0);
 
@@ -37,11 +38,18 @@ public sealed class MenuList
     public int Navigate(BattleInput i, Point mouse)
     {
         if (Items.Length == 0) return -1;
-        if (i.Up) Index = (Index + Items.Length - 1) % Items.Length;
-        if (i.Down) Index = (Index + 1) % Items.Length;
+        for (int step = 0; step < Items.Length && (i.Up || i.Down); step++)
+        {
+            Index = (Index + (i.Up ? Items.Length - 1 : 1)) % Items.Length;
+            if (!SkipDisabled || Enabled[Index]) break;
+        }
         int hover = Enumerable.Range(0, Items.Length).FirstOrDefault(k => Row(k).Contains(mouse), -1);
         if (i.MouseMoved && hover >= 0) Index = hover;
-        if ((i.Confirm || (i.Click && hover >= 0)) && Enabled[Index]) return Index;
+        if (i.Confirm || (i.Click && hover >= 0))
+        {
+            if (Enabled[Index]) { Sfx.Click(); return Index; }
+            Sfx.Buzzer();
+        }
         return -1;
     }
 
@@ -123,6 +131,7 @@ public sealed class CampScreen
     public Action<SaveFile>? Loaded { get; set; }
     public Action? Quit { get; set; }
     public string Bgm => _next.Bgm[0];
+    public bool AcceptsCancel => _mode != Mode.Menu;
 
     public CampScreen(Database db, GameFolder folder, Textures tex, Ui.Ui ui, GameState state, MapData next, int nextIndex)
     {

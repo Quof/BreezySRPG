@@ -123,6 +123,16 @@ public sealed class BattleScene
 
     void Go(Phase p) { _phase = p; _phaseTicks = 0; }
 
+    /// <summary>Skip to the end (the map brightens back in). Results were already applied by the rules.</summary>
+    public void Skip()
+    {
+        if (_phase is Phase.MapIn or Phase.Done) return;
+        _stepIndex = _steps.Count;
+        _number = null;
+        _dying = null;
+        Go(Phase.MapIn);
+    }
+
     // Displayed HP drains toward the real value from the hit on: 1 HP per tick for weapons, 1 per 2 ticks for
     // spells (two samples in the T22 recordings; approximate).
     readonly Dictionary<BattleUnit, int> _shown = new();
@@ -160,7 +170,7 @@ public sealed class BattleScene
             case Phase.Pause: if (_phaseTicks >= (Current?.Pause ?? 10)) Go(Phase.Anim); break;
             case Phase.Anim: AnimTick(); break;
             case Phase.Hold:
-                if (_dying is not null && _phaseTicks >= 30) { Go(Phase.Death); break; }
+                if (_dying is not null && _phaseTicks >= 30) { Go(Phase.Death); Runtime.Sfx.Down(); break; }
                 if (_dying is null && _phaseTicks >= (Current?.Hold ?? 15)) Go(Phase.WipeOut);
                 break;
             case Phase.WipeOut:

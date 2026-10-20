@@ -45,6 +45,10 @@ public sealed class EventRunner
         if (Choice is not null && index >= 0 && index < Choice.Length) ChoiceIndex = index;
     }
     public List<string> Log { get; } = new();
+    /// <summary>Holding fast-forward auto-advances messages (option).</summary>
+    public bool FastForwardAdvancesText { get; set; } = true;
+    /// <summary>Every message shown, for the backlog.</summary>
+    public Action<MessageView>? Shown { get; set; }
 
     ChoiceNode? _choiceNode;
     int _messageAge;
@@ -81,7 +85,8 @@ public sealed class EventRunner
         if (Message is not null)
         {
             _messageAge++;
-            bool auto = input.FastForward && _messageAge > 4;
+            bool auto = input.FastForward && FastForwardAdvancesText && _messageAge > 4;
+            if (input.Confirm) Sfx.MessageAdvance();
             if (input.Confirm || auto) Message = null;
             else return;
         }
@@ -90,6 +95,7 @@ public sealed class EventRunner
             if (input.Up) ChoiceIndex = (ChoiceIndex + Choice.Length - 1) % Choice.Length;
             if (input.Down) ChoiceIndex = (ChoiceIndex + 1) % Choice.Length;
             if (!input.Confirm) return;
+            Sfx.Click();
             var body = ChoiceIndex < _choiceNode!.Cases.Count ? _choiceNode.Cases[ChoiceIndex] : new List<ScriptNode>();
             Trace($"choice -> {Choice[ChoiceIndex]}");
             Choice = null;
@@ -118,6 +124,7 @@ public sealed class EventRunner
         {
             case MessageNode m:
                 Message = LastMessage = new MessageView(m.Window, m.Lines, _face, _faceRight, _faceFlip);
+                Shown?.Invoke(Message);
                 _messageAge = 0;
                 return true;
             case BranchNode b:

@@ -16,18 +16,21 @@ public sealed class TitleScreen
     readonly GameFolder _folder;
     readonly Textures _tex;
     readonly Ui.Ui _ui;
-    readonly Camp.MenuList _menu = new() { Rect = new Rectangle(266, 320, 108, 64) };
+    // the original's three rows plus 「オプション」 (modern settings)
+    readonly Camp.MenuList _menu = new() { Rect = new Rectangle(266, 320, 108, 80) };
     readonly Camp.MenuList _files = new() { Rect = new Rectangle(272, 281, 96, 177), Indent = 16 };
     bool _loading;
 
     public Action? NewGame { get; set; }
     public Action<SaveFile>? Loaded { get; set; }
     public Action? Quit { get; set; }
+    public Action? Options { get; set; }
+    public bool AcceptsCancel => _loading;
 
     public TitleScreen(Database db, GameFolder folder, Textures tex, Ui.Ui ui)
     {
         (_db, _folder, _tex, _ui) = (db, folder, tex, ui);
-        _menu.Set(new[] { W(47), W(22), W(23) });
+        _menu.Set(new[] { W(47), W(22), "オプション", W(23) });
     }
 
     string W(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
@@ -50,7 +53,8 @@ public sealed class TitleScreen
                 _files.Index = Math.Max(0, Array.IndexOf(_files.Enabled, true));
                 _loading = true;
                 break;
-            case 2: Quit?.Invoke(); break;
+            case 2: Options?.Invoke(); break;
+            case 3: Quit?.Invoke(); break;
         }
     }
 

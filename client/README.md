@@ -69,21 +69,41 @@ Options:
 
 Set `SRPG95_REQUIRE_DATA=1` to make the tests fail instead of silently passing when the game data or `re/json` is missing.
 
-Controls:
+## Playing
+
+Copy `Erumani.exe`, `SDL2.dll` and `soft_oal.dll` from a published build (see below) into the game folder, next to `SRPGEXEC.EXE`, and run `Erumani.exe`. No .NET install is needed. Settings are kept in `settings.json` beside the exe, or in `%APPDATA%\Erumani` if that folder isn't writable. For SoundFont music, put a General MIDI `.sf2` file into the `soundfonts` folder next to the exe and pick it under Options. FluidR3_GM or GeneralUser GS both work; without one, the game falls back to Windows MIDI, like the original.
+
+```bash
+dotnet publish client/src/Erumani -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o client/publish
+```
+
+## Controls
+
+Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 | Keys | Action |
 |---|---|
-| Enter / Space / Z / left click | confirm. On a unit: select it, or show its status if it can't act. On an empty tile: the turn menu (ターン終了) |
-| Esc / X / right click | cancel or back (at the command menu: undo the move). Right click on a unit: status |
-| Arrows | move the map cursor; choose in menus |
-| Mouse | point at a tile or menu entry. Holding it at the viewport edge scrolls |
-| WASD | scroll the map |
-| PageUp / PageDown | previous / next map |
+| Enter / Z / Space, left click | confirm. On a unit: select it, or show its status if it can't act. On an empty tile: the turn menu |
+| Esc / X / Backspace, right click | cancel or back (at the command menu: undo the move). During a battle scene: skip it |
+| Arrows | move the map cursor (hold to repeat); move in menus |
+| W A S D | scroll the map camera; W/S also move in menus |
+| C / Left Shift, right click on a unit | unit status |
+| Tab / Left Ctrl | fast-forward (hold, or toggle; see Options) |
+| Mouse wheel up / L | text backlog (wheel down or click to close) |
+| F1 | options (anywhere) |
+| F4 or Alt+Enter | fullscreen |
+| F5 | switch pixel-perfect / fit scaling |
 | F3 | debug overlay (map, BGM, event log) |
-| F4 or Alt+Enter | fullscreen (F4 was the original's window toggle) |
-| F5 | integer scaling on/off |
-| Tab (hold) | fast-forward (4× speed: messages, walking, enemy turns, result popups) |
-| Alt+F4 / close window | quit |
+| PageUp / PageDown | previous / next map (developer) |
+
+## Options (modern features)
+
+| Section | Settings |
+|---|---|
+| Display | window size (1×–4×), fullscreen (borderless), scaling (pixel-perfect whole multiples / fit 4:3 / stretch), filter (sharp / smooth) |
+| Audio | music and sound volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, text advance sound (the CLICK "thunk" when advancing text) |
+| Gameplay | battle animations on/off, fast-forward key (hold / toggle), speed (×2–×8), fast-forward skips battle scenes, fast-forward advances text |
+| Controls | rebind every action; reset to defaults |
 
 ## Roadmap
 
@@ -129,6 +149,12 @@ Controls:
    - game over (GAMEOVER.BMP) → title.
 
    The title menu is matched to a recording (T24).
-8. **Modern features:** fast-forward (basic version done), rebindable controls with a config file, resolution and scaling options, SoundFont music, and a self-contained `dotnet publish` build.
+8. ✅ **Modern features:** done:
+   - options menu (title and F1), rebindable keyboard controls, display options;
+   - SoundFont MIDI, volumes, text-advance sound toggle;
+   - battle animation skip;
+   - fast-forward options;
+   - mouse-wheel text backlog;
+   - self-contained build.
 
 Faithfulness rule: replicate the original's behaviour, including its bugs (see FORMAT_NOTES §11.4), by default. Any fixes are opt-in.

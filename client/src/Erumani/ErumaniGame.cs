@@ -2,6 +2,7 @@ using Erumani.Runtime;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using Erumani.Config;
 using Srpg95.Data;
 
 namespace Erumani;
@@ -9,11 +10,7 @@ namespace Erumani;
 /// <summary>
 /// The client. Loads the original data, renders at the original 640x480 and scales to the
 /// window. Each map's OPENING event runs when the map loads.
-/// Controls:
-///   Enter / Space / Z / left click   confirm        Esc / X / right click  cancel
-///   arrows / WASD  scroll (when no event is running), choose in menus
-///   PageUp / PageDown  previous / next map       F3  debug overlay
-///   F4 / Alt+Enter  fullscreen     F5  integer scaling     Tab (hold)  fast-forward
+/// Controls: see client/README.md (rebindable under Options, F1).
 /// </summary>
 public sealed class ErumaniGame : Game
 {
@@ -37,6 +34,11 @@ public sealed class ErumaniGame : Game
     BattleController? _battle;
     Camp.CampScreen? _camp;
     TitleScreen? _title;
+    Settings _settings = null!;
+    Controls _controls = null!;
+    Ui.OptionsScreen? _options;
+    Ui.Backlog _backlog = null!;
+    bool _ffToggle;
     bool _gaveItems;
     Queue<string> _script = new();
     readonly List<string> _trace = new();
@@ -44,7 +46,7 @@ public sealed class ErumaniGame : Game
     MapOutcome _seenOutcome;
     int[] _mapIndices = Array.Empty<int>();
     int _mapPos, _frame, _shotAdvance;
-    bool _integerScale = true, _debug;
+    bool _debug;
     string _status = "";
     KeyboardState _prevKeys;
     MouseState _prevMouse;
@@ -79,6 +81,12 @@ public sealed class ErumaniGame : Game
         _tex = new Textures(GraphicsDevice, _folder);
         _ui = new Ui.Ui(GraphicsDevice, _tex);
         _audio = new Audio(_folder) { Muted = _opts.Screenshot is not null };
+        Sfx.Audio = _audio;
+        _settings = Settings.Load(persistent: _opts.Screenshot is null);
+        _controls = new Controls(_settings);
+        _backlog = new Ui.Backlog(_ui);
+        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "soundfonts"));
+        ApplySettings();
         _sb = new SpriteBatch(GraphicsDevice);
         _screen = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight);
 
@@ -101,10 +109,12 @@ public sealed class ErumaniGame : Game
         _pendingMap = _pendingCamp = null;
         _pendingTitle = false;
         _audio.PlayBgm("");
+        _backlog.Clear();
         _title = new TitleScreen(_db, _folder, _tex, _ui)
         {
             NewGame = () => { _state.Reset(); LoadMap(Math.Max(0, Array.IndexOf(_mapIndices, _db.StartMap))); },
             Loaded = ApplySave,
+            Options = OpenOptions,
             Quit = Exit,
         };
         Window.Title = "Erumani";
@@ -152,7 +162,7 @@ public sealed class ErumaniGame : Game
         var map = MapData.Load(_folder.MapPath(idx));
         _fx = new ScreenEffects();
         _session = new MapSession(map, _db, _state, _tex, _folder.Chipset(map.Tileset));
-        _runner = new EventRunner(_state, _session, _audio, _fx);
+        _runner = new EventRunner(_state, _session, _audio, _fx) { Shown = _backlog.Add };
         if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
         _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex);
         _audio.PlayBgm(map.Bgm[1]);   // player-turn BGM; the opening usually sets its own
@@ -173,6 +183,7 @@ public sealed class ErumaniGame : Game
             foreach (var g in give.Split(',', StringSplitOptions.RemoveEmptyEntries))
                 if (g.Split(':') is [var id, var n]) _state.AddItem(int.Parse(id), int.Parse(n));
         }
+        ApplyGameplay();
         _battle.PlayMapBgm = slot => _audio.PlayBgm(map.Bgm[slot]);
         _battle.PlaySound = _audio.PlaySe;
         _battle.SlotExists = n => File.Exists(SaveFile.PathFor(_folder, n));
@@ -197,35 +208,103 @@ public sealed class ErumaniGame : Game
         _status = "";
     }
 
+    // ---------------- settings ----------------
+
+    void OpenOptions() => _options = new Ui.OptionsScreen(_settings, _ui, _folder.Root, ApplySettings);
+
+    void ApplySettings()
+    {
+        _audio.MusicVolume = _settings.MusicVolume / 100f;
+        _audio.SoundVolume = _settings.SoundVolume / 100f;
+        _audio.MessageSound = _settings.MessageSound;
+        _audio.SetSoundFont(_settings.Music == MusicEngine.SoundFont ? _settings.ResolveSoundFont(_folder.Root) : null);
+        ApplyGameplay();
+        ApplyDisplay();
+    }
+
+    void ApplyGameplay()
+    {
+        if (_runner is not null) _runner.FastForwardAdvancesText = _settings.FastForwardAdvancesText;
+        if (_battle is not null)
+        {
+            _battle.ShowScenes = _settings.BattleScenes;
+            _battle.FastForwardSkipsScenes = _settings.FastForwardSkipsScenes;
+        }
+    }
+
+    void ApplyDisplay()
+    {
+        if (_opts.Screenshot is not null) return;
+        _gfx.HardwareModeSwitch = false;   // borderless fullscreen
+        if (_settings.Fullscreen)
+        {
+            var mode = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+            _gfx.PreferredBackBufferWidth = mode.Width;
+            _gfx.PreferredBackBufferHeight = mode.Height;
+            _gfx.IsFullScreen = true;
+        }
+        else
+        {
+            _gfx.IsFullScreen = false;
+            _gfx.PreferredBackBufferWidth = VirtualWidth * _settings.WindowScale;
+            _gfx.PreferredBackBufferHeight = VirtualHeight * _settings.WindowScale;
+        }
+        _gfx.ApplyChanges();
+    }
+
+    void EndUpdate(GameTime gameTime, KeyboardState k, MouseState m)
+    {
+        _prevKeys = k;
+        _prevMouse = m;
+        base.Update(gameTime);
+    }
+
     protected override void Update(GameTime gameTime)
     {
         var k = Keyboard.GetState();
         var m = Mouse.GetState();
+        _controls.Update(IsActive ? k : default);
         _mouseVirtual = ToVirtual(m.Position);
         bool Pressed(Keys key) => k.IsKeyDown(key) && !_prevKeys.IsKeyDown(key);
         bool alt = k.IsKeyDown(Keys.LeftAlt) || k.IsKeyDown(Keys.RightAlt);
         bool click = IsActive && m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
         bool rclick = IsActive && m.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
+        int wheel = IsActive && _opts.Screenshot is null ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
+        bool mouseMoved = m.Position != _prevMouse.Position;
 
-        if (_runner?.Choice is { } ch && m.Position != _prevMouse.Position)
+        if (_runner?.Choice is { } ch && mouseMoved)
         {
             var cr = ChoiceRect(ch);
             _choiceActive = cr.Contains(_mouseVirtual);
             if (_choiceActive) _runner.HoverChoice((_mouseVirtual.Y - cr.Y - 8) / 16);
         }
-        if (Pressed(Keys.F4) || (alt && Pressed(Keys.Enter))) { _gfx.HardwareModeSwitch = false; _gfx.ToggleFullScreen(); }
-        if (Pressed(Keys.F5)) _integerScale = !_integerScale;
+        if (_controls.Pressed(GameAction.Fullscreen) || (alt && Pressed(Keys.Enter)))
+        {
+            _settings.Fullscreen = !_settings.Fullscreen;
+            _settings.Save();
+            ApplyDisplay();
+        }
+        if (Pressed(Keys.F5))
+        {
+            _settings.Scaling = _settings.Scaling == Scaling.Integer ? Scaling.Fit : Scaling.Integer;
+            _settings.Save();
+        }
         if (Pressed(Keys.F3)) _debug = !_debug;
-        if (Pressed(Keys.PageDown)) LoadMap((_mapPos + 1) % _mapIndices.Length);
-        if (Pressed(Keys.PageUp)) LoadMap((_mapPos + _mapIndices.Length - 1) % _mapIndices.Length);
+        if (_session is not null && Pressed(Keys.PageDown)) LoadMap((_mapPos + 1) % _mapIndices.Length);
+        if (_session is not null && Pressed(Keys.PageUp)) LoadMap((_mapPos + _mapIndices.Length - 1) % _mapIndices.Length);
 
-        var input = new EventInput(
-            Confirm: (!alt && (Pressed(Keys.Enter) || Pressed(Keys.Space) || Pressed(Keys.Z))) || click,
-            Cancel: Pressed(Keys.Escape) || Pressed(Keys.X) || rclick,
-            Up: Pressed(Keys.Up),
-            Down: Pressed(Keys.Down),
-            FastForward: k.IsKeyDown(Keys.Tab));
+        // keyboard: arrows move the map cursor and menus; WASD scroll the camera, and move in menus too
+        bool menuOpen = _options is not null || _title is not null || _camp is not null || _runner?.Choice is not null || _battle?.MenuOpen == true;
+        bool up = _controls.Repeat(GameAction.Up) || (menuOpen && _controls.Repeat(GameAction.CameraUp));
+        bool down = _controls.Repeat(GameAction.Down) || (menuOpen && _controls.Repeat(GameAction.CameraDown));
+        bool left = _controls.Repeat(GameAction.Left) || (menuOpen && _controls.Repeat(GameAction.CameraLeft));
+        bool right = _controls.Repeat(GameAction.Right) || (menuOpen && _controls.Repeat(GameAction.CameraRight));
+        bool confirm = (!alt && _controls.Pressed(GameAction.Confirm)) || click;
+        bool cancel = _controls.Pressed(GameAction.Cancel) || rclick;
+        if (_settings.FastForwardMode == FastForwardMode.Toggle && _controls.Pressed(GameAction.FastForward)) _ffToggle = !_ffToggle;
+        bool ff = _settings.FastForwardMode == FastForwardMode.Hold ? _controls.Down(GameAction.FastForward) : _ffToggle;
 
+        var input = new EventInput(confirm, cancel, up, down, ff);
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
         if (_opts.Screenshot is not null && _shotAdvance != 0 && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null }))
         {
@@ -235,18 +314,50 @@ public sealed class ErumaniGame : Game
 
         if (input.Up || input.Down) _choiceActive = true;
         var battleInput = new BattleInput(
-            Confirm: input.Confirm, Cancel: input.Cancel, Up: Pressed(Keys.Up), Down: Pressed(Keys.Down),
-            Left: Pressed(Keys.Left), Right: Pressed(Keys.Right), MouseTile: MouseTile(),
-            MouseMoved: m.Position != _prevMouse.Position, Click: click, RightClick: rclick, FastForward: input.FastForward);
+            Confirm: input.Confirm, Cancel: input.Cancel, Up: up, Down: down, Left: left, Right: right, MouseTile: MouseTile(),
+            MouseMoved: mouseMoved, Click: click, RightClick: rclick, FastForward: input.FastForward,
+            Info: _controls.Pressed(GameAction.Info), Wheel: wheel);
         if (_battle is not null) _battle.MouseVirtual = _mouseVirtual;
         if (_opts.Screenshot is not null)   // ignore the real mouse while scripted
             battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, false));
+
+        // the CANCEL sound, wherever cancel does something (the options screen plays its own)
+        if (battleInput.Cancel || battleInput.RightClick)
+            if (_options is null && (_title?.AcceptsCancel == true || _camp?.AcceptsCancel == true || _battle?.AcceptsCancel == true || _backlog.Open))
+                Sfx.Cancel();
+
+        // options (F1 anywhere, or from the title): pauses everything else
+        if (_options is null && _opts.Screenshot is null && _controls.Pressed(GameAction.Options)) OpenOptions();
+        if (_options is not null)
+        {
+            _frame++;
+            _audio.Update();
+            _options.Update(battleInput, _mouseVirtual, _controls);
+            if (_options.Done) _options = null;
+            EndUpdate(gameTime, k, m);
+            return;
+        }
+
+        // text backlog: mouse wheel (or its key) on a map, outside battle scenes
+        if (_session is not null && _battle?.SceneShowing != true)
+        {
+            if (wheel != 0) _backlog.Scroll(wheel);
+            if (_controls.Pressed(GameAction.Backlog)) _backlog.Toggle();
+            if (_backlog.Open)
+            {
+                if (cancel || click) _backlog.Close();
+                _frame++;
+                _audio.Update();
+                EndUpdate(gameTime, k, m);
+                return;
+            }
+        }
 
         if (_title is not null)
         {
             _frame++;
             _audio.Update();
-            _title.Update(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && m.Position != _prevMouse.Position }, _mouseVirtual);
+            _title.Update(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && mouseMoved }, _mouseVirtual);
             _prevKeys = k;
             _prevMouse = m;
             base.Update(gameTime);
@@ -257,7 +368,7 @@ public sealed class ErumaniGame : Game
         {
             _frame++;
             _audio.Update();
-            _camp.Update(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && m.Position != _prevMouse.Position }, _mouseVirtual);
+            _camp.Update(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && mouseMoved }, _mouseVirtual);
             _prevKeys = k;
             _prevMouse = m;
             base.Update(gameTime);
@@ -278,8 +389,8 @@ public sealed class ErumaniGame : Game
             battleInput = battleInput with { Confirm = false, Click = false };
         }
 
-        // Fast-forward: several simulation steps per frame while Tab is held.
-        int steps = input.FastForward ? 4 : 1;
+        // fast-forward: several simulation steps per frame (speed from the options)
+        int steps = input.FastForward ? Math.Max(1, _settings.FastForwardSpeed) : 1;
         for (int i = 0; i < steps; i++)
         {
             if (i == 0) Step(k, input, battleInput);
@@ -318,11 +429,14 @@ public sealed class ErumaniGame : Game
             "right" => bi with { Right = true },
             "enter" => bi with { Confirm = true },
             "esc" => bi with { Cancel = true },
+            "backlog" => Do(() => _backlog.Scroll(1), bi),
             _ when tok.StartsWith("at:") && tok[3..].Split('.') is [var x, var y] =>
                 bi with { MouseTile = new Point(int.Parse(x), int.Parse(y)), MouseMoved = true },
             _ => bi,
         };
     }
+
+    static BattleInput Do(Action a, BattleInput bi) { a(); return bi; }
 
     int _shotAt = int.MaxValue;
     bool ShotReady => _frame > 30000 || _frame >= _shotAt ||
@@ -358,10 +472,11 @@ public sealed class ErumaniGame : Game
         const int speed = 8;
         var mv = _mouseVirtual;
         bool inView = IsActive && mv.X >= 0 && mv.Y >= 0 && mv.X < VirtualWidth && mv.Y < VirtualHeight;
-        if (k.IsKeyDown(Keys.A) || (inView && mv.X < ViewX + 4)) _session.Camera.X -= speed;
-        if (k.IsKeyDown(Keys.D) || (inView && mv.X >= ViewX + ViewWidth - 4)) _session.Camera.X += speed;
-        if (k.IsKeyDown(Keys.W) || (inView && mv.Y < ViewY + 4)) _session.Camera.Y -= speed;
-        if (k.IsKeyDown(Keys.S) || (inView && mv.Y >= ViewY + ViewHeight - 4)) _session.Camera.Y += speed;
+        bool keys = !_battle.MenuOpen && _runner?.Choice is null;
+        if ((keys && _controls.Down(GameAction.CameraLeft)) || (inView && mv.X < ViewX + 4)) _session.Camera.X -= speed;
+        if ((keys && _controls.Down(GameAction.CameraRight)) || (inView && mv.X >= ViewX + ViewWidth - 4)) _session.Camera.X += speed;
+        if ((keys && _controls.Down(GameAction.CameraUp)) || (inView && mv.Y < ViewY + 4)) _session.Camera.Y -= speed;
+        if ((keys && _controls.Down(GameAction.CameraDown)) || (inView && mv.Y >= ViewY + ViewHeight - 4)) _session.Camera.Y += speed;
         _session.ClampCamera();
     }
 
@@ -408,6 +523,7 @@ public sealed class ErumaniGame : Game
         {
             _sb.Begin(samplerState: SamplerState.PointClamp);
             _title.Draw(_sb, _frame);
+            _options?.Draw(_sb, _frame);
             if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
             _sb.End();
             Present(gameTime);
@@ -417,6 +533,7 @@ public sealed class ErumaniGame : Game
         {
             _sb.Begin(samplerState: SamplerState.PointClamp);
             _camp.Draw(_sb, _frame);
+            _options?.Draw(_sb, _frame);
             if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
             _sb.End();
             Present(gameTime);
@@ -448,8 +565,10 @@ public sealed class ErumaniGame : Game
         DrawChoice();
         DrawStatus();
         if (_debug) DrawDebug();
+        _backlog.Draw(_sb);
+        _options?.Draw(_sb, _frame);
         if (_opts.Screenshot is null && IsActive)
-            _ui.Cursor(_sb, _mouseVirtual, _runner?.Message is not null, _frame);
+            _ui.Cursor(_sb, _mouseVirtual, _runner?.Message is not null && !_backlog.Open && _options is null, _frame);
         _sb.End();
 
         Present(gameTime);
@@ -471,10 +590,11 @@ public sealed class ErumaniGame : Game
         GraphicsDevice.Clear(Color.Black);
         var bb = GraphicsDevice.PresentationParameters.Bounds;
         float scale = Math.Min((float)bb.Width / VirtualWidth, (float)bb.Height / VirtualHeight);
-        if (_integerScale && scale >= 1) scale = MathF.Floor(scale);
+        if (_settings.Scaling == Scaling.Integer && scale >= 1) scale = MathF.Floor(scale);
         int w = (int)(VirtualWidth * scale), h = (int)(VirtualHeight * scale);
+        if (_settings.Scaling == Scaling.Stretch) (w, h) = (bb.Width, bb.Height);
         _dest = new Rectangle((bb.Width - w) / 2, (bb.Height - h) / 2, w, h);
-        _sb.Begin(samplerState: SamplerState.PointClamp);
+        _sb.Begin(samplerState: _settings.Smooth ? SamplerState.LinearClamp : SamplerState.PointClamp);
         _sb.Draw(_screen, _dest, Color.White);
         _sb.End();
         base.Draw(gameTime);

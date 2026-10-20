@@ -689,6 +689,8 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Camp: shop | list 264×336 at (80,96): a 「アイテム ／ 値段 (アイテム売却: 下取り額) ／ 所持数」 header row with a rule, then rows. Gold in a 192×32 panel at (368,96), shown literally as 「130,肉」 (WORD 31 includes the comma). Description at the top. Sale price = half the price | confirmed (T23: ルーティのマント 10 → 5, ポーション 10 → 5) |
 | Camp: 次のステージ | 「キャンプを終了して／進撃を開始します」, a rule and はい／いいえ in a panel at (16,16). No separate sortie screen (sortie is set in ユニット編成) | confirmed (T23) |
 | Title | TITLE.BMP full screen; menu 108×64 at (266,320) with はじめませう (WORD 47) / ロードする / ゲーム終了; the load list replaces it at (272,281). New game starts at GAME.DAT [0] | confirmed (T24 recording) |
+| System sounds | the runtime plays CLICK.WAV on every confirm (menus, map selections, advancing text), CANCEL.WAV on cancel, BUZZER.WAV on an unavailable choice, DOWN.WAV when a unit falls (with its death message) and LEVELUP.WAV on a level-up. SRPGEXEC.EXE names exactly these five files | confirmed: audio cross-correlation against the recordings (match ≥ 0.82) |
+| Action menu | the original's order is 行動終了 / 攻撃 / 必殺技 / 装備 / アイテム (T23 recording). The client puts 行動終了 last (player request). 装備 switches the weapon without ending the action | order confirmed; 装備's behaviour is a guess |
 | Fallen allies | units that died on the previous map come back at the camp | confirmed (user, T23d) |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
