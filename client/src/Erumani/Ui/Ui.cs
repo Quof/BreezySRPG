@@ -25,6 +25,8 @@ public sealed class Ui : IDisposable
     public GdiText Text { get; }
     /// <summary>Menu/panel text (choices, camp menu): smaller than message text.</summary>
     public GdiText SmallText { get; }
+    /// <summary>16 px bold: unit names on the battle scene's info panels (T22).</summary>
+    public GdiText NameText { get; }
 
     public Ui(GraphicsDevice device, Textures tex)
     {
@@ -32,6 +34,7 @@ public sealed class Ui : IDisposable
         _tex = tex;
         Text = new GdiText(device);
         SmallText = new GdiText(device, 12, 400, "ERUMANI_SMALLFONT");
+        NameText = new GdiText(device, 16, 700, "ERUMANI_FONT");
         _pixel = new Texture2D(device, 1, 1);
         _pixel.SetData(new[] { Color.White });
         _messageWindow = BuildWindow(MessageWidth, MessageHeight);
@@ -152,8 +155,20 @@ public sealed class Ui : IDisposable
     public enum PanelColor { Blue = 0, Red = 1, Yellow = 2, Green = 3 }
 
     /// <summary>
+    /// Light/dark edge colours per panel colour: SYSTEM.BMP swatches at y 290, 16 px each,
+    /// (light, dark) pairs in Blue/Red/Yellow/Green order. Green and red match screenshots (T17, T22).
+    /// </summary>
+    static readonly (Color Light, Color Dark)[] Edges =
+    {
+        (new(240, 248, 248), new(0, 0, 48)), (new(248, 216, 192), new(64, 0, 0)),
+        (new(248, 248, 224), new(40, 40, 8)), (new(248, 248, 224), new(0, 32, 0)),
+    };
+
+    public static (Color Light, Color Dark) EdgeColors(PanelColor c) => Edges[(int)c];
+
+    /// <summary>
     /// Textured panel (menus, choices, EXP messages, battle info): SYSTEM.BMP tile tiled from the
-    /// panel's top-left, 1-px light edge (248,248,224) top/left, dark (0,32,0) bottom/right.
+    /// panel's top-left, 1-px light edge top/left, dark bottom/right (colours per <see cref="Edges"/>).
     /// </summary>
     public void Panel(SpriteBatch sb, Rectangle r, PanelColor color = PanelColor.Green)
     {
@@ -166,8 +181,7 @@ public sealed class Ui : IDisposable
                 int w = Math.Min(64, r.Right - x), h = Math.Min(64, r.Bottom - y);
                 sb.Draw(sys, new Vector2(x, y), new Rectangle(tx, 224, w, h), Color.White);
             }
-        var light = new Color(248, 248, 224);
-        var dark = new Color(0, 32, 0);
+        var (light, dark) = Edges[(int)color];
         Fill(sb, new Rectangle(r.X, r.Y, r.Width, 1), light);
         Fill(sb, new Rectangle(r.X, r.Y, 1, r.Height), light);
         Fill(sb, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), dark);
@@ -180,6 +194,7 @@ public sealed class Ui : IDisposable
     {
         Text.Dispose();
         SmallText.Dispose();
+        NameText.Dispose();
         _pixel.Dispose();
         _messageWindow.Dispose();
         _tail.Dispose();

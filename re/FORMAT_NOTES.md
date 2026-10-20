@@ -654,7 +654,13 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Description window | green panel (80,32) 480×48 while a list is open: "name：" at (+16,+10), the description at (+16,+26), white 12 px | measured (T21) |
 | Aiming overlays | spell range and the area around the aim tile in blue stripes (SYSTEM range tile 3, odd rows). Each affected unit's tile is solid blue (all rows). Medicine range: salmon stripes (tile 1) | confirmed (T21b/e screenshots). The spell-range colour for spells reaching beyond the caster is inferred: 剣の舞 only aims at its caster |
 | Result messages | no name, full-width digits: 「ＨＰが８ポイント回復した」 (WORD 2+64+n+65+66). The client builds 攻撃力/防御 changes the same way with 上昇した/下降した. The 「〜は〜を使います」 line before an item is a guess | heal message confirmed (T21e). The popup sat at x 160 there and the EXP popup at x 200, so its position rule is unknown |
-| Battle scene | every attack and spell plays a full-screen scene: `BACK_{terrain.battle_background:000}` (the defender's terrain) at the top, 640×320. The unit that started the fight stands on the right and its target on the left. Weapon animations play as authored when the right-hand unit acts and mirrored for a counter. Spells: the caster's class cast animation (magic-to-enemy / magic-to-ally), then the spell animation on each target, one scene per target. Idle pose = frame 0 of the unit's weapon animation (mirrored on the left). Damage / recovery numbers use SYSTEM.BMP digits (24×32; red row y 160, blue y 128). The target blinks for `flash_time` frames at `hit_frame`, and the hit/miss sounds play at their frames. Below the background: two HP panels (red = enemy, blue = ally) | file mapping confirmed. Everything else is a guess (T22): sides, timing (3 game frames per animation frame), panels, numbers, background choice |
+| Battle scene: sides | allies on the right, enemies on the left, whoever attacks. Animations are authored with the actor on the right facing left; an actor on the left plays them mirrored. A counter-attack happens in the same scene | confirmed (T22 recording) |
+| Battle scene: timing | the game runs at 30 Hz; one animation frame per 1/30 s. The map darkens in 4 steps (~0.1 s) to ~20 % and holds ~0.27 s. Then black, the panels fade in (4 ticks), and the stage wipes in left to right (5 ticks, 128 px each). Then a 0.33 s pause and the animation, and a 0.5 s hold. Between strikes the stage wipes out, stays black ~0.4 s and wipes back in, while the panels stay. At the end the stage wipes out, the panels stay ~0.45 s, and the map brightens back in 4 steps | measured (T22; `hit_frame` 15 of ジュナ's attack lands exactly 15 ticks in, so hit_frame is 0-based) |
+| Battle scene: layout | stage = `BACK_{terrain.battle_background:000}` (640×320) at y 0. Two 320×160 SYSTEM-textured panels at y 320 (enemy red left, ally blue right; edges from the SYSTEM.BMP swatches at y 290). Each has: name 16 px bold at (12, 328); an etched rule at y 348/349 (x 12–307); ＨＰ at (14, 356) and "cur／max" right-aligned to x 307; a 16-row gradient bar at y 368–383 (x 12–307; the empty part turns red, with a dark line above and a light one below); ＴＰ at y 396 with a green bar at 408–423; stats rows at y 438 and 454: 攻撃力 / 物理防御 / 特殊補正値 and 攻撃精度 / 特殊防御 / 地形効果 (terrain defense of the unit's tile), labels at x 13/119/225 | measured from the recording. Colours are approximate (lossy video) |
+| Battle scene: hit | the target flickers as a white silhouette for `flash_time` frames centred on `hit_frame`. At `hit_frame` the damage number appears in SYSTEM.BMP's purple digits (y 128, 24 px apart, centred on the target's x), drops onto the ground line (cell top y 268), bounces once and stays until the stage wipes out. The actor freezes on its last frame | measured (T22) |
+| Battle scene: defeat | 1 s after a killing blow, the defeated unit's UNIT.DAT death message replaces the panels: bottom message layout with its face, waiting for a click. The dead unit stays visible until the wipe-out | measured (T22) |
+| Battle scene: after | the EXP message (「〜の経験値を獲得」) appears back on the map, at the top | confirmed (T22) |
+| Battle scene: still guessed | spells: the caster's cast animation, then the spell animation per target, one scene per target. The recovery number in the red digits (y 160). How a miss is shown. The background coming from the defender's terrain | needs a spell/miss recording |
 | Battle music | map BGM slot 3 (player-battle) when an ally starts the fight, 4 (enemy-battle) when an enemy does, 5 (boss-battle) when an enemy leader takes part; the phase music returns afterwards | battle music confirmed to start (T20b); slot choice inferred from the map header's slot names |
 | Enemy spells | an enemy casts a known, affordable damage spell when its predicted total damage beats its best weapon attack, and a heal when it restores ≥ ⅓ of someone's HP | guess |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
@@ -965,19 +971,6 @@ From save slot 6, on map 2 (screenshots 37–43; layout numbers in §15):
 - **T21e — items:** a 12-row item list with a page footer, salmon range stripes around the user, and the message 「ＨＰが８ポイント回復した」.
 - **T21f — healing:** taken as 7 (not observed).
 
-## Open items with no test planned
-
-- Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
-- The camera position at map start (§13).
-- Save variables: 16-bit at 0x5DC vs 8-bit at 0x5EF. Any later save with another variable set (e.g. at the 11話 camp, variable 0) settles it.
-- Save header fields 0x008, 0x00C, 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
-- Event-side details that need the running game:
-  - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
-  - picture display methods and screen effects beyond the first two;
-  - the T13 damaged-script behaviour.
-
-## Active tests
-
 ### Phase 5, round 1 — instructions (T22: the battle scene)
 
 The client now has a first battle scene, built from the data alone. These checks fix its layout and timing. Map 1 in `えるまに - Save testplay` is enough: slot 3, or a new game. Screenshots are the most useful thing. A short screen recording works even better, e.g. from ShareX, which is already installed, or Win+Alt+R. Drop it into the `recordings/` folder at the workspace root. `re/tools/frames.py` extracts the frames (using ShareX's ffmpeg).
@@ -994,6 +987,33 @@ The client now has a first battle scene, built from the data alone. These checks
 - **T22e — enemy attacks.** In the enemy turn, when a minion attacks ジュナ or ルーティ, which side is the attacker on?
 - **T22f — the bottom of the screen.** Screenshot the area under the background during a battle (names, HP, anything else).
 - **T22g — after the battle.** Does the EXP message appear inside the battle scene or back on the map?
+
+### Phase 5, round 1 — results
+
+From a 2-minute 60 fps recording of map 1, `recordings/` (frames via `re/tools/frames.py`); measurements in §15:
+- **T22a — the first moment:** ジュナ is on the right and the minion on the left. The map darkens, the panels fade in, and the stage wipes in left to right.
+- **T22b — the hit:** the number uses the purple digits, centred on the target, dropping and bouncing onto the ground. The target flashes white.
+- **T22c — the counter:** in the same scene, after a stage-only wipe-out and wipe-in. The sides don't swap.
+- **T22d — timing:** 30 Hz; ジュナ's 23 frames take 0.77 s.
+- **T22e — enemy attacks:** the enemy stays on the left and its animation is mirrored.
+- **T22f — the panels:** as in §15.
+- **T22g — after the battle:** the EXP message appears on the map. A death message appears inside the scene first.
+
+## Open items with no test planned
+
+- Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
+- The camera position at map start (§13).
+- Save variables: 16-bit at 0x5DC vs 8-bit at 0x5EF. Any later save with another variable set (e.g. at the 11話 camp, variable 0) settles it.
+- Save header fields 0x008, 0x00C, 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
+- Battle scene details not in the recording: spell scenes, how a miss and a recovery number look, and which terrain picks the background. A later recording of a spell, a miss and a heal would settle them.
+- Event-side details that need the running game:
+  - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
+  - picture display methods and screen effects beyond the first two;
+  - the T13 damaged-script behaviour.
+
+## Active tests
+
+None right now.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

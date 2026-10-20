@@ -111,7 +111,7 @@ Controls:
    - items (アイテム): medicine and magic items from the shared inventory.
 
    Still to do: the other turn-menu entries, and checking the provisional rules against the original (FORMAT_NOTES §15, test T21).
-5. 🟡 **Battle scenes:** done in a first version: ANIME.DAT playback from the CA/MAGA sprite strips over BACK_nnn backgrounds, counters mirrored, hit/miss sounds, damage digits, HP panels, battle music. Layout and timing are provisional until test T22.
+5. 🟡 **Battle scenes:** done in a first version: ANIME.DAT playback from the CA/MAGA sprite strips over BACK_nnn backgrounds, counters mirrored, hit/miss sounds, damage digits, HP panels, battle music. Sides, timing, transitions, panels, hit flash, damage numbers and death messages are matched to a recording of the original (T22). Spell scenes and misses are still provisional.
 6. **Camp and saving:** sortie, equipment, shop, and save/load in the original `SAVEn.DAT` format (pending save-file research, test T16).
 7. **Title, game over, map transitions.** A basic version is done: after a win, Enter goes on to the next map, and after a loss Enter retries.
 8. **Modern features:** fast-forward (basic version done), rebindable controls with a config file, resolution and scaling options, SoundFont music, and a self-contained `dotnet publish` build.
