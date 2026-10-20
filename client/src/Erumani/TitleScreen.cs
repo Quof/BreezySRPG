@@ -8,7 +8,7 @@ namespace Erumani;
 /// <summary>
 /// Title screen: TITLE.BMP full screen (the logo is part of the picture) with a menu of 「はじめませう」 (new game,
 /// WORD 47), ロードする (22) and ゲーム終了 (23); loading opens the same ファイル１–８ list as the camp.
-/// Menu position and contents are provisional: the original's title menu hasn't been seen yet.
+/// Layout measured from a recording (T24): menu 108x64 at (266,320); the load list replaces it, 96x177 at (272,281).
 /// </summary>
 public sealed class TitleScreen
 {
@@ -16,8 +16,8 @@ public sealed class TitleScreen
     readonly GameFolder _folder;
     readonly Textures _tex;
     readonly Ui.Ui _ui;
-    readonly Camp.MenuList _menu = new() { Rect = new Rectangle(272, 360, 96, 65) };
-    readonly Camp.MenuList _files = new() { Rect = new Rectangle(380, 248, 96, 177), Indent = 16 };
+    readonly Camp.MenuList _menu = new() { Rect = new Rectangle(266, 320, 108, 64) };
+    readonly Camp.MenuList _files = new() { Rect = new Rectangle(272, 281, 96, 177), Indent = 16 };
     bool _loading;
 
     public Action? NewGame { get; set; }
@@ -57,7 +57,7 @@ public sealed class TitleScreen
     public void Draw(SpriteBatch sb, int frame)
     {
         if (_tex.Get("TITLE.BMP", transparent: false) is { } t) sb.Draw(t, Vector2.Zero, Color.White);
-        _menu.Draw(sb, _ui, !_loading, frame);
+        if (!_loading) _menu.Draw(sb, _ui, true, frame);
         if (_loading) _files.Draw(sb, _ui, true, frame);
     }
 }

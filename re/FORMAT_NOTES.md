@@ -688,6 +688,7 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 | Camp: 道具を使う | not recorded. Client guess: the same list with stat-up and class-change items the class may use. A stat-up adds to the base stats; class change needs the item's level and a matching from→to pair 「〜に昇格」 | guess (user couldn't test yet) |
 | Camp: shop | list 264×336 at (80,96): a 「アイテム ／ 値段 (アイテム売却: 下取り額) ／ 所持数」 header row with a rule, then rows. Gold in a 192×32 panel at (368,96), shown literally as 「130,肉」 (WORD 31 includes the comma). Description at the top. Sale price = half the price | confirmed (T23: ルーティのマント 10 → 5, ポーション 10 → 5) |
 | Camp: 次のステージ | 「キャンプを終了して／進撃を開始します」, a rule and はい／いいえ in a panel at (16,16). No separate sortie screen (sortie is set in ユニット編成) | confirmed (T23) |
+| Title | TITLE.BMP full screen; menu 108×64 at (266,320) with はじめませう (WORD 47) / ロードする / ゲーム終了; the load list replaces it at (272,281). New game starts at GAME.DAT [0] | confirmed (T24 recording) |
 | Fallen allies | units that died on the previous map come back at the camp | confirmed (user, T23d) |
 | Enemy phase | each enemy moves in map-object order. Before it moves, the screen scrolls smoothly (16 px/frame) to centre it unless it is already 2+ tiles inside the view, then follows it to its destination | scrolling confirmed (T19f). Speed and margins are guesses |
 
@@ -1040,6 +1041,14 @@ A screen recording of the camp before map 3 or 4 (save slot 7 or 8 in `えるま
 
 Two recordings: one of the camp before map 3 (ユニット編成, equipment, 技を見る, shop, 次のステージ) and one of buying and selling. Layout in §15. The user couldn't try 道具を使う yet, so the client's version is a guess (noted in §15). Units that die come back at the camp.
 
+### Phase 6, round 2 — instructions (T24: the title screen)
+
+The client's title menu is a guess (「はじめませう」 / ロードする / ゲーム終了 in a small panel low in the middle). A screenshot of the original's title screen with its menu, and of what loading from it looks like, would fix it. Also: does any music play on the title?
+
+### Phase 6, round 2 — results
+
+A recording of the title: TITLE.BMP with a menu 108×64 at (266,320): はじめませう / ロードする / ゲーム終了. ロードする replaces it with the ロードします list, 96×177 at (272,281); empty files are grey. Loading darkens the screen in steps, goes black, and starts the saved map. Title music not checked (the recording has no audio analysis).
+
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always 1), 0x448 and 0x44C (3–4 maps each), GAME.DAT [1]..[4] (and [0] = start map is only inferred). Best chased later by watching the running game.
@@ -1055,9 +1064,7 @@ Two recordings: one of the camp before map 3 (ユニット編成, equipment, 技
 
 ## Active tests
 
-### Phase 6, round 2 — instructions (T24: the title screen)
-
-The client's title menu is a guess (「はじめませう」 / ロードする / ゲーム終了 in a small panel low in the middle). A screenshot of the original's title screen with its menu, and of what loading from it looks like, would fix it. Also: does any music play on the title?
+None right now.
 
 **Tip: quick wins in the test copy.** At a camp (before the next map starts), run:
 

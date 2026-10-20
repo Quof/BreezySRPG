@@ -128,7 +128,7 @@ Controls:
    - win → COMPLETE!! → camp → next map;
    - game over (GAMEOVER.BMP) → title.
 
-   The title menu's layout is a guess (T24).
+   The title menu is matched to a recording (T24).
 8. **Modern features:** fast-forward (basic version done), rebindable controls with a config file, resolution and scaling options, SoundFont music, and a self-contained `dotnet publish` build.
 
 Faithfulness rule: replicate the original's behaviour, including its bugs (see FORMAT_NOTES §11.4), by default. Any fixes are opt-in.
