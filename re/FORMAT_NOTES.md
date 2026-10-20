@@ -515,6 +515,19 @@ Kikumaru: only its known damaged SMAP_006 `OPENING`.
 
 ---
 
+## 13. Graphics conventions and save files
+
+Learned while building the client (phase 3):
+
+| Item | Finding | Conf. |
+|---|---|---|
+| BMP format | All 1,026 game + RTP BMPs are BITMAPINFOHEADER, 8-bit, uncompressed, bottom-up (2 `Thumbs.db` aside) | confirmed |
+| Transparency | palette **index 0** is the colour key of sprite sheets (fills cell backgrounds; most common index in UNIT/CA/MAGA/SYSTEM) | inferred (strong) |
+| MAPC_nnn.BMP | 12 × 32 chips of 32×32. Tile value k → chip at (k % 12, k / 12). Rendering every map with this matches its look | confirmed (visual) |
+| UNIT_nnn.BMP | **3 columns × 5 rows of 64×64 cells**, the 32-px character centred, so it overhangs its tile by 16 px each side. Columns are animation frames. Rows are poses: row 0 faces the viewer, row 1 faces away, rows 2/4 are side poses. Row 3's meaning and the exact direction mapping are open | inferred |
+| SYSTEM.BMP | UI atlas: window skin, "END" label, cursor arrows, blue/red damage digits 0–9, PSN/SLP status badges, coloured range-overlay tiles | inferred (visual) |
+| Save files | runtime writes `SAVE<n>.DAT` to the game folder (format string in SRPGEXEC.EXE). The format is pending test T16 | — |
+
 ## Test log (completed, oldest first)
 
 All tests are done in `えるまに - Copy/` and diffed byte-for-byte against the untouched `えるまに/`. Unit/item/etc. numbers in instructions are the editor's 1-based numbers.
