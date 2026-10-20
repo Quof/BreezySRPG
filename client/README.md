@@ -49,23 +49,39 @@ Options:
 
 Set `SRPG95_REQUIRE_DATA=1` to make the tests fail instead of silently passing when the game data or `re/json` is missing.
 
-Controls (milestone 1):
+- `--advance N`: used with `--screenshot`, auto-confirms N messages or choices before capturing.
+
+Controls:
 
 | Keys | Action |
 |---|---|
-| Arrows / WASD | scroll |
+| Enter / Space / Z / left click | confirm |
+| Esc / X / right click | cancel |
+| Arrows | choose in menus. Scroll the map when no event is running (also WASD) |
 | PageUp / PageDown | previous / next map |
+| F3 | debug overlay (map, BGM, event log) |
 | F4 or Alt+Enter | fullscreen (F4 was the original's window toggle) |
 | F5 | integer scaling on/off |
-| F2 | show deleted map objects |
-| Tab (hold) | fast-forward |
-| Esc | quit |
+| Tab (hold) | fast-forward (4× speed, auto-advances messages) |
+| Alt+F4 / close window | quit |
 
 ## Roadmap
 
 1. ✅ **Map rendering:** tilesets, units from class sprites, 640×480 virtual screen scaled to any window.
-2. **Text and UI:** font, SYSTEM.BMP window skin, message window (top/centre/bottom), faces (left/right, flip), screen frame graphics.
-3. **Script interpreter:** run OPENING and object events. Covers messages, choices, branches, switches and variables, BGM/SE, pictures, screen effects, waits, unit moves and map flow.
+2. 🟡 **Text and UI:** done:
+   - Japanese text (MS Gothic, falling back to Yu Gothic or Meiryo);
+   - message window at top/centre/bottom with faces (left/right, flip);
+   - choice menu.
+
+   Still provisional: the look (window style, text speed). That needs reference screenshots of the original (T17) and the SYSTEM.BMP skin.
+3. 🟡 **Script interpreter:** done: every map's OPENING runs on load, covering every command the game uses:
+   - messages, choices, branches, switches, variables, items, gold;
+   - pictures, fades, flash/tint, shake, waits;
+   - unit moves, camera scroll;
+   - BGM (MCI MIDI, looping) and sound effects;
+   - map flow.
+
+   Still to do: object events triggered during battle (comes with milestone 4).
 4. **Tactics gameplay:** turn flow, movement ranges from terrain/class costs, attacks and magic with range/effect grids, AI movement patterns, event triggers, win/lose conditions, level-ups.
 5. **Battle scenes:** ANIME.DAT frame playback over BACK_nnn backgrounds, hit/miss sounds, damage per the help's Battle Algorithm.
 6. **Camp and saving:** sortie, equipment, shop, and save/load in the original `SAVEn.DAT` format (pending save-file research, test T16).

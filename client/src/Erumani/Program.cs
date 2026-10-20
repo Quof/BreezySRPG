@@ -27,13 +27,15 @@ public static class Program
 /// <summary>
 /// Command line: --game DIR  --rtp DIR  --map N (1-based, like SMAP_nnn)
 ///               --screenshot FILE.png  (render one frame at 640x480, save it, exit)
+///               --advance N            (with --screenshot: auto-confirm N messages/choices first)
 /// </summary>
-public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot)
+public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance)
 {
     public static Options Parse(string[] args)
     {
         string? game = null, rtp = null, shot = null;
         int? map = null;
+        int advance = 0;
         for (int i = 0; i + 1 < args.Length; i += 2)
         {
             switch (args[i])
@@ -42,12 +44,13 @@ public sealed record Options(string GameDir, string? RtpDir, int? StartMap, stri
                 case "--rtp": rtp = args[i + 1]; break;
                 case "--map": map = int.Parse(args[i + 1]) - 1; break;
                 case "--screenshot": shot = args[i + 1]; break;
+                case "--advance": advance = int.Parse(args[i + 1]); break;
             }
         }
         game ??= FindGameFolder() ?? throw new DirectoryNotFoundException(
             "Game folder not found. Pass --game <folder containing SRPGEXEC.EXE>.");
         rtp ??= FindUp(AppContext.BaseDirectory, Path.Combine("srpg maker 95", "RTP"));
-        return new Options(game, rtp, map, shot);
+        return new Options(game, rtp, map, shot, advance);
     }
 
     /// <summary>Next to the exe, or in a parent directory (development layout: ./えるまに).</summary>

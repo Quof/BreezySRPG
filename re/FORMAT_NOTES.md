@@ -713,6 +713,18 @@ Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x444 (always
 
 Send all `SAVE*.DAT` files from the Play folder, plus your notes. A screenshot of the save/load screen showing the file labels would also help.
 
+**T17 — reference screenshots from the original runtime.** The new client's windows, fonts and timings are provisional. Please run `SRPGEXEC.EXE` (from the Play copy is fine) and capture:
+1. **Map 1 opening:**
+   - the first narration window (第１話～ / 何？);
+   - ルーティ's first line with her face;
+   - ナス's first line (it appears at the top).
+2. **Map 4 opening:** the first frame with the sky picture and グレイ's line.
+3. **Any choice menu**, e.g. the 11話 camp menu (仲間と話す / 城をうろつく / …).
+4. **One battle-map screen** with the cursor over a unit (status window, if any).
+5. **Timing:** roughly how long a "screen display" fade takes, and whether text appears all at once or letter by letter.
+
+Use Alt+PrintScreen for window-only captures if the game runs windowed (F4 toggles size).
+
 Everything else is decoded. The remaining event-side unknowns will be checked against the running game rather than the editor:
 - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
 - picture display methods and screen effects beyond the first two;
