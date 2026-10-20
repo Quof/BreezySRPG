@@ -257,19 +257,21 @@ public sealed class MapSession : IMapContext
             if (o.Graphic >= 0 && OtherVisible(o)) sb.Draw(_chips, ScreenPos(o.X, o.Y, viewport), ChipRect(o.Graphic), Color.White);
     }
 
-    /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan = move, 1 salmon = attack,
-    /// 2 orange, 3 blue. The original draws only the tile's odd pixel rows, opaque, leaving the map visible
-    /// in between (T19c, pixel-matched).</summary>
+    /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan = move, 1 salmon = attack /
+    /// medicine, 2 orange = attack spells, 3 blue = own-side spells. The original draws only the tile's odd pixel
+    /// rows, opaque, leaving the map visible in between (T19c, pixel-matched); "solid" tiles (units a spell will
+    /// affect) use every row. The checker scrolls up-left: its phase moves 2 px diagonally every 4 frames
+    /// (measured on the T22 spell recording; it wraps every 16 px).</summary>
     public void DrawRange(SpriteBatch sb, Rectangle viewport, IEnumerable<(int X, int Y)> tiles, int colour, int frame, bool solid = false)
     {
         var sys = _tex.Get("SYSTEM.BMP", transparent: false);
         if (sys is null) return;
+        int phase = frame / 4 * 2 % 16;   // the colour block is two identical 32-px tiles wide, so x + phase never runs off it
         foreach (var (x, y) in tiles)
         {
             var p = ScreenPos(x, y, viewport);
-            if (solid) { sb.Draw(sys, p, new Rectangle(colour * 64, 64, Tile, Tile), Color.White); continue; }   // affected units (T21)
-            for (int row = 1; row < Tile; row += 2)
-                sb.Draw(sys, p + new Vector2(0, row), new Rectangle(colour * 64, 64 + row, Tile, 1), Color.White);
+            for (int row = solid ? 0 : 1; row < Tile; row += solid ? 1 : 2)
+                sb.Draw(sys, p + new Vector2(0, row), new Rectangle(colour * 64 + phase, 64 + (row + phase) % Tile, Tile, 1), Color.White);
         }
     }
 

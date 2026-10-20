@@ -891,18 +891,19 @@ public sealed class BattleController
                 }
             _s.DrawRange(sb, viewport, tiles, 1, frame);
         }
-        // T21: spell range and the area around the aim in blue stripes (tile 3), the tiles of affected units
-        // solid blue; medicine range in salmon stripes (tile 1)
+        // spell range and the area around the aim in stripes, the tiles of affected units solid: blue (tile 3) for
+        // own-side spells (T21), orange/yellow (tile 2) for attack spells (T22 recording); medicine range salmon (tile 1)
         if (_state_ == State.Aiming && _aimSpell is not null && _sel is not null)
         {
+            int colour = _aimSpell.Type is 0 or 1 ? 2 : 3;
             var tiles = new HashSet<(int X, int Y)>(_aimRange);
             if (_aimRange.Contains((_cursor.X, _cursor.Y)))
             {
                 tiles.UnionWith(_s.Field.SpellArea(_aimSpell, _cursor.X, _cursor.Y));
-                _s.DrawRange(sb, viewport, tiles, 3, frame);
-                _s.DrawRange(sb, viewport, _s.Field.SpellTargets(_sel, _aimSpell, _cursor.X, _cursor.Y).Select(u => (u.X, u.Y)), 3, frame, solid: true);
+                _s.DrawRange(sb, viewport, tiles, colour, frame);
+                _s.DrawRange(sb, viewport, _s.Field.SpellTargets(_sel, _aimSpell, _cursor.X, _cursor.Y).Select(u => (u.X, u.Y)), colour, frame, solid: true);
             }
-            else _s.DrawRange(sb, viewport, tiles, 3, frame);
+            else _s.DrawRange(sb, viewport, tiles, colour, frame);
         }
         if (_state_ == State.MedicineTarget && _sel is not null && _aimItem is not null)
         {
