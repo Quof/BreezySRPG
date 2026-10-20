@@ -944,7 +944,7 @@ On map 1, check:
 
 ### Phase 4, round 3 — instructions (T21: magic and items on map 2)
 
-Map 2 (２話) in `えるまに - Save testplay`: start it from your camp save before map 2 (or a new game). ジュリア knows 剣の舞, a Raise Attack spell for her own side, at level 2. Screenshots help wherever something appears on screen.
+Map 2 (２話) in `えるまに - Save testplay`: load save slot 6: the camp before map 2, with ルーティ, ジュナ and 1 ポーション. ジュリア knows 剣の舞, a Raise Attack spell for her own side, at level 2. Screenshots help wherever something appears on screen.
 
 - **T21a — spell list.** Move ジュリア next to another ally and pick 必殺技. Screenshot the spell list.
 - **T21b — aiming.** Pick 剣の舞. Screenshot the range display, with the cursor on an ally. Can the cursor go on an empty tile, or only onto units?
