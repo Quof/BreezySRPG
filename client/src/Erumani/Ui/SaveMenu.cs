@@ -200,14 +200,17 @@ public sealed class SaveMenu : IDisposable
     {
         _ui.Panel(sb, r, chosen ? Ui.PanelColor.Blue : Ui.PanelColor.Green);
         // three rows in the larger type: the file, its turn (or キャンプ), its play time; the map's number and the date small
-        var top = chosen ? _ui.MenuRow(sb, new Rectangle(r.X + 6, r.Y + 5, r.Width - 12, 22), true, true, frame) : Ui.PanelText;
-        Big(sb, SlotName(slot + 1), r.X + 12, r.Y + 8, top);
+        var bar = new Rectangle(r.X + 6, r.Y + 5, r.Width - 12, 22);
+        var top = chosen ? _ui.MenuRow(sb, bar, true, true, frame) : Ui.PanelText;
+        // the name and the map's number both in the middle of the bar's height
+        string name = SlotName(slot + 1);
+        if (_ui.NameText.Get(name) is { } nt) Big(sb, name, r.X + 12, bar.Y + (int)MathF.Round((bar.Height - nt.LayoutHeight) / 2), top);
         if (_slots[slot] is not { } info)
         {
             Small(sb, T("―― Empty ――", "―― 空き ――"), r.X + 12, r.Y + 42, Dim);   // ― is in the game's own (Shift-JIS) font
             return;
         }
-        SmallRight(sb, $"{T("Map", "マップ")} {info.Map}", r.Right - 12, r.Y + 10, chosen ? top : Dim);
+        SmallRight(sb, $"{T("Map", "マップ")} {info.Map}", r.Right - 12, bar.Y + (bar.Height - 16) / 2, chosen ? top : Dim);
         Big(sb, Where(info), r.X + 12, r.Y + 32, Bright);
         Big(sb, PlayTime(info.Play), r.X + 12, r.Y + 55, Ui.PanelText);
         SmallRight(sb, info.Saved.ToString("yyyy/MM/dd HH:mm"), r.Right - 12, r.Y + 59, Dim);
