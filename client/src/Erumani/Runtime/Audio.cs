@@ -18,7 +18,7 @@ public sealed class Audio(GameFolder game) : IDisposable
     public string? CurrentBgm { get; private set; }
     public float SoundVolume { get; set; } = 0.8f;
     public bool Muted { get; set; }
-    /// <summary>Plays the CLICK "thunk" when a message is advanced (the one sound the player can turn off).</summary>
+    /// <summary>The CLICK "thunk" (confirming in menus, on the map, advancing text): the one sound the player can turn off.</summary>
     public bool MessageSound { get; set; } = true;
     bool _bgmOpen;
     int _pollFrames;
@@ -170,11 +170,11 @@ public sealed class Audio(GameFolder game) : IDisposable
         se?.Play(Math.Clamp(SoundVolume, 0, 1), 0, 0);
     }
 
-    public void Click() => PlaySe("CLICK.WAV");
+    public void Click() { if (MessageSound) PlaySe("CLICK.WAV"); }
     public void CancelSound() => PlaySe("CANCEL.WAV");
     public void Buzzer() => PlaySe("BUZZER.WAV");
     /// <summary>The text-advance thunk (CLICK.WAV), unless turned off in the options.</summary>
-    public void MessageAdvance() { if (MessageSound) Click(); }
+    public void MessageAdvance() => Click();
 
     /// <summary>Minimal RIFF/WAVE PCM loader; 8-bit unsigned samples are widened to 16-bit.</summary>
     static SoundEffect? Load(string? path)

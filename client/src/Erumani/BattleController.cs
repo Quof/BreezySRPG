@@ -55,7 +55,7 @@ public sealed class BattleController
 
     public MapOutcome Outcome { get; private set; }
     /// <summary>One-line state summary (screenshot mode writes it next to the PNG).</summary>
-    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} plan={_plan?.Unit.Name}/{_planWalking} queue={_enemyQueue.Count} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} wait={_wait}" +
+    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} plan={_plan?.Unit.Name}/{_planWalking} queue={_enemyQueue.Count} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} wait={_wait} fired={string.Join(",", _fired)} scene={_scene?.DebugPhase}" +
         string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
     public int? NextMap => _runner.NextMap;
     public bool EventRunning => _state_ == State.Events && _runner.Running;
@@ -300,12 +300,36 @@ public sealed class BattleController
             if (sl.Condition == 9 && ObjectPresent(o) && Targets(sl, actor) && UnitOf(o) is { } t && Adjacent(actor, t)) Queue(o, i);
     }
 
+    /// <summary>
+    /// First Attack (Before / After) slots fire for the first fight between the slot's unit and its target unit,
+    /// whichever side swings: most maps put them on the enemy, targeting the ally (e.g. SMAP_005), but map 1 puts
+    /// them on ルーティ and ジュナ, targeting ナス. Target "Nothing" (−1) = any opponent.
+    /// </summary>
     void AttackTriggers(BattleUnit attacker, BattleUnit target, int condition)
     {
-        if (attacker.Side != Side.Ally || target.MapObject < 0) return;
-        var o = _s.Map.Objects.First(x => x.Index == target.MapObject);
-        for (int i = 1; i <= 5; i++)
-            if (o.Slots[i - 1].Condition == condition && Targets(o.Slots[i - 1], attacker)) Queue(o, i);
+        void Check(BattleUnit owner, BattleUnit other)
+        {
+            if (owner.MapObject < 0) return;
+            var o = _s.Map.Objects.First(x => x.Index == owner.MapObject);
+            for (int i = 1; i <= 5; i++)
+                if (o.Slots[i - 1].Condition == condition && Targets(o.Slots[i - 1], other)) Queue(o, i);
+        }
+        Check(target, attacker);
+        Check(attacker, target);
+    }
+
+    /// <summary>Runs after the events queued by a "before" trigger (the fight they introduce).</summary>
+    Action? _afterEvents;
+
+    /// <summary>Queues the "First Attack (Before)" events; if any, the fight waits until they have played.</summary>
+    bool BeforeFight(IEnumerable<(BattleUnit Attacker, BattleUnit Target)> pairs, Action fight)
+    {
+        int queued = _events.Count;
+        foreach (var (a, d) in pairs) AttackTriggers(a, d, 10);
+        if (_events.Count == queued) return false;
+        _afterEvents = fight;
+        _state_ = State.Events;
+        return true;
     }
 
     void DeathTriggers()
@@ -394,6 +418,13 @@ public sealed class BattleController
         {
             var (_, sc) = _events.Dequeue();
             _runner.Start(sc);
+            return;
+        }
+        if (_afterEvents is { } fight)
+        {
+            _afterEvents = null;
+            if (CheckPoint()) return;   // the events may have changed the situation (map won, unit gone)
+            fight();
             return;
         }
         if (CheckPoint()) return;
@@ -666,7 +697,7 @@ public sealed class BattleController
     void DoCast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
     {
         var hostiles = _s.Field.SpellTargets(caster, m, aim.X, aim.Y).Where(t => Battlefield.Hostile(caster, t)).ToList();
-        foreach (var t in hostiles) AttackTriggers(caster, t, 10);
+        if (BeforeFight(hostiles.Select(t => (caster, t)), () => DoCast(caster, m, aim, item))) return;
         if (item is not null) { _state.AddItem(item.Index, -1); Popup($"{caster.Name}は{item.Name}{Word(58)}"); }   // "を使います"
         var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
         int mpBefore = caster.Mp;
@@ -843,7 +874,7 @@ public sealed class BattleController
 
     void DoAttack(BattleUnit atk, BattleUnit def)
     {
-        AttackTriggers(atk, def, 10);
+        if (BeforeFight(new[] { (atk, def) }, () => DoAttack(atk, def))) return;
         var before = HpSnapshot(new[] { atk, def });
         var r = _s.Field.Attack(atk, def);
         if (ShowScenes)

@@ -40,7 +40,7 @@ public sealed class BattleScene
     public sealed record Step(BattleUnit Actor, BattleUnit Target, Animation Anim, string Sheet,
         bool Hit, int Amount, bool Recovery, string? Caption = null, BattleUnit? Solo = null, int Pause = 10, int Hold = 15);
 
-    enum Phase { DimMap, PanelsIn, WipeIn, Pause, Anim, Hold, WipeOut, Gap, Death, EndHold, MapIn, Done }
+    enum Phase { DimMap, PanelsIn, WipeIn, Pause, Anim, Hold, WipeOut, Gap, Death, Vanish, EndHold, MapIn, Done }
 
     readonly Database _db;
     readonly Textures _tex;
@@ -57,10 +57,13 @@ public sealed class BattleScene
     Phase _phase = Phase.DimMap;
     (int Amount, bool Recovery, bool Miss, BattleUnit On, int Age)? _number;
     BattleUnit? _dying;
+    /// <summary>Units that have blinked out after their death message (no longer drawn).</summary>
+    readonly HashSet<BattleUnit> _gone = new();
     bool _actorFrozen;
 
     public Action<string>? PlaySound { get; set; }
     public bool Done => _phase == Phase.Done;
+    public string DebugPhase => $"{_phase}/{_phaseTicks} step={_stepIndex}";
     /// <summary>A death message is up, waiting for a click.</summary>
     public bool WaitingForClick => _phase == Phase.Death;
     /// <summary>True while only the map (darkened) should show under the scene: before and after it.</summary>
@@ -113,7 +116,7 @@ public sealed class BattleScene
     {
         if (_phase == Phase.Death)
         {
-            if (confirm) Go(Phase.WipeOut);
+            if (confirm) Go(Phase.Vanish);
             return;
         }
         int frames = fastForward ? 4 : 1;
@@ -180,6 +183,12 @@ public sealed class BattleScene
                     _dying = null;   // after a death message the next target still follows (area spells)
                     Go(_stepIndex + 1 < _steps.Count ? Phase.Gap : Phase.EndHold);
                 }
+                break;
+            // T22 death recording: after the click the defeated unit blinks (off/on each tick, 4 times), is gone, and
+            // the stage wipes out ~11 ticks later; the death message stays up meanwhile
+            case Phase.Vanish:
+                if (_phaseTicks == 8 && _dying is not null) _gone.Add(_dying);
+                if (_phaseTicks >= 19) Go(Phase.WipeOut);
                 break;
             case Phase.Gap: if (_phaseTicks >= 14) Go(Phase.WipeIn); break;   // the panels already show the next step's units
             case Phase.EndHold: if (_phaseTicks >= 13) Go(Phase.MapIn); break;
@@ -261,7 +270,7 @@ public sealed class BattleScene
             _ => StageWidth,
         };
         if (visible != 0) DrawStage(sb, visible);
-        if (_phase == Phase.Death && _dying is not null) DrawDeathMessage(sb, _dying);
+        if (_phase is Phase.Death or Phase.Vanish && _dying is not null) DrawDeathMessage(sb, _dying);
         else
         {
             float alpha = _phase == Phase.PanelsIn ? (_phaseTicks + 1) / 4f : 1f;
@@ -280,10 +289,11 @@ public sealed class BattleScene
         sb.GraphicsDevice.ScissorRectangle = clip;
         if (Background() is { } back) sb.Draw(back, Vector2.Zero, Color.White);
         var st = Current;
-        bool showActor = st is not null && (_phase == Phase.Anim || (_actorFrozen && _phase is Phase.Hold or Phase.Death or Phase.WipeOut));
+        bool showActor = st is not null && (_phase == Phase.Anim || (_actorFrozen && _phase is Phase.Hold or Phase.Death or Phase.Vanish or Phase.WipeOut));
         foreach (var (u, right) in new[] { (StageRight, true), (StageLeft, false) })
         {
-            if (u is null) continue;
+            if (u is null || _gone.Contains(u)) continue;
+            if (_phase == Phase.Vanish && u == _dying && _phaseTicks % 2 == 0) continue;   // blinking out
             bool inAnim = showActor && st!.Actor == u && !st.Anim.IsSpell;
             if (!inAnim) DrawIdle(sb, u, right);
         }

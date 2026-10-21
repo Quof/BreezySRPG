@@ -63,7 +63,7 @@ public sealed class OptionsScreen
                 var next = Cycle(fonts.ToArray(), _s.ResolveSoundFont(_gameRoot), d);
                 _s.SoundFont = next == Settings.BuiltIn ? null : Path.GetFileName(next);
             }),
-            new("Text advance sound", () => OnOff(_s.MessageSound), _ => _s.MessageSound = !_s.MessageSound),
+            new("Confirm sound (thunk)", () => OnOff(_s.MessageSound), _ => _s.MessageSound = !_s.MessageSound),
             new("— Gameplay —", () => ""),
             new("Battle animations", () => OnOff(_s.BattleScenes), _ => _s.BattleScenes = !_s.BattleScenes),
             new("Fast-forward key", () => _s.FastForwardMode == FastForwardMode.Hold ? "Hold" : "Toggle",

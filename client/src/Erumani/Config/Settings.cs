@@ -33,7 +33,7 @@ public sealed class Settings
     public int SoundVolume { get; set; } = 80;
     public MusicEngine Music { get; set; } = MusicEngine.SoundFont;
     public string? SoundFont { get; set; }                // null = the built-in GeneralUser GS; else a file name in soundfonts/ or a full path
-    public bool MessageSound { get; set; } = true;        // the CLICK.WAV "thunk" when advancing text (the only sound option)
+    public bool MessageSound { get; set; } = true;        // the CLICK.WAV "thunk" on every confirm and text advance (the only sound option)
 
     // gameplay
     public bool BattleScenes { get; set; } = true;
