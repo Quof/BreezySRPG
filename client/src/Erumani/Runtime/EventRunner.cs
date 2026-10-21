@@ -25,7 +25,8 @@ public sealed class EventRunner
     readonly Random _rng = new();
     readonly Stack<(List<ScriptNode> Nodes, int Pc)> _stack = new();
 
-    int _face, _waitFrames, _titleFrames;
+    int _face;
+    double _waitMs, _titleMs;
     bool _faceRight, _faceFlip, _waitButton, _waitFx, _waitMoves, _waitPan;
 
     public string Name { get; private set; } = "";
@@ -35,12 +36,12 @@ public sealed class EventRunner
     public string[]? Choice { get; private set; }
     public int ChoiceIndex { get; private set; }
     public EventEnd End { get; private set; }
-    public bool Running => _stack.Count > 0 || _titleFrames > 0;
+    public bool Running => _stack.Count > 0 || _titleMs > 0;
     /// <summary>Waiting on a "button input" command.</summary>
     public bool WaitingForButton => _waitButton;
     /// <summary>What the interpreter is waiting on (screenshot mode writes it next to the PNG).</summary>
-    public string DebugState => $"msg={Message is not null} choice={Choice is not null} wait={_waitFrames} button={_waitButton} fx={_waitFx}/{_fx.Busy} " +
-        $"moves={_waitMoves} pan={_waitPan} title={_titleFrames} stack={_stack.Count} end={End}";
+    public string DebugState => $"msg={Message is not null} choice={Choice is not null} wait={_waitMs:0} button={_waitButton} fx={_waitFx}/{_fx.Busy} " +
+        $"moves={_waitMoves} pan={_waitPan} title={_titleMs:0} stack={_stack.Count} end={End}";
 
     /// <summary>Mouse hover over a choice line.</summary>
     public void HoverChoice(int index)
@@ -97,12 +98,12 @@ public sealed class EventRunner
     void SkipBlocks()
     {
         Message = null;
-        _waitFrames = 0;
+        _waitMs = 0;
         _waitButton = false;
         _waitPan = false;
         if (_waitFx) { _fx.Complete(); _waitFx = false; }
         if (_waitMoves) { _map.FinishMoves(); _waitMoves = false; }
-        if (_titleFrames > 1) _titleFrames = 1;
+        if (_titleMs > 0) { _fx.Complete(); _titleMs = Math.Min(_titleMs, 1); }
     }
 
     public void Update(EventInput input)
@@ -131,14 +132,17 @@ public sealed class EventRunner
             LastMessage = null;
             _stack.Push((body, 0));
         }
-        if (_waitFrames > 0) { _waitFrames -= input.FastForward ? 4 : 1; if (_waitFrames > 0) return; }
+        if (_waitMs > 0) { _waitMs -= GameClock.FrameMs; if (_waitMs > 0) return; }
         if (_waitButton) { if (!input.Confirm) return; _waitButton = false; }
         if (_waitFx) { if (_fx.Busy) return; _waitFx = false; }
         if (_waitMoves) { if (_map.MovesRunning || _map.Panning) return; _waitMoves = false; }
         if (_waitPan) { if (_map.Panning) return; _waitPan = false; }
-        if (_titleFrames > 0)
+        if (_titleMs > 0)
         {
-            if (--_titleFrames > 0) return;
+            if (_fx.Busy) return;   // the erase first
+            _titleMs -= GameClock.FrameMs;
+            if (_titleMs <= 500) _audio.PlayBgm("");
+            if (_titleMs > 0) return;
             Finish(EventEnd.ReturnToTitle);
             return;
         }
@@ -152,7 +156,7 @@ public sealed class EventRunner
             if (!Execute(nodes[pc])) continue;
             // a message right before a character choice stays up under it: the choice comes at once (FUN_0040d18c)
             if (nodes[pc] is MessageNode && pc + 1 < nodes.Count && nodes[pc + 1] is ChoiceNode) { Message = null; continue; }
-            if (_titleFrames > 0) return;
+            if (_titleMs > 0) return;
             if (_skipping && Choice is null) { SkipBlocks(); continue; }
             _skipping = false;
             return;
@@ -224,10 +228,13 @@ public sealed class EventRunner
                 _state.Gold = Math.Clamp(_state.Gold + (c.U16(0) == 1 ? c.I32(2) : -c.I32(2)), 0, 9_999_999);   // FUN_0040aef0 / FUN_0040af20
                 return false;
             case Op.ScreenDisplay:
+                _fx.Display(c.Payload[0], c.Payload[1]);   // FUN_00422ecc
+                _waitFx = _fx.Busy;
+                return _waitFx;
             case Op.EraseScreen:
-                _fx.StartFade(c.Op == Op.EraseScreen, c.Payload[0], c.Payload[1]);
-                _waitFx = true;
-                return true;
+                _fx.Erase(c.Payload[0], c.Payload[1]);     // FUN_004231c0
+                _waitFx = _fx.Busy;
+                return _waitFx;
             case Op.PictureDisplay:
                 // a wipe blocks the script while it runs, as the exe's loop does
                 _fx.ShowPicture(c.Str(6), c.Payload[1], c.Payload[0], c.Payload[2] == 1);
@@ -281,8 +288,8 @@ public sealed class EventRunner
                 _waitButton = true;
                 return true;
             case Op.Wait:
-                _waitFrames = c.U16(0) * 6;   // tenths of a second at 60 fps
-                return true;
+                _waitMs = c.U16(0) * 100;   // tenths of a second, on the clock (FUN_004254f4)
+                return _waitMs > 0;
             case Op.SelectMap:
                 _state.NextMap = c.U16(0);   // save header 0x010
                 Trace($"next map = {_state.NextMap}");
@@ -291,11 +298,11 @@ public sealed class EventRunner
             case Op.MapComplete: Finish(c.U16(0) == 1 ? EventEnd.MapWon : EventEnd.MapLost); return true;
             case Op.GameOver: Finish(EventEnd.GameOver); return true;
             case Op.ReturnToTitle:
-                // the original erases the screen, stops the music and goes back to the title 1.5 s later (2.5 s in all)
+                // FUN_0040d18c: the screen is erased with the fade (effect 6); 1 s after that the music stops, and the
+                // title comes 0.5 s later
                 _stack.Clear();
-                _fx.StartFade(true, 0, 0);
-                _audio.PlayBgm("");
-                _titleFrames = 150;
+                _fx.Erase(0, 6);
+                _titleMs = 1500;
                 return true;
             default:
                 Trace($"unhandled {c.Op}");
@@ -307,7 +314,7 @@ public sealed class EventRunner
     {
         End = how;
         _stack.Clear();
-        _titleFrames = 0;
+        _titleMs = 0;
         if (how == EventEnd.EndEvent) _fx.ErasePicture(0);
         Trace($"end: {how}");
     }

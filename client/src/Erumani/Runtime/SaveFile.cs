@@ -45,6 +45,9 @@ public sealed class SaveFile
     public int Gold => I32(0x534);
     /// <summary>The music playing when the game was saved (header 0x53C, 48 bytes of Shift-JIS).</summary>
     public string Bgm => Encoding.GetEncoding(932).GetString(Raw, 0x53C, 48).Split('\0')[0];
+    /// <summary>The screen tone when the game was saved, R / G / B / vividness in % (header 0x56C; FUN_0040bfbc puts it back).</summary>
+    public int[] Tone => I32(0x56C) == 0 && I32(0x570) == 0 && I32(0x574) == 0 && I32(0x578) == 0
+        ? new[] { 100, 100, 100, 100 } : new[] { I32(0x56C), I32(0x570), I32(0x574), I32(0x578) };
 
     /// <summary>Copies the save into the game state: switches, variables, inventory, gold and the roster.</summary>
     public void ApplyTo(GameState s)
@@ -80,7 +83,8 @@ public sealed class SaveFile
     /// roster records the client knows are written; everything else comes from <paramref name="template"/>
     /// (the slot's old file, else the last save loaded, else zeros).
     /// </summary>
-    public static SaveFile ForCamp(GameState s, Database db, int mapIndex, string bgm, byte[]? template, int? nextMap = null)
+    /// <param name="tone">the screen's tone now (the exe writes the palette's, FUN_0040be6c); null keeps the template's (100 %)</param>
+    public static SaveFile ForCamp(GameState s, Database db, int mapIndex, string bgm, byte[]? template, int? nextMap = null, int[]? tone = null)
     {
         var f = new SaveFile(template is { Length: Size } ? (byte[])template.Clone() : new byte[Size]);
         f.I32(0x000, 1);
@@ -102,7 +106,8 @@ public sealed class SaveFile
         var enc = Encoding.GetEncoding(932).GetBytes(bgm);
         Array.Copy(enc, name, Math.Min(enc.Length, 47));
         name.CopyTo(f.Raw, 0x53C);
-        if (f.I32(0x56C) == 0) for (int i = 0; i < 4; i++) f.I32(0x56C + i * 4, 100);   // screen tone 100 %
+        if (tone is { Length: 4 }) for (int i = 0; i < 4; i++) f.I32(0x56C + i * 4, tone[i]);
+        else if (f.I32(0x56C) == 0) for (int i = 0; i < 4; i++) f.I32(0x56C + i * 4, 100);   // screen tone 100 %
         for (int i = 0; i < 250; i++)
             BinaryPrimitives.WriteInt16LittleEndian(f.Raw.AsSpan(0x5DC + i * 2), (short)Math.Clamp(s.Variables[i], short.MinValue, short.MaxValue));
 
@@ -203,9 +208,9 @@ public sealed class SaveFile
     /// with spawned objects' in-use word cleared and fired event slots flagged (both as in SAVE1/SAVE3).
     /// </summary>
     public static SaveFile ForBattle(GameState s, Database db, int mapIndex, string bgm, int phase, string mapPath,
-        IEnumerable<Srpg95.Rules.BattleUnit> units, IEnumerable<(int Object, int Slot)> fired, byte[]? template)
+        IEnumerable<Srpg95.Rules.BattleUnit> units, IEnumerable<(int Object, int Slot)> fired, byte[]? template, int[]? tone = null)
     {
-        var f = ForCamp(s, db, mapIndex, bgm, template, s.NextMap);
+        var f = ForCamp(s, db, mapIndex, bgm, template, s.NextMap, tone);
         f.I32(0x000, 0);
         f.I32(0x20C, phase);
         Array.Clear(f.Raw, UnitOff, MapUnits * UnitSize);

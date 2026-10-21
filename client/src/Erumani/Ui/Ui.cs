@@ -228,14 +228,16 @@ public sealed class Ui : IDisposable
         sb.Draw(v, new Vector2(624, 16), new Rectangle(right ? 16 : 48, 0, 16, 448), Color.White);
     }
 
-    /// <summary>Mouse cursor from SYSTEM.BMP: arrow (4 frames at y 0) or hourglass (4 frames at y 32).</summary>
+    /// <summary>
+    /// The mouse pointer from SYSTEM.BMP (FUN_00409db8): the arrow (y 0) or the hourglass (y 32), 32×32 cells from x 128
+    /// drawn with their corner at the pointer; the four frames change every 2 game ticks.
+    /// </summary>
     public void Cursor(SpriteBatch sb, Point pos, bool busy, int frame)
     {
         var sys = _tex.Get("SYSTEM.BMP");
         if (sys is null) return;
-        int f = frame / 8 % 4;
-        if (busy) sb.Draw(sys, new Vector2(pos.X - 9, pos.Y - 8), new Rectangle(128 + f * 32, 32, 18, 17), Color.White);
-        else sb.Draw(sys, pos.ToVector2(), new Rectangle(128 + f * 32, 0, 20, 20), Color.White);
+        int f = frame / 4 % 4;
+        sb.Draw(sys, pos.ToVector2(), new Rectangle(128 + f * 32, busy ? 32 : 0, 32, 32), Color.White);
     }
 
     /// <summary>Panel textures: 64x64 tiles in SYSTEM.BMP's bottom row (verified for green).</summary>

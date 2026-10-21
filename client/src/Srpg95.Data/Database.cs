@@ -132,6 +132,8 @@ public sealed class Database
     public bool Counterattacks { get; init; } = true;
     /// <summary>GAME.DAT [3]: an attacker 3+ speed faster strikes twice (off in えるまに).</summary>
     public bool DoubleAttacks { get; init; }
+    /// <summary>GAME.DAT [4]: battle animations play slower by this many percent (the tick is 33 + 33·[4]/100 ms; 0 in えるまに).</summary>
+    public int SceneSlowdown { get; init; }
 
     delegate T RecordParser<T>(int index, ReadOnlySpan<byte> record);
 
@@ -162,6 +164,7 @@ public sealed class Database
             SplitBackgrounds = Bin.I32(g.ReadData("GAME.DAT"), 4) == 1,
             Counterattacks = Bin.I32(g.ReadData("GAME.DAT"), 8) != 0,
             DoubleAttacks = Bin.I32(g.ReadData("GAME.DAT"), 12) != 0,
+            SceneSlowdown = Bin.I32(g.ReadData("GAME.DAT"), 16),
         };
     }
 }

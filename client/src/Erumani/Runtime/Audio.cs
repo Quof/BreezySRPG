@@ -114,15 +114,24 @@ public sealed class Audio(GameFolder game) : IDisposable
         return sb.ToString();
     }
 
+    // HarmonyGetMusicLooping: whether the current music has played to its end at least once (COMPLETE!! waits for it)
+    double _bgmLengthMs;
+    readonly System.Diagnostics.Stopwatch _bgmClock = new();
+    public bool BgmLooped => CurrentBgm is not null && _bgmLengthMs > 0 && _bgmClock.Elapsed.TotalMilliseconds >= _bgmLengthMs;
+
     public void PlayBgm(string file)
     {
         string? next = file == "(OFF)" || file.Length == 0 ? null : file;
         if (string.Equals(next, CurrentBgm, StringComparison.OrdinalIgnoreCase) && (_bgmOpen || _stream is not null)) return;
         StopBgm();
         CurrentBgm = next;
-        if (next is null || Muted) return;
+        _bgmLengthMs = 0;
+        if (next is null) return;
         var path = game.Find("BGM/" + next);
         if (path is null) return;
+        _bgmLengthMs = LengthMs(path);   // also while muted, so scripted runs keep the same timing
+        _bgmClock.Restart();
+        if (Muted) return;
         bool midi = path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase);
         if (midi && _sequencer is not null)
         {
@@ -140,6 +149,27 @@ public sealed class Audio(GameFolder game) : IDisposable
         Mci($"setaudio erumani_bgm volume to {(int)(_musicVolume * 1000)}");
         Mci("play erumani_bgm from 0");
         _bgmOpen = true;
+    }
+
+    /// <summary>A BGM file's playing time: a MIDI file's last event, a WAV's data at its byte rate.</summary>
+    static double LengthMs(string path)
+    {
+        try
+        {
+            if (path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase)) return new MidiFile(path).Length.TotalMilliseconds;
+            var b = File.ReadAllBytes(path);
+            int pos = 12, byteRate = 0;
+            while (pos + 8 <= b.Length)
+            {
+                string id = System.Text.Encoding.ASCII.GetString(b, pos, 4);
+                int len = Bin.I32(b, pos + 4);
+                if (id == "fmt ") byteRate = Bin.I32(b, pos + 16);
+                else if (id == "data" && byteRate > 0) return len * 1000.0 / byteRate;
+                pos += 8 + len + (len & 1);
+            }
+        }
+        catch (Exception) { }   // an unreadable file just has no known length
+        return 0;
     }
 
     void StopBgm()

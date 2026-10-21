@@ -29,8 +29,16 @@ public sealed class ErumaniGame : Game
     RenderTarget2D _screen = null!;
     /// <summary>The frame before a wipe started: what the wipe takes away (ScreenEffects.Transition).</summary>
     RenderTarget2D _snapshot = null!;
+    /// <summary>The frame after the palette's brightness and tone (see <see cref="Grade"/>).</summary>
+    Texture2D _graded = null!;
+    /// <summary>What is shown: the graded frame where the shake puts it, the client's own windows over it.</summary>
+    RenderTarget2D _final = null!;
+    readonly Color[] _gradePixels = new Color[VirtualWidth * VirtualHeight];
     readonly GameState _state = new();
-    ScreenEffects _fx = new();
+    /// <summary>The screen's effects for the whole run: brightness and tone carry over from screen to screen as the palette does.</summary>
+    readonly ScreenEffects _fx = new();
+    /// <summary>What happens once the current fade-out has gone dark (title and camp choices, the logos).</summary>
+    Action? _afterFade;
     MapSession? _session;
     EventRunner? _runner;
     BattleController? _battle;
@@ -55,12 +63,6 @@ public sealed class ErumaniGame : Game
     int _activeFrames, _leftHeld;
     readonly Queue<string> _choose = new();
 
-    static readonly BlendState Multiply = new()
-    {
-        ColorSourceBlend = Blend.DestinationColor, ColorDestinationBlend = Blend.Zero,
-        AlphaSourceBlend = Blend.One, AlphaDestinationBlend = Blend.Zero,
-    };
-
     public ErumaniGame(GameFolder folder, Options opts)
     {
         _folder = folder;
@@ -74,7 +76,9 @@ public sealed class ErumaniGame : Game
         IsMouseVisible = false;   // the SYSTEM.BMP cursor is drawn instead
         Window.AllowUserResizing = true;
         IsFixedTimeStep = true;
-        TargetElapsedTime = TimeSpan.FromSeconds(1.0 / 60);
+        // two frames per game tick: 33 ms at start-up, 30 ms on maps and camps (GameClock)
+        TargetElapsedTime = TimeSpan.FromMilliseconds(GameClock.FrameMs);
+        GameClock.Changed += () => TargetElapsedTime = TimeSpan.FromMilliseconds(GameClock.FrameMs);
         _shotAdvance = opts.Advance;
         foreach (var tok in (opts.Keys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _script.Enqueue(tok.ToLowerInvariant());
         foreach (var c in (opts.Choose ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _choose.Enqueue(c.ToLowerInvariant());
@@ -95,15 +99,66 @@ public sealed class ErumaniGame : Game
         _sb = new SpriteBatch(GraphicsDevice);
         _screen = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
         _snapshot = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+        _graded = new Texture2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color);
+        _final = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
 
         _mapIndices = Directory.GetFiles(Path.Combine(_folder.Root, "MAP"), "SMAP_*.DAT")
             .Select(p => int.Parse(Path.GetFileNameWithoutExtension(p)[5..]) - 1).Order().ToArray();
         SaveFile.Directory = _opts.SaveDir;
         int start = _opts.StartMap ?? _db.StartMap;
         if (_opts.LoadSlot is int slot && SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } save) { ApplySave(save); return; }
-        if (_opts.CampBefore is int camp) { OpenCamp(Math.Max(0, Array.IndexOf(_mapIndices, camp))); return; }
-        if (_opts.StartMap is null && _opts.Event is null) { OpenTitle(); return; }
+        if (_opts.CampBefore is int camp) { OpenCamp(Math.Max(0, Array.IndexOf(_mapIndices, camp)), fromMap: true); return; }
+        if (_opts.StartMap is null && _opts.Event is null)
+        {
+            if (_opts.Screenshot is null || _script.Contains("logos")) OpenLogos(); else OpenTitle();
+            return;
+        }
         LoadMap(Math.Max(0, Array.IndexOf(_mapIndices, start)));
+    }
+
+    // ---------------- start-up logos (FUN_004256b8, FUN_00425750, FUN_004257b0) ----------------
+    // A normal start shows the bitmaps LOGO1 (ASCII) and LOGO2 (アスキーツクールシリーズ) from SRPGEXEC.EXE's own
+    // resources, each fading in 10 % a tick, held until its 51st tick (or a click once fully bright), fading out the same
+    // way; then the title. (The editor's test play, started with '@', skips them.)
+
+    readonly List<Texture2D> _logos = new();
+    int _logo = -1, _logoTick, _logoFrame;
+
+    void OpenLogos()
+    {
+        string? exe = _folder.Find("SRPGEXEC.EXE");
+        foreach (var name in new[] { "LOGO1", "LOGO2" })
+            if (exe is not null && ExeResources.Bitmap(exe, name) is { } bmp)
+            {
+                var t = new Texture2D(GraphicsDevice, bmp.Width, bmp.Height, false, SurfaceFormat.Color);
+                t.SetData(bmp.ToRgba(false));
+                _logos.Add(t);
+            }
+        if (_logos.Count == 0) { OpenTitle(); return; }
+        _logo = 0;
+        StartLogo();
+    }
+
+    void StartLogo()
+    {
+        _logoTick = _logoFrame = 0;
+        _fx.SetTone(100, 100, 100, 100);
+        _fx.FadeIn(0, 10);
+    }
+
+    void UpdateLogos(bool click)
+    {
+        if (_fx.Dark)
+        {
+            if (++_logo < _logos.Count) { StartLogo(); return; }
+            _logo = -1;
+            foreach (var t in _logos) t.Dispose();
+            _logos.Clear();
+            OpenTitle();
+            return;
+        }
+        if ((_logoTick > 50 || click) && _fx.Brightness == 100 && !_fx.FadingIn) _fx.FadeOut(10);
+        if (_logoFrame++ % 2 == 0) _logoTick++;
     }
 
     void OpenTitle()
@@ -113,22 +168,38 @@ public sealed class ErumaniGame : Game
         _runner = null;
         _battle = null;
         _pendingMap = _pendingCamp = null;
-        _pendingTitle = false;
+        _gameOver = -1;
         _audio.PlayBgm("");
         _backlog.Clear();
+        // FUN_00421cf4: the tone back to normal, the title faded in 10 % a tick; each choice fades it out the same way
+        // first (FUN_00422340 → FUN_004222b8 / FUN_004222f8 / FUN_00422298)
+        _fx.ResetForMap();
+        _fx.SetTone(100, 100, 100, 100);
+        _fx.FadeIn(0, 10);
         _title = new TitleScreen(_db, _folder, _tex, _ui)
         {
-            NewGame = () => { _state.Reset(); LoadMap(Math.Max(0, Array.IndexOf(_mapIndices, _db.StartMap))); },
-            Loaded = ApplySave,
+            NewGame = () => AfterFade(10, () => { _state.Reset(); LoadMap(Math.Max(0, Array.IndexOf(_mapIndices, _db.StartMap))); }),
+            Loaded = save => AfterFade(10, () => ApplySave(save)),
             Options = OpenOptions,
-            Quit = Exit,
+            Quit = () => AfterFade(10, Exit),
         };
         Window.Title = "Erumani";
         _status = "";
     }
 
-    /// <summary>The camp before map <paramref name="pos"/> (index into the map list).</summary>
-    void OpenCamp(int pos)
+    /// <summary>Fades the screen out, <paramref name="step"/> % a tick, then does <paramref name="then"/>.</summary>
+    void AfterFade(int step, Action then)
+    {
+        _fx.FadeOut(step);
+        _afterFade = then;
+    }
+
+    /// <summary>
+    /// The camp before map <paramref name="pos"/> (index into the map list). Coming from a map (FUN_0041d5e4) or a new
+    /// game, the tone goes back to normal, the camp music starts and the game tick becomes 30 ms; the camp fades in
+    /// 10 % a tick either way, and its 次のステージ / ロード / ゲーム終了 fade it out the same way first.
+    /// </summary>
+    void OpenCamp(int pos, bool fromMap)
     {
         _mapPos = pos;
         int idx = _mapIndices[pos];
@@ -139,26 +210,44 @@ public sealed class ErumaniGame : Game
         _runner = null;
         _battle = null;
         _pendingMap = null;
+        _fx.ResetForMap();
+        _fx.SetTone(100, 100, 100, 100);
+        _fx.FadeIn(0, 10);
         _camp = new Camp.CampScreen(_db, _folder, _tex, _ui, _state, map, idx)
         {
-            StartNext = () => LoadMap(pos, fromCamp: true),
-            Loaded = ApplySave,
-            Quit = Exit,
+            StartNext = () => AfterFade(10, () => LoadMap(pos, fromCamp: true)),
+            Loaded = save => AfterFade(10, () => ApplySave(save)),
+            Quit = () => AfterFade(10, Exit),
         };
-        _audio.PlayBgm(_camp.Bgm);
+        if (fromMap)
+        {
+            _audio.PlayBgm(_camp.Bgm);
+            GameClock.SetTick(30);
+        }
         Window.Title = $"Erumani — camp before SMAP_{idx + 1:000} {map.Name}";
         _status = "";
     }
 
-    /// <summary>Loads a SAVEn.DAT: camp saves reopen their camp; battle saves restart their map with the saved army
-    /// (restoring the battle itself comes later).</summary>
+    /// <summary>
+    /// Loads a SAVEn.DAT (FUN_0040bfbc): the music stops, camp saves reopen their camp and battle saves their map with
+    /// the saved army; the saved tone comes back, the screen stays black for 800 ms, then the saved music plays and the
+    /// screen fades in (a camp 10 % a tick, a map from −20 by 20).
+    /// </summary>
     void ApplySave(SaveFile save)
     {
         save.ApplyTo(_state);
+        _audio.PlayBgm("");
         int pos = Math.Max(0, Array.IndexOf(_mapIndices, save.MapIndex));
-        if (save.AtCamp) OpenCamp(pos);
+        if (save.AtCamp) OpenCamp(pos, fromMap: false);
         else LoadMap(pos, save);
+        var tone = save.Tone;
+        _fx.SetTone(tone[0], tone[1], tone[2], tone[3]);
+        _fx.FadeIn(save.AtCamp ? 0 : -20, save.AtCamp ? 10 : 20, delayMs: 800);
+        _bgmAfterHold = save.Bgm;
     }
+
+    /// <summary>The music a loaded save starts once its 800 ms of black are over.</summary>
+    string? _bgmAfterHold;
 
     void LoadMap(int pos, SaveFile? resume = null, bool fromCamp = false)
     {
@@ -169,15 +258,22 @@ public sealed class ErumaniGame : Game
         var map = MapData.Load(_folder.MapPath(idx));
         _state.MapIndex = idx;
         if (resume is null) _state.NextMap = (idx + 1) % 100;   // FUN_0041d5e4: the following map unless a "Next Map" says otherwise
-        _fx = new ScreenEffects();
+        // FUN_0041dc34: pictures go, brightness and tone stay; the screen fades in from −20 by 20 a tick (one black tick,
+        // then 20 % steps) while the opening already runs; the tick becomes 30 ms and the mouse goes to (320, 256)
+        _fx.ResetForMap();
+        if (resume is null)
+        {
+            _fx.FadeIn(-20, 20);
+            GameClock.SetTick(30);
+            WarpMouse(new Point(320, 256));
+        }
         _session = new MapSession(map, _db, _state, _tex, _folder.Chipset(map.Tileset));
         _runner = new EventRunner(_state, _session, _audio, _fx) { Shown = _backlog.Add };
         if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
-        _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex);
+        _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex, _fx) { MusicLooped = () => _audio.BgmLooped };
         // the exe stops the music when a map loads (FUN_0041d5e4 plays ""), except that a camp's music carries on into
-        // the opening; the player-turn music comes with PLAYER TURN. A battle save brings back the music it saved.
-        if (resume is not null) _audio.PlayBgm(resume.Bgm is { Length: > 0 } b ? b : map.Bgm[1]);
-        else if (!fromCamp) _audio.PlayBgm("");
+        // the opening; the player-turn music comes with PLAYER TURN. A battle save's music comes after its hold (ApplySave).
+        if (resume is null && !fromCamp) _audio.PlayBgm("");
         // developer options (--level, --give): set up situations for testing
         if (_opts.Level is int lv)
             foreach (var u in _session.Field.Units.Where(u => u.Side == Srpg95.Rules.Side.Ally && u.Level < lv)) u.Level = lv;
@@ -202,8 +298,10 @@ public sealed class ErumaniGame : Game
         _battle.SaveRequested = n =>
         {
             string path = SaveFile.PathFor(_folder, n);
+            var tone = _fx.Tone;
             SaveFile.ForBattle(_state, _db, idx, _audio.CurrentBgm ?? map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
-                _session.Field.Units, _battle.FiredSlots, SaveFile.Load(path)?.Raw ?? _state.LastSave).Write(path);
+                _session.Field.Units, _battle.FiredSlots, SaveFile.Load(path)?.Raw ?? _state.LastSave,
+                new[] { (int)tone.X, (int)tone.Y, (int)tone.Z, (int)tone.W }).Write(path);
         };
         _battle.LoadRequested = n => { if (SaveFile.Load(SaveFile.PathFor(_folder, n)) is not { } f) return false; ApplySave(f); return true; };
         _battle.QuitRequested = Exit;
@@ -393,39 +491,51 @@ public sealed class ErumaniGame : Game
             }
         }
 
+        // screens that are only pictures (logos, game over), a loaded save's hold, a choice's fade-out: nothing else runs
+        if (_logo >= 0 || _gameOver >= 0 || _fx.Holding || _afterFade is not null)
+        {
+            _frame++;
+            _audio.Update();
+            bool press = battleInput.Click || battleInput.Confirm;
+            if (_logo >= 0) UpdateLogos(press);
+            else if (_gameOver >= 0) UpdateGameOver(press);
+            _fx.Update();
+            if (!_fx.Holding && _bgmAfterHold is { } bgm) { _bgmAfterHold = null; _audio.PlayBgm(bgm); }
+            if (_afterFade is { } after && _fx.Dark) { _afterFade = null; after(); }
+            EndUpdate(gameTime, k, m);
+            return;
+        }
+
         if (_title is not null)
         {
             _frame++;
             _audio.Update();
+            _fx.Update();
             _title.Update(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && mouseMoved }, _mouseVirtual);
-            _prevKeys = k;
-            _prevMouse = m;
-            base.Update(gameTime);
+            EndUpdate(gameTime, k, m);
             return;
         }
-        if (_pendingTitle && battleInput.Confirm) { OpenTitle(); return; }
         if (_camp is not null)
         {
             _frame++;
             _audio.Update();
+            _fx.Update();
             _camp.Update(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && mouseMoved }, _mouseVirtual);
-            _prevKeys = k;
-            _prevMouse = m;
-            base.Update(gameTime);
+            EndUpdate(gameTime, k, m);
             return;
         }
 
-        if (_pendingCamp is int pc && (battleInput.Confirm || _autoAdvance && !_fx.Busy))
+        // a map's end has faded the screen out (BattleController): straight on to the next camp or map (FUN_0041d5e4)
+        if (_pendingCamp is int pc)
         {
             _pendingCamp = null;
-            _autoAdvance = false;
-            OpenCamp(pc);
+            OpenCamp(pc, fromMap: true);
+            EndUpdate(gameTime, k, m);
             return;
         }
-        if (_pendingMap is int pm && (battleInput.Confirm || _autoAdvance && !_fx.Busy))
+        if (_pendingMap is int pm)
         {
             _pendingMap = null;
-            _autoAdvance = false;
             LoadMap(pm);
             input = input with { Confirm = false };
             battleInput = battleInput with { Confirm = false, Click = false };
@@ -459,16 +569,23 @@ public sealed class ErumaniGame : Game
         // cutscene skip: "skip" opens the prompt on the next message, "skipyes" answers はい
         if (_script.TryPeek(out var sk) && sk == "skip" && _runner is { Running: true, Message: not null }) { _script.Dequeue(); OpenSkipPrompt(); }
         if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _skipPrompt = null; _runner?.Skip(); }
-        // "wipe+N": the shot N frames into the next screen wipe
+        // "wipe+N": the shot N frames into the next screen wipe; "fx+N" into the next blocking effect of any kind
         var wipeTok = _script.FirstOrDefault(s => s.StartsWith("wipe+"));
         if (wipeTok is not null && _fx.Transition != 0)
         {
             _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, wipeTok)));
             _shotAt = _frame + int.Parse(wipeTok[5..]);
         }
+        var fxTok = _script.FirstOrDefault(s => s.StartsWith("fx+"));
+        if (fxTok is not null && _fx.Busy)
+        {
+            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, fxTok)));
+            _shotAt = _frame + int.Parse(fxTok[3..]);
+        }
         bool idle = _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null };
         _idleFrames = idle ? _idleFrames + 1 : 0;
-        if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || ++_scriptWait < 10) return bi;
+        if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
+            || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
@@ -544,8 +661,6 @@ public sealed class ErumaniGame : Game
                 // has one and the army isn't empty; the army was saved into the roster (BattleController.End)
                 int next = _state.NextMap;
                 _status = "";
-                _autoAdvance = true;
-                _fx.StartFade(true, 0, 6);   // the screen fades out first (brightness −5 a tick)
                 if (Array.IndexOf(_mapIndices, next) is var p and >= 0)
                 {
                     var nextMap = MapData.Load(_folder.MapPath(next));
@@ -559,9 +674,8 @@ public sealed class ErumaniGame : Game
                 else _status = $"SMAP_{next + 1:000} doesn't exist";
                 break;
             case MapOutcome.GameOver:
-                _audio.PlayBgm(_session!.Map.Bgm[7]);    // game over
                 _status = "";
-                _pendingTitle = true;   // after GAMEOVER.BMP, a click goes back to the title
+                OpenGameOver();
                 break;
             case MapOutcome.ReturnToTitle:
                 _status = "";
@@ -592,8 +706,40 @@ public sealed class ErumaniGame : Game
     }
 
     int? _pendingMap, _pendingCamp;
-    bool _autoAdvance;
-    bool _pendingTitle;
+
+    // ---------------- game over (FUN_00421858) ----------------
+    // GAMEOVER.BMP over the whole screen with the map's BGM slot 7, the tone back to normal, fading in 5 % a tick; a
+    // click once it's bright fades it out the same way; then 2 s of black, the music stops, and the title 0.5 s later.
+
+    int _gameOver = -1;   // 0 shown, 1 fading out, 2 black
+    double _gameOverMs;
+
+    void OpenGameOver()
+    {
+        _gameOver = 0;
+        _fx.ResetForMap();
+        _fx.SetTone(100, 100, 100, 100);
+        _fx.FadeIn(0, 5);
+        if (_session is not null) _audio.PlayBgm(_session.Map.Bgm[7]);
+    }
+
+    void UpdateGameOver(bool click)
+    {
+        switch (_gameOver)
+        {
+            case 0:
+                if (click && !_fx.FadingIn) { _fx.FadeOut(5); _gameOver = 1; }
+                break;
+            case 1:
+                if (_fx.Dark) { _gameOver = 2; _gameOverMs = 0; }
+                break;
+            default:
+                _gameOverMs += GameClock.FrameMs;
+                if (_gameOverMs >= 2000) _audio.PlayBgm("");
+                if (_gameOverMs >= 2500) OpenTitle();
+                break;
+        }
+    }
 
     string SafeName(int i) => i >= 0 && i < _db.MapNames.Length ? _db.MapNames[i] : "?";
 
@@ -608,33 +754,47 @@ public sealed class ErumaniGame : Game
             _sb.End();
             _fx.SnapshotTaken();
         }
+        // 1. the game's own screen, as the exe draws it on its 8-bit surface (mouse pointer included)
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
-        if (_title is not null)
-        {
-            _sb.Begin(samplerState: SamplerState.PointClamp);
-            _title.Draw(_sb, _frame);
-            _options?.Draw(_sb, _frame);
-            if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
-            _sb.End();
-            Present(gameTime);
-            return;
-        }
-        if (_camp is not null)
-        {
-            _sb.Begin(samplerState: SamplerState.PointClamp);
-            _camp.Draw(_sb, _frame);
-            _options?.Draw(_sb, _frame);
-            if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
-            _sb.End();
-            Present(gameTime);
-            return;
-        }
-        var view = new Rectangle(ViewX + _fx.ShakeOffset.X, ViewY + _fx.ShakeOffset.Y, ViewWidth, ViewHeight);
-        var viewClip = new Rectangle(ViewX, ViewY, ViewWidth, ViewHeight);
-
-        // map, picture and screen effects live inside the 608x448 viewport
+        bool overlay = _options is not null || _skipPrompt is not null || _backlog.Open;
         _sb.Begin(samplerState: SamplerState.PointClamp);
+        if (_logo >= 0 && _logo < _logos.Count) _sb.Draw(_logos[_logo], Vector2.Zero, Color.White);
+        else if (_gameOver >= 0)
+        {
+            if (_gameOver < 2 && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go) _sb.Draw(go, Vector2.Zero, Color.White);
+        }
+        else if (_title is not null) _title.Draw(_sb, _frame);
+        else if (_camp is not null) _camp.Draw(_sb, _frame);
+        else DrawMap();
+        // the pointer the exe draws: none on the logos and GAMEOVER.BMP, the arrow on the title and at camp, the map's own
+        int pointer = _logo >= 0 || _gameOver >= 0 ? 2 : _title is not null || _camp is not null ? 0 : _battle?.PointerMode ?? 0;
+        if (!overlay && pointer < 2 && _opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, pointer == 1, _frame);
+        _sb.End();
+
+        // 2. the palette's brightness and tone, the shake, then the client's own windows (options, skip prompt, backlog)
+        var shown = Grade(_screen);
+        GraphicsDevice.SetRenderTarget(_final);
+        GraphicsDevice.Clear(Color.Black);
+        _sb.Begin(samplerState: SamplerState.PointClamp);
+        _sb.Draw(shown, _fx.ShakeOffset.ToVector2(), Color.White);   // the uncovered strip stays black (FUN_00423e70)
+        if (_debug && _session is not null) DrawDebug();
+        if (overlay)
+        {
+            _backlog.Draw(_sb);
+            DrawSkipPrompt();
+            _options?.Draw(_sb, _frame);
+            if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
+        }
+        _sb.End();
+
+        Present(gameTime);
+    }
+
+    /// <summary>A battle map: tiles, overlays, units, pictures, the frame, the battle UI and the event windows.</summary>
+    void DrawMap()
+    {
+        var view = new Rectangle(ViewX, ViewY, ViewWidth, ViewHeight);
         if (_session is not null)
         {
             _session.DrawTiles(_sb, view);
@@ -642,28 +802,66 @@ public sealed class ErumaniGame : Game
             _session.DrawUnits(_sb, view, _frame);
         }
         DrawPicture();
-        _sb.End();
-        DrawTone(viewClip);
-        _sb.Begin(samplerState: SamplerState.PointClamp);
-        if (_fx.Fade > 0) _ui.Fill(_sb, viewClip, _fx.FadeColor * _fx.Fade);
-        // frame on top of the picture (as in the original), then windows and cursor
+        // the frame on top of the picture (as in the original); its red arrows point where the view can scroll, only in
+        // the player's phase while nothing else goes on, blinking: 18 ticks on, 6 off (FUN_00413768)
         if (_session is { } s)
-            _ui.ScreenFrame(_sb, s.Camera.Y > 0, s.Camera.Y < s.PixelHeight - ViewHeight,
-                s.Camera.X > 0, s.Camera.X < s.PixelWidth - ViewWidth);
+        {
+            bool on = _battle?.ScrollArrows == true && _frame / 2 / 6 % 4 != 0;
+            _ui.ScreenFrame(_sb, on && s.Camera.Y > 0, on && s.Camera.Y < s.PixelHeight - ViewHeight,
+                on && s.Camera.X > 0, on && s.Camera.X < s.PixelWidth - ViewWidth);
+        }
         _battle?.DrawUi(_sb, view, _frame);
         DrawMessage();
         DrawChoice();
         DrawStatus();
-        if (_debug) DrawDebug();
-        _backlog.Draw(_sb);
+        // an erase wiping its colour in: the new screen is all that colour (palette entry 0 / 255)
+        if (_fx.Fill is { } fill) _ui.Fill(_sb, new Rectangle(0, 0, VirtualWidth, VirtualHeight), fill);
         DrawWipe();
-        DrawSkipPrompt();
-        _options?.Draw(_sb, _frame);
-        if (_opts.Screenshot is null && IsActive)
-            _ui.Cursor(_sb, _mouseVirtual, _runner?.Message is not null && !_backlog.Open && _options is null, _frame);
-        _sb.End();
+    }
 
-        Present(gameTime);
+    /// <summary>
+    /// The palette's brightness and tone on the finished frame, as FUN_00405a18 rewrites palette entries 10–245: the
+    /// vividness mixes each colour with its grey (3R + 6G + B) / 10, the tone scales each channel (above 100 % towards
+    /// white), the brightness scales the result (above 100 towards white). Black — palette entry 0 and the other fixed
+    /// entries, which no game picture uses for anything else — stays black.
+    /// </summary>
+    Texture2D Grade(RenderTarget2D src)
+    {
+        var tone = _fx.FlashTone ?? _fx.Tone;
+        int bright = Math.Clamp(_fx.Brightness, 0, 200), tr = (int)tone.X, tg = (int)tone.Y, tb = (int)tone.Z, v = (int)tone.W;
+        if (bright == 100 && tr == 100 && tg == 100 && tb == 100 && v >= 100) return src;
+        src.GetData(_gradePixels);
+        Span<byte> lr = stackalloc byte[256], lg = stackalloc byte[256], lb = stackalloc byte[256];
+        Lut(lr, tr, bright);
+        Lut(lg, tg, bright);
+        Lut(lb, tb, bright);
+        for (int i = 0; i < _gradePixels.Length; i++)
+        {
+            var c = _gradePixels[i];
+            int r = c.R, g = c.G, b = c.B;
+            if ((r | g | b) == 0) continue;
+            if (v < 100)
+            {
+                int grey = (r * 3 + g * 6 + b) / 10;
+                if (v <= 0) r = g = b = grey;
+                else { r = ((100 - v) * grey + r * v) / 100; g = ((100 - v) * grey + g * v) / 100; b = ((100 - v) * grey + b * v) / 100; }
+            }
+            _gradePixels[i] = new Color(lr[r], lg[g], lb[b], c.A);
+        }
+        _graded.SetData(_gradePixels);
+        return _graded;
+    }
+
+    /// <summary>One channel of FUN_00405a18: the tone (≤ 100 % scales, above moves towards 255), then the brightness.</summary>
+    static void Lut(Span<byte> lut, int tone, int bright)
+    {
+        for (int c = 0; c < 256; c++)
+        {
+            int x = tone <= 100 ? c * tone / 100 : (255 - c) * (tone - 100) / 100 + c;
+            if (bright < 100) x = x * bright / 100;
+            else if (bright > 100) x = (255 - x) * (bright - 100) / 100 + x;
+            lut[c] = (byte)Math.Clamp(x, 0, 255);
+        }
     }
 
     /// <summary>Screenshot (in screenshot mode) or scale the 640x480 screen to the window.</summary>
@@ -672,7 +870,7 @@ public sealed class ErumaniGame : Game
         if (_opts.Screenshot is { } shot && ShotReady)
         {
             GraphicsDevice.SetRenderTarget(null);
-            using (var f = File.Create(shot)) _screen.SaveAsPng(f, VirtualWidth, VirtualHeight);
+            using (var f = File.Create(shot)) _final.SaveAsPng(f, VirtualWidth, VirtualHeight);
             File.WriteAllText(Path.ChangeExtension(shot, ".txt"), $"frame={_frame} script-left={_script.Count} {(_title is not null ? "Title" : _camp is not null ? $"Camp gold={_state.Gold} items={string.Join(",", _state.Items.Select(kv => $"{kv.Key}x{kv.Value}"))} roster={string.Join(",", _state.Roster.Select(kv => $"{kv.Key}:c{kv.Value.ClassId}/w{kv.Value.Weapon}/a{kv.Value.Armor}/x{kv.Value.Accessory}"))}" : _battle?.DebugState)}\n" + string.Join("\n", _trace) + "\n");
             Exit();
             return;
@@ -687,13 +885,23 @@ public sealed class ErumaniGame : Game
         if (_settings.Scaling == Scaling.Stretch) (w, h) = (bb.Width, bb.Height);
         _dest = new Rectangle((bb.Width - w) / 2, (bb.Height - h) / 2, w, h);
         _sb.Begin(samplerState: _settings.Smooth ? SamplerState.LinearClamp : SamplerState.PointClamp);
-        _sb.Draw(_screen, _dest, Color.White);
+        _sb.Draw(_final, _dest, Color.White);
         _sb.End();
         base.Draw(gameTime);
     }
 
     Rectangle _dest = new(0, 0, VirtualWidth, VirtualHeight);
     Point _mouseVirtual;
+
+    /// <summary>Moves the mouse pointer to a 640×480 position, as FUN_00409d24 does, while the pointer is in the active window.</summary>
+    void WarpMouse(Point v)
+    {
+        if (_opts.Screenshot is not null || !IsActive || _dest.Width == 0) return;
+        var m = Mouse.GetState();
+        var cb = Window.ClientBounds;
+        if (m.X < 0 || m.Y < 0 || m.X >= cb.Width || m.Y >= cb.Height) return;
+        Mouse.SetPosition(_dest.X + v.X * _dest.Width / VirtualWidth, _dest.Y + v.Y * _dest.Height / VirtualHeight);
+    }
 
     /// <summary>Window pixel -> 640x480 virtual pixel.</summary>
     Point ToVirtual(Point p) => _dest.Width == 0 ? p : new Point(
@@ -765,21 +973,6 @@ public sealed class ErumaniGame : Game
             _ => h >= 464 ? Math.Max(0, 480 - h) : 464 - h,
         };
         _sb.Draw(t, new Vector2(x, y), Color.White);
-    }
-
-    /// <summary>Colour tone: multiply for channels under 100 %, add for channels over (vividness not applied yet).</summary>
-    void DrawTone(Rectangle area)
-    {
-        var tone = _fx.FlashTone ?? _fx.Tone;   // a flash shows its tone for a moment (FUN_00423914)
-        if (tone.X == 100 && tone.Y == 100 && tone.Z == 100) return;
-        static int Mul(float v) => (int)(Math.Clamp(v, 0, 100) * 2.55f);
-        static int Add(float v) => (int)(Math.Clamp(v - 100, 0, 100) * 2.55f);
-        _sb.Begin(blendState: Multiply);
-        _ui.Fill(_sb, area, new Color(Mul(tone.X), Mul(tone.Y), Mul(tone.Z)));
-        _sb.End();
-        _sb.Begin(blendState: BlendState.Additive);
-        _ui.Fill(_sb, area, new Color(Add(tone.X), Add(tone.Y), Add(tone.Z)));
-        _sb.End();
     }
 
     // Layout measured from screenshots of the original (FORMAT_NOTES T17):

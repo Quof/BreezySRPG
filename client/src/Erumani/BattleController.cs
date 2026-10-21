@@ -21,7 +21,7 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
-        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList, WholeMap }
+        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList, WholeMap, EndTurnConfirm, Leaving }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -53,7 +53,24 @@ public sealed class BattleController
     public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} events={_eventsRun} last={_runner.Name} [{_runner.DebugState}] plan={_plan?.Unit.Name}/{_planWalking} group={_group} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} wait={_wait} fired={string.Join(",", _fired)} scene={_scene?.DebugPhase}" +
         string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
     public bool EventRunning => _state_ == State.Events && _runner.Running;
-    public bool Busy => _telop is not null || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene;
+    public bool Busy => _telop is not null || _ending != MapOutcome.None
+        || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene or State.Leaving;
+    /// <summary>
+    /// The frame's red arrows may show (FUN_00413768): the player's phase, the map idle, a unit selected, or a target or
+    /// spell aim being chosen (states 2, 6, 0x10, 0x11) — when the mouse at the frame scrolls the view.
+    /// </summary>
+    public bool ScrollArrows => _s.Field.AllyPhase && _telop is null && _ending == MapOutcome.None
+        && _state_ is State.Idle or State.Selected or State.Targeting or State.Aiming or State.MedicineTarget;
+    /// <summary>
+    /// The mouse pointer the exe draws (FUN_00409db8, mode 0x198): 0 the arrow, 1 the hourglass, 2 none. None during
+    /// captions, battle scenes and the computer's phase; the hourglass while a message waits, a result shows or the
+    /// whole map is up; the arrow otherwise (a choice needs it).
+    /// </summary>
+    public int PointerMode =>
+        _telop is not null || _ending != MapOutcome.None || _state_ is State.Scene or State.Leaving ? 2
+        : _state_ == State.Events && _runner.Running ? (_runner.Message is not null ? 1 : _runner.Choice is not null ? 0 : 2)
+        : _state_ is State.Showing or State.WholeMap ? 1
+        : _s.Field.AllyPhase ? 0 : 2;
     /// <summary>Asks the game to play a sound effect (EFS wav).</summary>
     public Action<string>? PlaySound { get; set; }
 
@@ -64,11 +81,14 @@ public sealed class BattleController
     public bool SceneShowing => _scene is not null;
     /// <summary>Cancel would do something now (for the CANCEL sound).</summary>
     public bool AcceptsCancel => _state_ is State.WholeMap or State.Selected or State.ActionMenu or State.Targeting or State.TurnMenu or State.Status
-        or State.SpellList or State.ItemList or State.Aiming or State.MedicineTarget or State.Files or State.QuitConfirm or State.EquipList;
+        or State.SpellList or State.ItemList or State.Aiming or State.MedicineTarget or State.Files or State.QuitConfirm or State.EquipList
+        or State.EndTurnConfirm;
     /// <summary>A menu has keyboard focus (W/S move in it instead of the camera).</summary>
     public bool MenuOpen => _state_ is State.WholeMap or State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
-        or State.QuitConfirm or State.EquipList;
-    public bool WaitingForClick => _scene?.WaitingForClick == true;
+        or State.QuitConfirm or State.EquipList or State.EndTurnConfirm;
+    /// <summary>A click would move things on: a battle scene's death message, or COMPLETE!! from its 60th tick.</summary>
+    public bool WaitingForClick => _scene?.WaitingForClick == true
+        || (_telop == CompleteTelop && _telopTick >= 60 && _ending == MapOutcome.None);
     /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
     public bool ShowScenes { get; set; } = true;
     public bool FastForwardSkipsScenes { get; set; } = true;
@@ -93,7 +113,11 @@ public sealed class BattleController
         // skipping (modern): cancel / right click, or fast-forward when that option is on
         if (i.Cancel || i.RightClick || (i.FastForward && FastForwardSkipsScenes)) _scene!.Skip();
         _scene!.Update(i.FastForward, i.Confirm || i.Click);
+        // the scene's animation runs at 33 ms a tick (slowed by GAME.DAT [4]), and the map stays at 33 ms afterwards
+        // (FUN_00419574 → FUN_00408530): only a new map or camp brings back 30 ms
+        if (_scene.Animating) GameClock.SetTick(33 + 33 * _db.SceneSlowdown / 100);
         if (!_scene.Done) return;
+        GameClock.SetTick(33);
         _scene = null;
         if (_scenes.Count > 0) { RunScenes(); return; }
         PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);   // back to the phase music
@@ -107,11 +131,20 @@ public sealed class BattleController
 
     // ---------------- captions (TELOP1-3.BMP) ----------------
 
-    // TELOP1 "PLAYER TURN", TELOP2 "ENEMY TURN", TELOP3 "COMPLETE!!" (512x96, index 0 transparent).
-    // COMPLETE!! after the last victory/death event, with the fanfare, then the camp (T19e).
-    // The turn captions are shipped with the game but their timing is provisional.
+    // TELOP1 "PLAYER TURN", TELOP2 "ENEMY TURN", TELOP3 "COMPLETE!!" (512x96, index 0 transparent), as FUN_0040e5a8 (turn
+    // captions), FUN_0041083c (COMPLETE!!) and FUN_0041421c (drawing) run them. The caption's counter goes up once a game
+    // tick from 0; the picture is drawn after each step at y 192, x 64 (centred), coming in from the right 96 px a tick
+    // while the counter is under 8, over the screen frame. A turn caption leaves to the left at the same speed from 33 and
+    // ends at 40; its music starts at 20, and clicks do nothing meanwhile. COMPLETE!! stays: the fanfare starts at 20, and
+    // from 60 on the fanfare reaching its end, or a click, fades the screen out (5 % a tick); then the next map.
     string? _telop;
     public string? CurrentTelop => _telop;
+    const string CompleteTelop = "TELOP3.BMP";
+    int _telopTick, _telopFrame;
+    /// <summary>The map's end waiting for the fade-out: Won after COMPLETE!!, Lost through map_complete "lose".</summary>
+    MapOutcome _ending;
+    /// <summary>The current BGM has played to its end at least once (HarmonyGetMusicLooping).</summary>
+    public Func<bool>? MusicLooped { get; set; }
 
     // ---------------- saving and loading (turn menu) ----------------
 
@@ -121,7 +154,7 @@ public sealed class BattleController
     public Func<int, bool>? SlotExists { get; set; }
     public Action? QuitRequested { get; set; }
     readonly Camp.MenuList _files = new() { Rect = new Rectangle(128, 24, 96, 177), Indent = 16 };
-    readonly Camp.MenuList _quit = new() { Rect = new Rectangle(128, 24, 132, 84), Indent = 44, TopPad = 28 };
+    readonly Camp.MenuList _quit = new() { Rect = new Rectangle(128, 24, 132, 80), Indent = 6, TopPad = 31 };
     bool _saving;
 
     /// <summary>Event slots that have run (object, slot), for a battle save's fired flags.</summary>
@@ -155,67 +188,96 @@ public sealed class BattleController
         int pick = _files.Navigate(i, MouseVirtual);
         if (pick < 0) return;
         if (_saving) { SaveRequested?.Invoke(pick + 1); Popup(Word(53)); NextPopup(); }
-        else LoadRequested?.Invoke(pick + 1);
+        else Leave(() =>
+        {
+            if (LoadRequested?.Invoke(pick + 1) == true) return;
+            _fx.FadeIn(0, 20);   // an unreadable file: back to the map
+            _state_ = State.Idle;
+        });
     }
 
     void UpdateQuit(BattleInput i)
     {
         if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
-        if (_quit.Navigate(i, MouseVirtual) is var c and >= 0) { if (c == 0) QuitRequested?.Invoke(); else _state_ = State.TurnMenu; }
+        if (_quit.Navigate(i, MouseVirtual) is var c and >= 0)
+        {
+            if (c == 0) Leave(() => QuitRequested?.Invoke());
+            else _state_ = State.TurnMenu;
+        }
     }
-    int _telopFrames;
+
+    Action? _afterLeave;
+
+    /// <summary>The turn menu's ロードする / ゲーム終了 (FUN_00410728 / FUN_00410698): the screen fades out first, 20 % a tick.</summary>
+    void Leave(Action then)
+    {
+        _afterLeave = then;
+        _fx.FadeOut(20);
+        _state_ = State.Leaving;
+    }
+
     Action? _afterTelop;
 
-    // T20a: captions slide in from the right and pause about a second in the middle.
-    // Slide speed and the exit (out to the left) are guesses; COMPLETE!! stays in the middle.
-    const int TelopSlide = 16, TelopHold = 60;
-    int _telopTotal;
-    bool _telopExits;
-
-    void Telop(int n, int frames, Action then)
+    /// <summary>PLAYER TURN (1) or ENEMY TURN (2), then <paramref name="then"/>.</summary>
+    void TurnTelop(int n, Action then)
     {
         _telop = $"TELOP{n}.BMP";
-        _telopFrames = _telopTotal = frames;
-        _telopExits = n != 3;
+        _telopTick = _telopFrame = 0;
         _afterTelop = then;
-        if (n is 1 or 2) PlayMapBgm?.Invoke(n);   // player / enemy turn music (T20b)
     }
 
-    void TurnTelop(int n, Action then) => Telop(n, TelopSlide * 2 + TelopHold, then);
+    /// <summary>The caption's x at counter <paramref name="c"/> (FUN_0041421c).</summary>
+    int TelopX(int c) => c < 8 ? (8 - c) * 96 + 64 : _telop != CompleteTelop && c > 32 ? 64 - (c * 96 - 3072) : 64;
 
-    /// <summary>Caption x offset from centred: from off the right edge, to 0, then off the left edge.</summary>
-    float TelopOffset(int width, Rectangle viewport)
-    {
-        int elapsed = _telopTotal - _telopFrames;
-        float from = viewport.Width / 2f + width / 2f;
-        if (elapsed < TelopSlide) return from * (1 - (float)elapsed / TelopSlide);
-        if (_telopExits && _telopFrames < TelopSlide) return -from * (1 - (float)_telopFrames / TelopSlide);
-        return 0;
-    }
-
+    /// <summary>The caption's counter, one game tick every two frames; true while a caption holds the map.</summary>
     bool UpdateTelop(BattleInput i)
     {
         if (_telop is null) return false;
-        _telopFrames -= i.FastForward ? 4 : 1;
-        if (_telopFrames <= 0 || i.Confirm || i.Click)
+        bool complete = _telop == CompleteTelop;
+        // COMPLETE!!: from tick 60 on, the fanfare's end or a click (FUN_0041083c)
+        if (complete && _ending == MapOutcome.None && _telopTick >= 60 && (MusicLooped?.Invoke() == true || i.Click || i.Confirm))
         {
-            _telop = null;
-            var then = _afterTelop;
-            _afterTelop = null;
-            then?.Invoke();
+            _ending = MapOutcome.Won;
+            _fx.FadeOut(5);
         }
+        if (_telopFrame++ % 2 != 0) return true;
+        int c = _telopTick;
+        if (complete)
+        {
+            if (c == 20) PlayMapBgm?.Invoke(6);   // the victory fanfare
+            if (c < 500) _telopTick++;
+            return true;
+        }
+        if (c == 20) PlayMapBgm?.Invoke(_telop == "TELOP1.BMP" ? 1 : 2);   // the phase's music (FUN_0040e5a8)
+        if (++_telopTick < 40) return true;
+        _telop = null;
+        var then = _afterTelop;
+        _afterTelop = null;
+        then?.Invoke();
         return true;
     }
 
+    /// <summary>COMPLETE!! (FUN_0041083c): every unit's acted mark goes, the caption comes in, the fanfare from tick 20.</summary>
     void Win()
     {
         _state_ = State.Ended;
-        PlayMapBgm?.Invoke(6);
-        Telop(3, TelopSlide + 540, () => End(MapOutcome.Won));   // ~9 s with the fanfare (T20d)
+        foreach (var u in _s.Field.Units) u.Acted = false;
+        _telop = CompleteTelop;
+        _telopTick = _telopFrame = 0;
     }
 
-    public BattleController(MapSession s, EventRunner runner, GameState state, Database db, Ui.Ui ui, Textures tex)
-        => (_s, _runner, _state, _db, _ui, _tex) = (s, runner, state, db, ui, tex);
+    /// <summary>map_complete "lose": no caption; the screen fades out, 5 % a tick, then the next map (FUN_0040d18c).</summary>
+    void Lose()
+    {
+        _state_ = State.Ended;
+        _ending = MapOutcome.Lost;
+        _fx.FadeOut(5);
+    }
+
+    readonly ScreenEffects _fx;
+
+    public BattleController(MapSession s, EventRunner runner, GameState state, Database db, Ui.Ui ui, Textures tex, ScreenEffects fx)
+        => (_s, _runner, _state, _db, _ui, _tex, _fx) = (s, runner, state, db, ui, tex, fx);
 
     string Word(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
 
@@ -479,9 +541,23 @@ public sealed class BattleController
     public void Update(BattleInput input, EventInput ev)
     {
         if (input.MouseTile is { } mt && input.MouseMoved) _cursor = mt;
+        if (_ending != MapOutcome.None)
+        {
+            // the map's end: once the screen is dark, on to the next map (FUN_0041083c → FUN_0041d5e4)
+            UpdateTelop(input);
+            if (_fx.Dark) { var o = _ending; _ending = MapOutcome.None; End(o); }
+            return;
+        }
         if (UpdateTelop(input)) return;
         switch (_state_)
         {
+            case State.Leaving:
+                if (!_fx.Dark) break;
+                var leave = _afterLeave;
+                _afterLeave = null;
+                leave?.Invoke();
+                break;
+            case State.EndTurnConfirm: UpdateEndTurnConfirm(input); break;
             case State.Events: UpdateEvents(ev); break;
             case State.Idle: UpdateIdle(input); break;
             case State.Selected: UpdateSelected(input); break;
@@ -513,7 +589,7 @@ public sealed class BattleController
             switch (_runner.End)
             {
                 case EventEnd.MapWon: Win(); return;
-                case EventEnd.MapLost: End(MapOutcome.Lost); return;
+                case EventEnd.MapLost: Lose(); return;
                 case EventEnd.GameOver: End(MapOutcome.GameOver); return;
                 case EventEnd.ReturnToTitle: End(MapOutcome.ReturnToTitle); return;
             }
@@ -950,10 +1026,11 @@ public sealed class BattleController
     Rectangle MenuRect()
     {
         int w = _menu.Max(m => _ui.SmallText.Measure(m)) + 24, h = _menu.Length * 16 + 16;
-        // the turn menu opens with its corner on the clicked tile (original screenshot); the action menu beside the unit
-        var p = _sel is null ? _turnMenuAt
+        // the turn menu (FUN_00418614): 7 × 12 px by 6 rows, one tile left of the clicked tile, at its top, kept inside
+        // the frame (FUN_0041855c; the T recordings show it at x 240 for the tile at 272); the action menu beside the unit
+        var p = _sel is null ? _turnMenuAt - new Point(32, 0)
             : _s.ScreenPos(_sel.X + 1, _sel.Y, ViewportRect).ToPoint() + new Point(8, 0);
-        if (_sel is null) p.X = Math.Min(p.X, ErumaniGame.ViewX + ErumaniGame.ViewWidth - w);
+        if (_sel is null) p.X = Math.Clamp(p.X, ErumaniGame.ViewX, ErumaniGame.ViewX + ErumaniGame.ViewWidth - w);
         else if (p.X + w > ErumaniGame.ViewX + ErumaniGame.ViewWidth) p.X -= w + MapSession.Tile + 16;
         p.Y = Math.Clamp(p.Y, ErumaniGame.ViewY, ErumaniGame.ViewY + ErumaniGame.ViewHeight - h);
         return new Rectangle(p.X, p.Y, w, h);
@@ -1197,15 +1274,40 @@ public sealed class BattleController
         if (i.Cancel || i.RightClick) { _state_ = State.Idle; return; }
         switch (MenuNavigate(i, MouseVirtual))
         {
-            case 0: EndPlayerTurn(); break;
+            case 0: OpenConfirm(52, State.EndTurnConfirm); break;   // ターンを終了します (FUN_00418824)
             case 1: _state_ = State.WholeMap; break;
             case 2: OpenFiles(save: true); break;
             case 3: OpenFiles(save: false); break;
-            case 4:
-                _quit.Set(new[] { Word(45), Word(46) });   // ゲームを終了します: はい / いいえ
-                _quit.Index = 0;
-                _state_ = State.QuitConfirm;
-                break;
+            case 4: OpenConfirm(57, State.QuitConfirm); break;      // ゲームを終了します (FUN_00418a00)
+        }
+    }
+
+    int _confirmWord;
+
+    /// <summary>
+    /// A はい／いいえ question from the turn menu (FUN_00418824, FUN_00418a00): a green panel (the larger of 3 and half the
+    /// question's bytes, plus 2) × 12 px wide and 5 rows of 16 px high, its corner 48 px left of the clicked tile's, kept
+    /// inside the frame (FUN_0041855c). The question, an etched rule, then はい / いいえ centred, each with a 48-px bar.
+    /// </summary>
+    void OpenConfirm(int word, State state)
+    {
+        _confirmWord = word;
+        int units = Math.Max(3, (Bin.Sjis.GetByteCount(Word(word)) + 1) / 2) + 2, w = units * 12, h = 5 * 16;
+        int x = Math.Max(16, Math.Min(_turnMenuAt.X - 48, 624 - w)), y = Math.Max(16, Math.Min(_turnMenuAt.Y, 464 - h));
+        _quit.Rect = new Rectangle(x, y, w, h);
+        _quit.RowInset = w / 2 - 24;
+        _quit.Set(new[] { Word(45), Word(46) });   // はい / いいえ
+        _quit.Index = 0;
+        _state_ = state;
+    }
+
+    void UpdateEndTurnConfirm(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
+        if (_quit.Navigate(i, MouseVirtual) is var c and >= 0)
+        {
+            if (c == 0) EndPlayerTurn();
+            else _state_ = State.TurnMenu;
         }
     }
 
@@ -1349,7 +1451,7 @@ public sealed class BattleController
             if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
             if (_state_ != State.Targeting) DrawTerrainInfo(sb);
         }
-        if (_state_ is State.ActionMenu or State.TurnMenu or State.Files or State.QuitConfirm) DrawMenu(sb, frame);
+        if (_state_ is State.ActionMenu or State.TurnMenu) DrawMenu(sb, frame);
         if (_state_ == State.Targeting && _sel is not null && _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y) is { } ft)
             DrawForecast(sb, _sel, ft);
         if (_state_ == State.WholeMap)
@@ -1358,26 +1460,21 @@ public sealed class BattleController
                 Side.Ally => new Color(48, 96, 248), Side.Enemy => new Color(232, 40, 40), _ => new Color(240, 200, 40),
             })));
         if (_state_ == State.Files) _files.Draw(sb, _ui, true, frame);
-        if (_state_ == State.QuitConfirm)
+        if (_state_ is State.QuitConfirm or State.EndTurnConfirm)
         {
             _quit.Draw(sb, _ui, true, frame);
-            if (_ui.SmallText.Get(Word(57)) is { } q) sb.Draw(q, new Vector2(_quit.Rect.X + 13, _quit.Rect.Y + 9), Ui.Ui.PanelText);
-            _ui.Fill(sb, new Rectangle(_quit.Rect.X + 12, _quit.Rect.Y + 29, _quit.Rect.Width - 24, 1), Ui.Ui.PanelText);
+            var qr = _quit.Rect;
+            if (_ui.SmallText.Get(Word(_confirmWord)) is { } q) sb.Draw(q, new Vector2(qr.X + 13, qr.Y + 10), Ui.Ui.PanelText);
+            var (light, dark) = Ui.Ui.EdgeColors(Ui.Ui.PanelColor.Green);
+            _ui.Fill(sb, new Rectangle(qr.X + 12, qr.Y + 31, qr.Width - 24, 1), dark);    // the etched rule under the question
+            _ui.Fill(sb, new Rectangle(qr.X + 12, qr.Y + 32, qr.Width - 24, 1), light);
         }
         if (_state_ is State.SpellList or State.ItemList or State.EquipList) DrawList(sb, frame);
         if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
         if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit);
         if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup); }
-        if (Outcome == MapOutcome.GameOver && _tex.Get("GAMEOVER.BMP", transparent: false) is { } go)
-            sb.Draw(go, Vector2.Zero, Color.White);   // full screen; provisional
-        if (_telop is not null && _tex.Get(_telop) is { } t)
-        {
-            // clipped to the viewport so the slide doesn't cover the screen frame
-            int x = viewport.Center.X - t.Width / 2 + (int)TelopOffset(t.Width, viewport);
-            int left = Math.Max(x, viewport.Left), right = Math.Min(x + t.Width, viewport.Right);
-            if (right > left)
-                sb.Draw(t, new Vector2(left, viewport.Center.Y - t.Height / 2), new Rectangle(left - x, 0, right - left, t.Height), Color.White);
-        }
+        // the caption over everything, the screen frame included (FUN_0041421c draws it at y 192 on the whole screen)
+        if (_telop is not null && _tex.Get(_telop) is { } t) sb.Draw(t, new Vector2(TelopX(_telopTick), 192), Color.White);
     }
 
     /// <summary>Name and "HP／max" above the hovered unit (screenshot 5; font and offsets provisional).</summary>

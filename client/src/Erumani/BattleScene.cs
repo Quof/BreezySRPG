@@ -159,7 +159,7 @@ public sealed class BattleScene
         if (_number is { } n) _number = n with { Age = n.Age + 1 };
         switch (_phase)
         {
-            case Phase.DimMap: if (_phaseTicks >= 10) Go(Phase.PanelsIn); break;   // 4 dimming steps, then a hold
+            case Phase.DimMap: if (_phaseTicks >= 15) Go(Phase.PanelsIn); break;   // 5 ticks, 4 dimming steps, then a hold
             case Phase.PanelsIn: if (_phaseTicks >= 4) Go(Phase.WipeIn); break;
             case Phase.WipeIn:
                 if (_phaseTicks >= 5)
@@ -245,13 +245,20 @@ public sealed class BattleScene
 
     // ---------------- drawing ----------------
 
-    /// <summary>Darkening of the map before and after the scene (4 steps to about 20 % brightness).</summary>
+    /// <summary>
+    /// Darkening of the map before and after the scene, the palette's brightness (FUN_00410388, FUN_0041093c): 5 ticks
+    /// after the attack is chosen it drops 20 % a tick to 20 % and stays there while the scene loads; afterwards the
+    /// map comes back from 20 % in 20 % steps.
+    /// </summary>
     public float MapDim => _phase switch
     {
-        Phase.DimMap => Math.Min(4, _phaseTicks + 1) * 0.2f,
-        Phase.MapIn => Math.Max(0, 4 - _phaseTicks - 1) * 0.2f,
+        Phase.DimMap => _phaseTicks < 5 ? 0 : Math.Min(4, _phaseTicks - 4) * 0.2f,
+        Phase.MapIn => Math.Max(0, 4 - _phaseTicks) * 0.2f,
         _ => 1f,
     };
+
+    /// <summary>A step's animation is playing: the exe's tick is 33 ms (slowed by GAME.DAT [4]) from here on.</summary>
+    public bool Animating => _phase == Phase.Anim;
 
     public void Draw(SpriteBatch sb)
     {
