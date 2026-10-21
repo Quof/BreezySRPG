@@ -1087,10 +1087,10 @@ public sealed class ErumaniGame : Game
 
     /// <summary>
     /// A character choice (FUN_0042523c): a green panel ((the longest option's bytes + 1) / 2 + 2) × 12 px wide and a 16-px
-    /// row per option plus one high, at x 320 − units × 8 (208 for the 11話 camp menu's 168 px, T17b). Under a message
-    /// window still up at the bottom (y 304) it sits on that window; with one at the top or centre the exe's sum
-    /// (16 × the window's height + its y) overshoots and the clamp puts it at the frame's bottom; with none it is centred
-    /// on y 240. Kept inside the frame (FUN_0041855c). Text MS Gothic 12 px at (+13, +10), 16-px lines (T17b).
+    /// row per option plus one high, at x 320 − units × 8 (208 for the 11話 camp menu's 168 px). Under a message window
+    /// still up at the bottom (y 304) it sits on that window; with one at the top or centre the exe's sum (16 × the
+    /// window's height + its y) overshoots and the clamp puts it at the frame's bottom; with none it is centred on y 240.
+    /// Kept inside the frame (FUN_0041855c). The options in the exe's 12-px font at (+12, +8 + 16 × row), as every menu.
     /// </summary>
     Rectangle ChoiceRect(string[] opts)
     {

@@ -826,12 +826,13 @@ public sealed class BattleController
     /// <summary>
     /// A list by the acting unit (FUN_00417548 spells, FUN_004177e8 equipment slots, FUN_00417b08 equipment,
     /// FUN_00417f54 items, FUN_00418308 the use question): its corner <paramref name="dx"/> px from the unit's tile, at
-    /// the tile's top, kept inside the frame (FUN_0041855c) and, for the lists, not above y 96.
+    /// the tile's top, kept inside the frame (FUN_0041855c) — as <paramref name="placedW"/> wide when the exe widens the
+    /// panel only after placing it — and, for the lists, not above y 96.
     /// </summary>
-    Rectangle UnitPanel(int dx, int w, int h, bool list = true)
+    Rectangle UnitPanel(int dx, int w, int h, bool list = true, int? placedW = null)
     {
         var t = _s.ScreenPos(_sel!.X, _sel.Y, ViewportRect).ToPoint();
-        int x = Math.Max(16, Math.Min(t.X + dx, 624 - w)), y = Math.Max(16, Math.Min(t.Y, 464 - h));
+        int x = Math.Max(16, Math.Min(t.X + dx, 624 - (placedW ?? w))), y = Math.Max(16, Math.Min(t.Y, 464 - h));
         return new Rectangle(x, list ? Math.Max(96, y) : y, w, h);
     }
 
@@ -946,12 +947,13 @@ public sealed class BattleController
 
     /// <summary>
     /// The current list: spells ((WORD 3's bytes + 1) / 2 + 17) units wide — 228 px for ＴＰ — 80 px left of the unit's
-    /// tile (FUN_00417548); equipment slots 204 × 64, 64 left; items and equipment choices 180 × 240 (15 rows), 48 left.
+    /// tile (FUN_00417548); equipment slots 204 × 64, 64 left, placed as if 180 wide (FUN_004177e8 widens it after the
+    /// clamp, so by the right edge it reaches into the frame); items and equipment choices 180 × 240 (15 rows), 48 left.
     /// </summary>
     Rectangle ListRect() => _state_ switch
     {
         State.SpellList => UnitPanel(-80, ((Bin.Sjis.GetByteCount(Word(3)) + 1) / 2 + 17) * 12, (_menu.Length + 1) * 16),
-        State.EquipSlots => UnitPanel(-64, 204, 64),
+        State.EquipSlots => UnitPanel(-64, 204, 64, placedW: 180),
         _ => UnitPanel(-48, 180, 240),
     };
 
