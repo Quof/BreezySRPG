@@ -22,7 +22,7 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
-        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList, WholeMap, EndTurnConfirm, Leaving,
+        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, EquipList, WholeMap, EndTurnConfirm, Leaving,
         EquipSlots, UseConfirm, Acting }
 
     readonly MapSession _s;
@@ -81,7 +81,7 @@ public sealed class BattleController
         State.ActionMenu or State.TurnMenu => MenuBarRect(MenuRect(), _menuIndex),
         State.SpellList or State.ItemList or State.EquipList or State.EquipSlots when _menu.Length > 0 => RowRect(_menuIndex),
         State.UseConfirm => _useMenu.Row(_useMenu.Index),
-        State.EndTurnConfirm or State.QuitConfirm => _quit.Row(_quit.Index),
+        State.EndTurnConfirm => _quit.Row(_quit.Index),
         State.Files when _saveMenu is null => _files.Row(_files.Index),
         _ => null,
     };
@@ -144,11 +144,11 @@ public sealed class BattleController
     public bool SceneShowing => _scene is not null;
     /// <summary>Cancel would do something now (for the CANCEL sound).</summary>
     public bool AcceptsCancel => _state_ is State.WholeMap or State.Selected or State.ActionMenu or State.Targeting or State.TurnMenu or State.Status
-        or State.SpellList or State.ItemList or State.Aiming or State.MedicineTarget or State.Files or State.QuitConfirm or State.EquipList
+        or State.SpellList or State.ItemList or State.Aiming or State.MedicineTarget or State.Files or State.EquipList
         or State.EndTurnConfirm or State.EquipSlots or State.UseConfirm;
     /// <summary>A menu has keyboard focus (W/S move in it instead of the camera).</summary>
     public bool MenuOpen => _state_ is State.WholeMap or State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
-        or State.QuitConfirm or State.EquipList or State.EndTurnConfirm or State.EquipSlots or State.UseConfirm;
+        or State.EquipList or State.EndTurnConfirm or State.EquipSlots or State.UseConfirm;
     /// <summary>The wheel is the map's own, not the backlog's: a menu's, or the spell forecast's while a spell is aimed (FocusAim).</summary>
     public bool UsesWheel => MenuOpen || _state_ == State.Aiming;
     /// <summary>A click would move things on: a battle scene's death message, or COMPLETE!! from its 60th tick.</summary>
@@ -253,11 +253,10 @@ public sealed class BattleController
 
     // ---------------- saving and loading (turn menu) ----------------
 
-    /// <summary>セーブする / ロードする / ゲーム終了 from the turn menu; the game writes / reads the file.</summary>
+    /// <summary>セーブする / ロードする from the turn menu; the game writes / reads the file.</summary>
     public Action<int>? SaveRequested { get; set; }
     public Func<int, bool>? LoadRequested { get; set; }
     public Func<int, bool>? SlotExists { get; set; }
-    public Action? QuitRequested { get; set; }
     /// <summary>The turn menu's 環境設定 (modern): the game opens the options.</summary>
     public Action? OptionsRequested { get; set; }
     readonly Camp.MenuList _files = new() { ItemWidth = 60 };
@@ -466,20 +465,9 @@ public sealed class BattleController
         });
     }
 
-    /// <summary>FUN_00410698: はい fades out and quits; いいえ or a right click go back to ゲーム終了.</summary>
-    void UpdateQuit(BattleInput i)
-    {
-        if (i.Cancel || i.RightClick) { ReopenTurnMenu(5); return; }
-        if (_quit.Navigate(i, MouseVirtual) is var c and >= 0)
-        {
-            if (c == 0) Leave(() => QuitRequested?.Invoke());
-            else ReopenTurnMenu(5);
-        }
-    }
-
     Action? _afterLeave;
 
-    /// <summary>The turn menu's ロードする / ゲーム終了 (FUN_00410728 / FUN_00410698): the screen fades out first, 20 % a tick.</summary>
+    /// <summary>The turn menu's ロードする (FUN_00410728): the screen fades out first, 20 % a tick.</summary>
     void Leave(Action then)
     {
         _afterLeave = then;
@@ -882,7 +870,6 @@ public sealed class BattleController
             case State.Acting: UpdateActing(); break;
             case State.Scene: UpdateScene(input); break;
             case State.Files: UpdateFiles(input); break;
-            case State.QuitConfirm: UpdateQuit(input); break;
             // FUN_00410b28: a click (CLICK) or a right click (CANCEL, played by the game) goes back to the map
             case State.WholeMap:
                 if (input.Confirm || input.Click) { Sfx.Click(); _state_ = State.Idle; }
@@ -1960,13 +1947,14 @@ public sealed class BattleController
     /// <summary>
     /// The turn menu (FUN_00418614) on a click on an empty tile, the pointer's place kept (slot 0) and the pointer on the
     /// first entry. WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了 (the original's test
-    /// play adds デバッグ, which isn't part of the game); the client adds 環境設定 (Options) before ゲーム終了.
+    /// play adds デバッグ, which isn't part of the game); the client adds 環境設定 (Options) and leaves ゲーム終了 out (the
+    /// window's close button quits).
     /// </summary>
     void OpenTurnMenu()
     {
         SavePointer(0);
-        _menu = new[] { Word(19), Word(20), Word(21), Word(22), Ui.Lang.T("Options", "環境設定"), Word(23) };
-        _menuEnabled = new[] { true, true, true, true, true, true };
+        _menu = new[] { Word(19), Word(20), Word(21), Word(22), Ui.Lang.T("Options", "環境設定") };
+        _menuEnabled = new[] { true, true, true, true, true };
         _menuIndex = 0;
         _turnMenuAt = _s.ScreenPos(_cursor.X, _cursor.Y, ViewportRect).ToPoint();
         _sel = null;
@@ -1993,7 +1981,6 @@ public sealed class BattleController
             case 2: OpenFiles(save: true); break;
             case 3: OpenFiles(save: false); break;
             case 4: OptionsRequested?.Invoke(); break;              // the client's options; the menu stays up under them
-            case 5: OpenConfirm(57, State.QuitConfirm); break;      // ゲームを終了します (FUN_00418a00)
         }
     }
 
@@ -2294,7 +2281,7 @@ public sealed class BattleController
             if (_saveMenu is not null) _saveMenu.Draw(sb, frame);
             else _files.Draw(sb, _ui, true, frame);
         }
-        if (_state_ is State.QuitConfirm or State.EndTurnConfirm) _quit.Draw(sb, _ui, true, frame);
+        if (_state_ is State.EndTurnConfirm) _quit.Draw(sb, _ui, true, frame);
         if (_state_ is State.SpellList or State.ItemList or State.EquipList or State.EquipSlots) DrawList(sb, frame);
         if (_state_ == State.UseConfirm) _useMenu.Draw(sb, _ui, true, frame);
         if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel);

@@ -367,7 +367,6 @@ public sealed class ErumaniGame : Game
         _battle.SaveRequested = n => WriteBattleSave(n);
         _battle.NewSaveMenu = MakeSaveMenu;
         _battle.LoadRequested = n => { if (SaveFile.Load(SaveFile.PathFor(_folder, n)) is not { } f) return false; ApplySave(f, n); return true; };
-        _battle.QuitRequested = Exit;
         _battle.OptionsRequested = OpenOptions;
         if (resume is not null)
         {
