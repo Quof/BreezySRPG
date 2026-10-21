@@ -101,7 +101,8 @@ public sealed class GdiText : IDisposable
     /// <summary>
     /// A smooth face's faces to try (the first one GDI has), its weight and its size against the original's pixel height.
     /// Noto Sans JP and Noto Serif JP travel inside the executable (<see cref="PrivateFonts"/>); BIZ UDPGothic and Yu
-    /// Gothic UI are Windows'. Yu Gothic UI is what the restyled skins had at first, at the full height.
+    /// Gothic UI are Windows'. Yu Gothic UI is what the restyled skins had at first, at the full height. MS Gothic is the
+    /// original's own message face (FUN_00407888, 18 px bold), Windows' too and not ours to carry.
     /// </summary>
     static (string[] Faces, int Weight, float Size) Spec(UiFont f, bool strong) => f switch
     {
@@ -109,6 +110,7 @@ public sealed class GdiText : IDisposable
         UiFont.NotoSerif => strong ? (new[] { "Noto Serif JP SemiBold", "Noto Serif JP" }, 600, 0.9f)
             : (new[] { "Noto Serif JP Medium", "Noto Serif JP" }, 500, 0.9f),
         UiFont.BizUd => (new[] { "BIZ UDPGothic", "BIZ UDPゴシック" }, strong ? 700 : 400, 0.84f),
+        UiFont.MsGothic => (new[] { "ＭＳ ゴシック", "MS Gothic" }, strong ? 700 : 400, 1f),
         _ => (new[] { "Yu Gothic UI" }, strong ? 600 : 400, 1f),
     };
 

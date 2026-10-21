@@ -119,14 +119,14 @@ F1 opens them anywhere; during an event (a cutscene), a right click's menu has t
 
 | Section | Settings |
 |---|---|
-| Display | interface style (original / modern / gilded); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI); language of EasySRPG95's own menus and messages (English / 日本語 — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
+| Display | interface style (original / modern / gilded); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI, MS Gothic — the face the original draws its messages in); language of EasySRPG95's own menus and messages (English / 日本語 — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
 | Audio | BGM and SE volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, confirm sound (the CLICK "thunk") |
 | Gameplay | battle animations on/off, skip enemy turn, fast-forward key (hold / toggle), hold left click to fast-forward, speed (×2–×8), fast-forward skips battle scenes, fast-forward advances text |
 | Controls | rebind every action; reset to defaults |
 
 The frame is drawn at the window's resolution: the pixel art is scaled up whole, and the modern and gilded styles' text and gold are drawn at the window's own pixels, so they stay crisp at any size. The filter only matters when the window isn't a whole multiple of 640×480.
 
-Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font License 1.1, [`src/Erumani/fonts/OFL.txt`](src/Erumani/fonts/OFL.txt)); the build copies them from Windows' fonts folder (Windows 11 has them) and they aren't kept in git. BIZ UDPGothic and Yu Gothic UI are Windows' own; a font that isn't there falls back to Yu Gothic UI. Each font is drawn a little smaller than Yu Gothic UI and placed where Yu Gothic UI's glyphs were, so every layout keeps its lines.
+Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font License 1.1, [`src/Erumani/fonts/OFL.txt`](src/Erumani/fonts/OFL.txt)); the build copies them from Windows' fonts folder (Windows 11 has them) and they aren't kept in git. BIZ UDPGothic, Yu Gothic UI and MS Gothic are Windows' own (MS Gothic's licence doesn't let it be bundled); a font that isn't there falls back to Yu Gothic UI. Each font is drawn a little smaller than Yu Gothic UI and placed where Yu Gothic UI's glyphs were, so every layout keeps its lines.
 
 ### The extended save / load screen
 

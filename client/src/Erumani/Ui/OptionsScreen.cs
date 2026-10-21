@@ -120,7 +120,7 @@ public sealed class OptionsScreen
             Choice(T("Interface style", "インターフェース"), () => new[] { T("Original", "オリジナル"), T("Modern", "モダン"), T("Gilded", "ゴールド") },
                 () => (int)_s.Skin, i => _s.Skin = (UiSkin)i),
             Choice(T("Font (Modern / Gilded)", "フォント（モダン・ゴールド）"),
-                () => new[] { "Noto Sans JP", "Noto Serif JP", T("BIZ UDPGothic", "BIZ UDPゴシック"), T("Yu Gothic UI", "游ゴシック UI") }
+                () => new[] { "Noto Sans JP", "Noto Serif JP", T("BIZ UDPGothic", "BIZ UDPゴシック"), T("Yu Gothic UI", "游ゴシック UI"), T("MS Gothic (the original's)", "ＭＳ ゴシック（オリジナル）") }
                     .Select((name, i) => GdiText.Available((UiFont)i) ? name : name + T(" (not on this PC)", "（このPCにありません）")).ToArray(),
                 () => (int)_s.Font, i => _s.Font = (UiFont)i),
             Choice(T("Language", "言語"), () => new[] { "English", "日本語" }, () => (int)_s.Language, i => _s.Language = (UiLanguage)i),
