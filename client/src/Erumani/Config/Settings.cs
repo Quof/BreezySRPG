@@ -41,6 +41,8 @@ public sealed class Settings
     public int FastForwardSpeed { get; set; } = 4;
     public bool FastForwardSkipsScenes { get; set; } = true;
     public bool FastForwardAdvancesText { get; set; } = true;
+    public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
+    public bool ModernUi { get; set; }                    // the restyled windows, menus and text box instead of the original look
 
     public Dictionary<GameAction, List<Keys>> Keys { get; set; } = DefaultKeys();
 
@@ -71,7 +73,7 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent) return new Settings();
+        if (!persistent) return new Settings { ModernUi = Environment.GetEnvironmentVariable("ERUMANI_MODERN") == "1" };   // scripted runs
         foreach (var path in Candidates())
         {
             if (!File.Exists(path)) continue;

@@ -11,7 +11,8 @@ namespace Erumani.Ui;
 public sealed class GdiText : IDisposable
 {
     readonly GraphicsDevice _device;
-    readonly IntPtr _dc, _font;
+    readonly IntPtr _dc, _font, _modernFont;
+    bool _modernSelected;
     readonly Dictionary<string, Texture2D> _cache = new();
     public string FaceName { get; }
     public int Height { get; }
@@ -37,6 +38,8 @@ public sealed class GdiText : IDisposable
             {
                 _font = f;
                 FaceName = sb.ToString();
+                _modernFont = CreateModernFont(height, weight);
+                SelectObject(_dc, _font);
                 return;
             }
             DeleteObject(f);
@@ -44,9 +47,37 @@ public sealed class GdiText : IDisposable
         throw new InvalidOperationException("No Japanese GDI font available.");
     }
 
+    /// <summary>The modern interface's font: a smooth (anti-aliased) UI face at the same pixel height.</summary>
+    IntPtr CreateModernFont(int height, int weight)
+    {
+        foreach (var face in new[] { "Yu Gothic UI", "Meiryo UI", "Meiryo" })
+        {
+            var f = CreateFontW(-height, 0, 0, 0, weight >= 700 ? 600 : weight, 0, 0, 0, 128, 0, 0, 4 /*ANTIALIASED_QUALITY*/, 0, face);
+            if (f == IntPtr.Zero) continue;
+            SelectObject(_dc, f);
+            var sb = new System.Text.StringBuilder(64);
+            GetTextFaceW(_dc, sb.Capacity, sb);
+            if (sb.ToString() == face) return f;
+            DeleteObject(f);
+        }
+        return IntPtr.Zero;
+    }
+
+    bool UseModern()
+    {
+        bool modern = Ui.Modern && _modernFont != IntPtr.Zero;
+        if (modern != _modernSelected)
+        {
+            SelectObject(_dc, modern ? _modernFont : _font);
+            _modernSelected = modern;
+        }
+        return modern;
+    }
+
     public int Measure(string s)
     {
         if (s.Length == 0) return 0;
+        UseModern();
         GetTextExtentPoint32W(_dc, s, s.Length, out var size);
         return size.cx;
     }
@@ -55,7 +86,9 @@ public sealed class GdiText : IDisposable
     public Texture2D? Get(string s)
     {
         if (s.Length == 0) return null;
-        if (_cache.TryGetValue(s, out var t)) return t;
+        bool modern = UseModern();
+        string key = modern ? "\u0001" + s : s;
+        if (_cache.TryGetValue(key, out var t)) return t;
         GetTextExtentPoint32W(_dc, s, s.Length, out var size);
         int w = Math.Max(1, size.cx), h = Math.Max(1, size.cy);
         var bmi = new BITMAPINFO { biSize = 40, biWidth = w, biHeight = -h, biPlanes = 1, biBitCount = 32 };
@@ -73,14 +106,14 @@ public sealed class GdiText : IDisposable
         var rgba = new byte[w * h * 4];
         for (int i = 0; i < w * h; i++)
         {
-            byte a = px[i * 4] > 127 ? (byte)255 : (byte)0;   // 1-bit glyphs
+            byte a = modern ? Math.Max(px[i * 4], px[i * 4 + 1]) : px[i * 4] > 127 ? (byte)255 : (byte)0;   // smooth, or 1-bit glyphs
             rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = a;
             rgba[i * 4 + 3] = a;
         }
         t = new Texture2D(_device, w, h);
         t.SetData(rgba);
         if (_cache.Count > 2000) ClearCache();
-        _cache[s] = t;
+        _cache[key] = t;
         return t;
     }
 
@@ -94,6 +127,7 @@ public sealed class GdiText : IDisposable
     {
         ClearCache();
         DeleteObject(_font);
+        if (_modernFont != IntPtr.Zero) DeleteObject(_modernFont);
         DeleteDC(_dc);
     }
 

@@ -12,7 +12,13 @@ namespace Erumani.Ui;
 public sealed class Ui : IDisposable
 {
     public const int LineHeight = 22;
-    public static readonly Color TextColor = new(16, 16, 0);
+    /// <summary>Message / window text: dark on the original's light green windows, light on the modern dark ones.</summary>
+    public static Color TextColor => Modern ? new Color(236, 240, 248) : new Color(16, 16, 0);
+
+    /// <summary>The modern interface (options): dark translucent rounded windows, smooth fonts, accent highlights.</summary>
+    public static bool Modern { get; set; }
+    public static readonly Color ModernBase = new(22, 26, 38), Accent = new(104, 168, 255);
+    public static Color ModernBorder => new Color(255, 255, 255) * 0.16f;
     public static readonly Color WindowFill = new(184, 200, 160);
     static readonly Color EdgeLight = new(241, 241, 241), EdgeDark = new(96, 96, 96);
 
@@ -107,6 +113,12 @@ public sealed class Ui : IDisposable
     /// <summary>The message window at its outline position; tail drawn when a face is shown on the left.</summary>
     public void MessageWindow(SpriteBatch sb, Point topLeft, bool tail)
     {
+        if (Modern)
+        {
+            ModernBox(sb, new Rectangle(topLeft.X, topLeft.Y, MessageWidth, MessageHeight), ModernBase, 12, 0.92f);
+            Fill(sb, new Rectangle(topLeft.X + 14, topLeft.Y + 1, MessageWidth - 28, 2), Accent * 0.8f);
+            return;
+        }
         sb.Draw(_messageWindow, topLeft.ToVector2(), Color.White);
         if (tail) sb.Draw(_tail, new Vector2(topLeft.X - 15, topLeft.Y + 13), Color.White);
     }
@@ -114,12 +126,64 @@ public sealed class Ui : IDisposable
     /// <summary>Generic window for menus (same skin, any size).</summary>
     public void Window(SpriteBatch sb, Rectangle r)
     {
+        if (Modern) { ModernBox(sb, r, ModernBase, 10, 0.92f); return; }
         // Built on demand per size; menus are few.
         if (!_windows.TryGetValue((r.Width, r.Height), out var t))
             _windows[(r.Width, r.Height)] = t = BuildWindow(r.Width, r.Height);
         sb.Draw(t, r.Location.ToVector2(), Color.White);
     }
     readonly Dictionary<(int, int), Texture2D> _windows = new();
+
+    // ---------------- modern interface ----------------
+
+    readonly Dictionary<(int W, int H, int R, Color Fill, float A), Texture2D> _modern = new();
+
+    /// <summary>A soft-shadowed, rounded, translucent box with a faint light edge and a slight top-down gradient.</summary>
+    public void ModernBox(SpriteBatch sb, Rectangle r, Color fill, int radius, float alpha)
+    {
+        if (r.Width <= 0 || r.Height <= 0) return;
+        var key = (r.Width, r.Height, radius, fill, alpha);
+        if (!_modern.TryGetValue(key, out var tex)) _modern[key] = tex = BuildRounded(r.Width, r.Height, radius, fill, alpha);
+        sb.Draw(tex, new Vector2(r.X + 2, r.Y + 3), Color.Black * 0.45f);    // shadow
+        sb.Draw(tex, r.Location.ToVector2(), Color.White);
+    }
+
+    Texture2D BuildRounded(int w, int h, int radius, Color fill, float alpha)
+    {
+        float rad = Math.Min(radius, Math.Min(w, h) / 2f);
+        var border = new Color(255, 255, 255);
+        var px = new Color[w * h];
+        for (int y = 0; y < h; y++)
+        {
+            // gradient: a little lighter at the top
+            var row = Color.Lerp(Color.Lerp(fill, Color.White, 0.07f), fill, h <= 1 ? 1 : y / (h - 1f));
+            for (int x = 0; x < w; x++)
+            {
+                float cx = Math.Clamp(x + 0.5f, rad, w - rad), cy = Math.Clamp(y + 0.5f, rad, h - rad);
+                float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+                float d = rad - MathF.Sqrt(dx * dx + dy * dy);                 // distance inside the rounded edge
+                float edge = Math.Min(Math.Min(x + 0.5f, w - x - 0.5f), Math.Min(y + 0.5f, h - y - 0.5f));
+                float inside = dx != 0 && dy != 0 ? d : edge;
+                float cover = Math.Clamp(inside + 0.5f, 0, 1);                 // anti-aliased outline
+                if (cover <= 0) continue;
+                float rim = Math.Clamp(1.5f - inside, 0, 1);                   // 1-px light rim
+                var c = Color.Lerp(row, border, rim * 0.22f);
+                px[y * w + x] = c * (alpha * cover);
+            }
+        }
+        var tex = new Texture2D(_device, w, h);
+        tex.SetData(px);
+        return tex;
+    }
+
+    /// <summary>The modern selection bar: a softly pulsing accent fill with a bright left notch.</summary>
+    public void ModernHighlight(SpriteBatch sb, Rectangle r, int frame)
+    {
+        Fill(sb, r, Accent * (0.55f + 0.15f * MathF.Sin(frame * 0.12f)));
+        Fill(sb, new Rectangle(r.X, r.Y, 2, r.Height), Accent);
+    }
+
+    static readonly Color[] ModernTints = { new(36, 64, 128), new(122, 36, 44), new(120, 96, 32), ModernBase };
 
     public void DrawText(SpriteBatch sb, string s, Vector2 pos, Color c)
     {
@@ -132,6 +196,30 @@ public sealed class Ui : IDisposable
     /// </summary>
     public void ScreenFrame(SpriteBatch sb, bool up, bool down, bool left, bool right)
     {
+        if (Modern)
+        {
+            var bg = new Color(12, 14, 20);
+            Fill(sb, new Rectangle(0, 0, 640, 16), bg);
+            Fill(sb, new Rectangle(0, 464, 640, 16), bg);
+            Fill(sb, new Rectangle(0, 16, 16, 448), bg);
+            Fill(sb, new Rectangle(624, 16, 16, 448), bg);
+            Frame(sb, new Rectangle(15, 15, 610, 450), ModernBorder);
+            // a small chevron in the middle of each side that can still scroll
+            void Chevron(int cx, int cy, int dx, int dy)
+            {
+                for (int k = 0; k < 4; k++)
+                {
+                    int len = 7 - 2 * k;
+                    if (dx == 0) Fill(sb, new Rectangle(cx - len / 2, cy + (dy < 0 ? k : -k), len, 1), Accent);
+                    else Fill(sb, new Rectangle(cx + (dx < 0 ? k : -k), cy - len / 2, 1, len), Accent);
+                }
+            }
+            if (up) Chevron(320, 6, 0, -1);
+            if (down) Chevron(320, 473, 0, 1);
+            if (left) Chevron(6, 240, -1, 0);
+            if (right) Chevron(633, 240, 1, 0);
+            return;
+        }
         var h = _tex.Get("SFRAME_H.BMP");
         var v = _tex.Get("SFRAME_V.BMP");
         if (h is null || v is null) return;
@@ -164,7 +252,8 @@ public sealed class Ui : IDisposable
         (new(248, 248, 224), new(40, 40, 8)), (new(248, 248, 224), new(0, 32, 0)),
     };
 
-    public static (Color Light, Color Dark) EdgeColors(PanelColor c) => Edges[(int)c];
+    public static (Color Light, Color Dark) EdgeColors(PanelColor c) =>
+        Modern ? (new Color(255, 255, 255) * 0.22f, new Color(0, 0, 0) * 0.5f) : Edges[(int)c];
 
     /// <summary>
     /// Textured panel (menus, choices, EXP messages, battle info): SYSTEM.BMP tile tiled from the
@@ -172,6 +261,7 @@ public sealed class Ui : IDisposable
     /// </summary>
     public void Panel(SpriteBatch sb, Rectangle r, PanelColor color = PanelColor.Green)
     {
+        if (Modern) { ModernBox(sb, r, ModernTints[(int)color], 8, 0.9f); return; }
         var sys = _tex.Get("SYSTEM.BMP", transparent: false);
         if (sys is null) { Fill(sb, r, new Color(0, 72, 0)); return; }
         int tx = (int)color * 64;
@@ -199,5 +289,6 @@ public sealed class Ui : IDisposable
         _messageWindow.Dispose();
         _tail.Dispose();
         foreach (var t in _windows.Values) t.Dispose();
+        foreach (var t in _modern.Values) t.Dispose();
     }
 }

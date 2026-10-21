@@ -70,13 +70,15 @@ public sealed class MenuList
                 if (ui.SmallText.Get(HeaderColumns[c]) is { } hc) sb.Draw(hc, new Vector2(Rect.X + ColumnX[c - 1] - hc.Width, y), white);
             ui.Fill(sb, new Rectangle(Rect.X + 12, y + 18, Rect.Width - 24, 1), white);
         }
+        bool modern = Ui.Ui.Modern;
         var bar = frame / 8 % 2 == 0 ? new Color(160, 248, 96) : new Color(248, 248, 248);
         for (int k = 0; k < Items.Length; k++)
         {
             var r = Row(k);
             bool hot = active && k == Index;
-            if (hot) ui.Fill(sb, r, bar);
-            var c = hot ? new Color(0, 32, 0) : !Enabled[k] ? new Color(120, 140, 120) : white;
+            if (hot && modern) ui.ModernHighlight(sb, r, frame);
+            else if (hot) ui.Fill(sb, r, bar);
+            var c = hot ? (modern ? Color.White : new Color(0, 32, 0)) : !Enabled[k] ? (modern ? new Color(110, 116, 132) : new Color(120, 140, 120)) : white;
             if (ui.SmallText.Get(Items[k]) is { } t) sb.Draw(t, new Vector2(r.X + Indent, r.Y + 1), c);
             if (Columns is null) continue;
             for (int col = 0; col < Columns.Length && col < ColumnX.Length; col++)

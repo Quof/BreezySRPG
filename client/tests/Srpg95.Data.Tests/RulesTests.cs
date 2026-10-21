@@ -239,6 +239,27 @@ public class RulesTests
     }
 
     [Fact]
+    public void Enemy_phases_never_stack_units()
+    {
+        Assert.NotNull(Game());
+        for (int seed = 0; seed < 20; seed++)
+        {
+            var f = Map1(out _);
+            f.Rng = new Random(seed);
+            for (int turn = 0; turn < 8; turn++)
+                foreach (var e in f.Alive.Where(u => u.Side == Side.Enemy).OrderBy(u => u.MapObject).ToList())
+                {
+                    if (e.Dead) continue;
+                    var plan = EnemyAi.Plan(f, e, new bool[500]);
+                    (e.X, e.Y) = plan.Destination;
+                    var stacked = f.Alive.GroupBy(u => (u.X, u.Y)).FirstOrDefault(g => g.Count() > 1);
+                    Assert.True(stacked is null, $"seed {seed} turn {turn}: {string.Join(", ", stacked?.Select(u => u.Name) ?? [])} on {stacked?.Key}");
+                    if (plan.Target is { Dead: false } t && f.InRange(e, e.X, e.Y, t)) f.Attack(e, t);
+                }
+        }
+    }
+
+    [Fact]
     public void Ai_spell_scores_follow_the_exe()
     {
         if (Game() is null) return;

@@ -50,6 +50,7 @@ public sealed class ErumaniGame : Game
     string _status = "";
     KeyboardState _prevKeys;
     MouseState _prevMouse;
+    int _activeFrames;
 
     static readonly BlendState Multiply = new()
     {
@@ -229,7 +230,9 @@ public sealed class ErumaniGame : Game
         {
             _battle.ShowScenes = _settings.BattleScenes;
             _battle.FastForwardSkipsScenes = _settings.FastForwardSkipsScenes;
+            _battle.SkipEnemyTurn = _settings.SkipEnemyTurn;
         }
+        Ui.Ui.Modern = _settings.ModernUi;
     }
 
     void ApplyDisplay()
@@ -267,8 +270,12 @@ public sealed class ErumaniGame : Game
         _mouseVirtual = ToVirtual(m.Position);
         bool Pressed(Keys key) => k.IsKeyDown(key) && !_prevKeys.IsKeyDown(key);
         bool alt = k.IsKeyDown(Keys.LeftAlt) || k.IsKeyDown(Keys.RightAlt);
-        bool click = IsActive && m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
-        bool rclick = IsActive && m.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
+        // clicks only count inside the window, and not just after it lost or regained focus (clicking another window,
+        // or clicking back into this one, used to open the turn menu)
+        _activeFrames = IsActive ? _activeFrames + 1 : 0;
+        bool mouseHere = _activeFrames > 6 && Window.ClientBounds is var cb && m.X >= 0 && m.Y >= 0 && m.X < cb.Width && m.Y < cb.Height;
+        bool click = mouseHere && m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
+        bool rclick = mouseHere && m.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
         int wheel = IsActive && _opts.Screenshot is null ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
         bool mouseMoved = m.Position != _prevMouse.Position;
 
@@ -375,15 +382,17 @@ public sealed class ErumaniGame : Game
             return;
         }
 
-        if (_pendingCamp is int pc && battleInput.Confirm)
+        if (_pendingCamp is int pc && (battleInput.Confirm || _autoAdvance))
         {
             _pendingCamp = null;
+            _autoAdvance = false;
             OpenCamp(pc);
             return;
         }
-        if (_pendingMap is int pm && battleInput.Confirm)
+        if (_pendingMap is int pm && (battleInput.Confirm || _autoAdvance))
         {
             _pendingMap = null;
+            _autoAdvance = false;
             LoadMap(pm);
             input = input with { Confirm = false };
             battleInput = battleInput with { Confirm = false, Click = false };
@@ -487,7 +496,9 @@ public sealed class ErumaniGame : Game
         {
             case MapOutcome.Won:
                 int next = _battle.NextMap ?? idx + 1;   // provisional: no "Next Map" means the following map
-                _status = $"MAP CLEAR → SMAP_{next + 1:000} {SafeName(next)}  [Enter]";
+                // the original goes straight on to the next camp / map once the victory events are over
+                _status = "";
+                _autoAdvance = true;
                 if (Array.IndexOf(_mapIndices, next) is var p and >= 0)
                 {
                     if (MapData.Load(_folder.MapPath(next)).CampBeforeBattle) _pendingCamp = p;
@@ -511,6 +522,7 @@ public sealed class ErumaniGame : Game
     }
 
     int? _pendingMap, _pendingCamp;
+    bool _autoAdvance;
     bool _pendingTitle;
 
     string SafeName(int i) => i >= 0 && i < _db.MapNames.Length ? _db.MapNames[i] : "?";

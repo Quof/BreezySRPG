@@ -702,12 +702,12 @@ public sealed class BattleController
         var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
         int mpBefore = caster.Mp;
         var r = _s.Field.Cast(caster, m, aim.X, aim.Y, fromItem: item is not null);
-        if (ShowScenes && r.Effects.Count > 0)
+        if (ShowScenes && !Quiet && r.Effects.Count > 0)
         {
             QueueSpellScenes(caster, m, r, before);
             if (_scenes.Count > 0) _scenes.Peek().ShowMpBefore(caster, mpBefore);
         }
-        ShowResult(caster, r, numbersShown: ShowScenes);
+        if (!Quiet) ShowResult(caster, r, numbersShown: ShowScenes);
         foreach (var t in hostiles) AttackTriggers(caster, t, 11);
         Finish(caster);
     }
@@ -888,7 +888,8 @@ public sealed class BattleController
         if (BeforeFight(new[] { (atk, def) }, () => DoAttack(atk, def))) return;
         var before = HpSnapshot(new[] { atk, def });
         var r = _s.Field.Attack(atk, def);
-        if (ShowScenes)
+        if (Quiet) { }
+        else if (ShowScenes)
         {
             var steps = r.Strikes.Select(st =>
             {
@@ -997,14 +998,23 @@ public sealed class BattleController
     {
         _enemyQueue = new Queue<BattleUnit>(_s.Field.Alive.Where(u => u.Side != Side.Ally && !u.Acted).OrderBy(u => u.MapObject));
         _plan = null;
-        _wait = 20;
+        _wait = Quiet ? 0 : 20;
     }
+
+    /// <summary>Option: the enemy phase resolves without walking, panning, battle scenes or result popups (events still play).</summary>
+    public bool SkipEnemyTurn { get; set; }
+    bool Quiet => SkipEnemyTurn && !_s.Field.AllyPhase;
 
     void UpdateEnemyPhase(BattleInput i)
     {
         if (_wait > 0) { _wait -= i.FastForward ? 4 : 1; return; }
         if (_plan is { } p)
         {
+            if (!_planWalking && Quiet)
+            {
+                (p.Unit.X, p.Unit.Y) = p.Destination;
+                _planWalking = true;
+            }
             if (!_planWalking)
             {
                 // the screen scrolls to each enemy before it moves (T19f), then follows it to its destination
@@ -1026,7 +1036,7 @@ public sealed class BattleController
             }
             if (p.Target is { Dead: false } t && _s.Field.InRange(p.Unit, p.Unit.X, p.Unit.Y, t)) { DoAttack(p.Unit, t); return; }
             if (CheckPoint()) return;
-            _wait = 8;
+            _wait = Quiet ? 0 : 8;
             return;
         }
         while (_enemyQueue.Count > 0)
@@ -1035,7 +1045,7 @@ public sealed class BattleController
             if (u.Dead || u.Hidden) continue;
             _plan = EnemyAi.Plan(_s.Field, u, _state.Switches);
             _planWalking = false;
-            _s.PanTo(u.X, u.Y);
+            if (!Quiet) _s.PanTo(u.X, u.Y);
             return;
         }
         // enemy phase over: back to the player
@@ -1100,7 +1110,7 @@ public sealed class BattleController
             _ui.Frame(sb, new Rectangle(p.X + 1, p.Y + 1, 30, 30), Color.White, 2);
             if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
         }
-        if (_state_ is State.ActionMenu or State.TurnMenu or State.Files or State.QuitConfirm) DrawMenu(sb);
+        if (_state_ is State.ActionMenu or State.TurnMenu or State.Files or State.QuitConfirm) DrawMenu(sb, frame);
         if (_state_ == State.Files) _files.Draw(sb, _ui, true, frame);
         if (_state_ == State.QuitConfirm)
         {
@@ -1141,13 +1151,16 @@ public sealed class BattleController
         Outlined(num, new Vector2(tile.X - 4, tile.Y - 18));
     }
 
-    void DrawMenu(SpriteBatch sb)
+    void DrawMenu(SpriteBatch sb, int frame)
     {
         var r = MenuRect();
         _ui.Panel(sb, r);
+        bool modern = Ui.Ui.Modern;
         for (int i = 0; i < _menu.Length; i++)
         {
-            var c = !_menuEnabled[i] ? new Color(120, 140, 120) : i == _menuIndex ? new Color(255, 255, 120) : Ui.Ui.PanelText;
+            if (modern && i == _menuIndex) _ui.ModernHighlight(sb, new Rectangle(r.X + 4, r.Y + 9 + i * 16, r.Width - 8, 16), frame);
+            var c = !_menuEnabled[i] ? (modern ? (i == _menuIndex ? new Color(196, 204, 222) : new Color(110, 116, 132)) : new Color(120, 140, 120))
+                : i == _menuIndex ? (modern ? Color.White : new Color(255, 255, 120)) : Ui.Ui.PanelText;
             if (_ui.SmallText.Get(_menu[i]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + i * 16), c);
         }
     }
@@ -1170,8 +1183,10 @@ public sealed class BattleController
             int i = first + k;
             var row = RowRect(i);
             bool hot = i == _menuIndex;
-            if (hot) _ui.Fill(sb, row, bar);
-            var c = hot ? new Color(0, 32, 0) : !_menuEnabled[i] ? new Color(120, 140, 120) : Ui.Ui.PanelText;
+            bool modern = Ui.Ui.Modern;
+            if (hot && modern) _ui.ModernHighlight(sb, row, frame);
+            else if (hot) _ui.Fill(sb, row, bar);
+            var c = hot ? (modern ? Color.White : new Color(0, 32, 0)) : !_menuEnabled[i] ? (modern ? new Color(110, 116, 132) : new Color(120, 140, 120)) : Ui.Ui.PanelText;
             T(_menu[i], row.X + 8, row.Y + 2, c);
             if (_state_ == State.EquipList) T(_items[i].Index == _sel?.Weapon ? Word(89) : $"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
             else if (items) T($"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
