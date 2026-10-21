@@ -7,7 +7,8 @@ namespace Erumani.Runtime;
 /// <summary>
 /// Sound effects from the original WAVs (all PCM mono 8/16-bit) and looping BGM. MIDI BGM plays either through
 /// a SoundFont synthesizer (MeltySynth, the modern option; consistent on every PC) or the Windows MCI sequencer
-/// (the Microsoft GS Wavetable synth, what the original runtime used). WAV BGM always uses MCI.
+/// (the Microsoft GS Wavetable synth, what the original runtime used). WAV BGM (some games loop a sound effect as their
+/// music) loops seamlessly as a sound of its own; one that isn't plain PCM goes through MCI.
 /// System sounds the runtime plays itself, from the game folder: FUN_00409428's CLICK.WAV (0, on confirm and when
 /// advancing text), CANCEL.WAV (1), BUZZER.WAV (2, an unavailable choice) and DOWN.WAV (3, a unit falling), and
 /// LEVELUP.WAV when the level-up panel opens (FUN_00410a88) or a class changes (FUN_0040be00).
@@ -31,6 +32,7 @@ public sealed class Audio(GameFolder game) : IDisposable
         {
             _musicVolume = value;
             if (_stream is not null) _stream.Volume = Math.Clamp(value, 0, 1);
+            if (_wavLoop is not null) _wavLoop.Volume = Math.Clamp(value, 0, 1);
             if (_bgmOpen) Mci($"setaudio erumani_bgm volume to {(int)(value * 1000)}");
         }
     }
@@ -122,7 +124,7 @@ public sealed class Audio(GameFolder game) : IDisposable
     public void PlayBgm(string file)
     {
         string? next = file == "(OFF)" || file.Length == 0 ? null : file;
-        if (string.Equals(next, CurrentBgm, StringComparison.OrdinalIgnoreCase) && (_bgmOpen || _stream is not null)) return;
+        if (string.Equals(next, CurrentBgm, StringComparison.OrdinalIgnoreCase) && (_bgmOpen || _stream is not null || _wavLoop is not null)) return;
         StopBgm();
         CurrentBgm = next;
         _bgmLengthMs = 0;
@@ -144,6 +146,19 @@ public sealed class Audio(GameFolder game) : IDisposable
                 return;
             }
             catch (Exception) { StopSynth(); }   // fall back to MCI
+        }
+        if (!midi)
+        {
+            // MCI only notices the end when polled, which left a gap before each repeat: a looping sound has none
+            try { _wavBgm = Load(path); } catch (Exception) { _wavBgm = null; }
+            if (_wavBgm is not null)
+            {
+                _wavLoop = _wavBgm.CreateInstance();
+                _wavLoop.IsLooped = true;
+                _wavLoop.Volume = Math.Clamp(_musicVolume, 0, 1);
+                _wavLoop.Play();
+                return;
+            }
         }
         Mci($"open \"{path}\" type {(midi ? "sequencer" : "waveaudio")} alias erumani_bgm");
         Mci($"setaudio erumani_bgm volume to {(int)(_musicVolume * 1000)}");
@@ -172,9 +187,16 @@ public sealed class Audio(GameFolder game) : IDisposable
         return 0;
     }
 
+    SoundEffect? _wavBgm;
+    SoundEffectInstance? _wavLoop;
+
     void StopBgm()
     {
         StopSynth();
+        _wavLoop?.Stop();
+        _wavLoop?.Dispose();
+        _wavBgm?.Dispose();
+        (_wavLoop, _wavBgm) = (null, null);
         if (!_bgmOpen) return;
         Mci("stop erumani_bgm");
         Mci("close erumani_bgm");
