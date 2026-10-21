@@ -80,6 +80,18 @@ public sealed class ScreenEffects
         _shakeFrames = 40;
     }
 
+    /// <summary>Jumps every running effect to its end (cutscene skip).</summary>
+    public void Complete()
+    {
+        if (_fadeT < _fadeFrames) { Fade = _fadeTo; _fadeT = _fadeFrames; }
+        if (_toneT < _toneFrames) { Tone = _toneTo; _toneT = _toneFrames; }
+        FlashAlpha = 0;
+        _shakeFrames = 0;
+        ShakeOffset = Point.Zero;
+        PictureAlpha = _picTarget;
+        if (PictureAlpha == 0) Picture = null;
+    }
+
     public void Update()
     {
         if (_fadeT < _fadeFrames) Fade = MathHelper.Lerp(_fadeFrom, _fadeTo, ++_fadeT / (float)_fadeFrames);

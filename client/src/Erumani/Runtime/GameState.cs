@@ -65,4 +65,6 @@ public interface IMapContext
     /// <summary>Starts all queued moves; returns true while they are still animating.</summary>
     void ExecuteMoves();
     bool MovesRunning { get; }
+    /// <summary>Puts every moving unit at the end of its moves at once (cutscene skip).</summary>
+    void FinishMoves();
 }

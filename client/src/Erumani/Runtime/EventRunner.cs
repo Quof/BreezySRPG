@@ -77,9 +77,33 @@ public sealed class EventRunner
         if (Log.Count > 200) Log.RemoveAt(0);
     }
 
+    bool _skipping;
+
+    /// <summary>
+    /// Cutscene skip (modern option): runs the rest of the event at once. Every command still takes effect (switches,
+    /// items, units, music, pictures, scripted moves land where they end) and messages go to the backlog; only
+    /// character choices stop the skip, since the player has to answer them.
+    /// </summary>
+    public void Skip()
+    {
+        if (!Running || Choice is not null) return;
+        _skipping = true;
+        Update(new EventInput(false, false, false, false, false));
+    }
+
+    void SkipBlocks()
+    {
+        Message = null;
+        _waitFrames = 0;
+        _waitButton = false;
+        if (_waitFx) { _fx.Complete(); _waitFx = false; }
+        if (_waitMoves) { _map.FinishMoves(); _waitMoves = false; }
+    }
+
     public void Update(EventInput input)
     {
-        if (!Running) return;
+        if (!Running) { _skipping = false; return; }
+        if (_skipping) SkipBlocks();
 
         // --- blocked states ---
         if (Message is not null)
@@ -113,8 +137,12 @@ public sealed class EventRunner
             var (nodes, pc) = _stack.Pop();
             if (pc >= nodes.Count) continue;
             _stack.Push((nodes, pc + 1));
-            if (Execute(nodes[pc])) return;
+            if (!Execute(nodes[pc])) continue;
+            if (_skipping && Choice is null) { SkipBlocks(); continue; }
+            _skipping = false;
+            return;
         }
+        _skipping = false;
     }
 
     /// <summary>Executes one node; returns true if the interpreter must wait.</summary>
@@ -180,6 +208,7 @@ public sealed class EventRunner
                 _fx.FlashTint(c.U16(0), c.I16(2), c.I16(4), c.I16(6), c.I16(8));
                 return false;
             case Op.ShakeScreen:
+                if (_skipping) return false;
                 _fx.Shake(c.U16(0));
                 _waitFx = true;
                 return true;
@@ -203,7 +232,7 @@ public sealed class EventRunner
                 _audio.PlayBgm(c.Str(0));
                 return false;
             case Op.SoundEffect:
-                _audio.PlaySe(c.Str(0));
+                if (!_skipping) _audio.PlaySe(c.Str(0));
                 return false;
             case Op.VariableOperation:
                 RunVariable(c);

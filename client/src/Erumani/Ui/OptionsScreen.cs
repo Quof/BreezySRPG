@@ -103,6 +103,7 @@ public sealed class OptionsScreen
         new("Skip enemy turn", () => OnOff(_s.SkipEnemyTurn), _ => _s.SkipEnemyTurn = !_s.SkipEnemyTurn),
         new("Fast-forward key", () => _s.FastForwardMode == FastForwardMode.Hold ? "Hold" : "Toggle",
             d => _s.FastForwardMode = Cycle(Enum.GetValues<FastForwardMode>(), _s.FastForwardMode, d)),
+        new("Hold left click to fast-forward", () => OnOff(_s.FastForwardMouse), _ => _s.FastForwardMouse = !_s.FastForwardMouse),
         new("Fast-forward speed", () => $"×{_s.FastForwardSpeed}", d => _s.FastForwardSpeed = Cycle(new[] { 2, 3, 4, 6, 8 }, _s.FastForwardSpeed, d)),
         new("Fast-forward skips battles", () => OnOff(_s.FastForwardSkipsScenes), _ => _s.FastForwardSkipsScenes = !_s.FastForwardSkipsScenes),
         new("Fast-forward advances text", () => OnOff(_s.FastForwardAdvancesText), _ => _s.FastForwardAdvancesText = !_s.FastForwardAdvancesText),
@@ -115,6 +116,7 @@ public sealed class OptionsScreen
         [GameAction.CameraUp] = "Camera up (menu up)", [GameAction.CameraDown] = "Camera down (menu down)",
         [GameAction.CameraLeft] = "Camera left", [GameAction.CameraRight] = "Camera right",
         [GameAction.FastForward] = "Fast-forward", [GameAction.Backlog] = "Text backlog", [GameAction.Options] = "Options", [GameAction.Fullscreen] = "Fullscreen",
+        [GameAction.SkipCutscene] = "Skip cutscene",
     };
 
     List<Row> ControlRows()

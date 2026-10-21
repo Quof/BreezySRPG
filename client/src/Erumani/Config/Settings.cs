@@ -9,7 +9,7 @@ public enum GameAction
 {
     Confirm, Cancel, Info, Up, Down, Left, Right,
     CameraUp, CameraDown, CameraLeft, CameraRight,
-    FastForward, Backlog, Options, Fullscreen,
+    FastForward, Backlog, Options, Fullscreen, SkipCutscene,
 }
 
 public enum Scaling { Integer, Fit, Stretch }
@@ -41,16 +41,17 @@ public sealed class Settings
     public int FastForwardSpeed { get; set; } = 4;
     public bool FastForwardSkipsScenes { get; set; } = true;
     public bool FastForwardAdvancesText { get; set; } = true;
+    public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button fast-forwards
     public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
     public bool ModernUi { get; set; }                    // the restyled windows, menus and text box instead of the original look
 
     public Dictionary<GameAction, List<Keys>> Keys { get; set; } = DefaultKeys();
 
     /// <summary>Keyboard layout in the spirit of SRPG Studio: arrows move the map cursor and menus, WASD scroll the
-    /// camera (and move in menus), Enter/Z/Space confirm, Esc/X/Backspace cancel.</summary>
+    /// camera (and move in menus), Enter/Z confirm, Esc/X/Backspace cancel, Space skips a cutscene.</summary>
     public static Dictionary<GameAction, List<Keys>> DefaultKeys() => new()
     {
-        [GameAction.Confirm] = new() { Microsoft.Xna.Framework.Input.Keys.Enter, Microsoft.Xna.Framework.Input.Keys.Z, Microsoft.Xna.Framework.Input.Keys.Space },
+        [GameAction.Confirm] = new() { Microsoft.Xna.Framework.Input.Keys.Enter, Microsoft.Xna.Framework.Input.Keys.Z },
         [GameAction.Cancel] = new() { Microsoft.Xna.Framework.Input.Keys.Escape, Microsoft.Xna.Framework.Input.Keys.X, Microsoft.Xna.Framework.Input.Keys.Back },
         [GameAction.Info] = new() { Microsoft.Xna.Framework.Input.Keys.C, Microsoft.Xna.Framework.Input.Keys.LeftShift },
         [GameAction.Up] = new() { Microsoft.Xna.Framework.Input.Keys.Up },
@@ -65,6 +66,7 @@ public sealed class Settings
         [GameAction.Backlog] = new() { Microsoft.Xna.Framework.Input.Keys.L },
         [GameAction.Options] = new() { Microsoft.Xna.Framework.Input.Keys.F1 },
         [GameAction.Fullscreen] = new() { Microsoft.Xna.Framework.Input.Keys.F4 },
+        [GameAction.SkipCutscene] = new() { Microsoft.Xna.Framework.Input.Keys.Space },
     };
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
@@ -80,6 +82,9 @@ public sealed class Settings
             try
             {
                 var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path), Json) ?? new Settings();
+                // Space moved from Confirm to the cutscene skip when that was added
+                if (!s.Keys.ContainsKey(GameAction.SkipCutscene) && s.Keys.TryGetValue(GameAction.Confirm, out var ok))
+                    ok.Remove(Microsoft.Xna.Framework.Input.Keys.Space);
                 foreach (var (a, keys) in DefaultKeys()) s.Keys.TryAdd(a, keys);   // actions added later
                 s.Path = path;
                 return s;

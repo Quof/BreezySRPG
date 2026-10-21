@@ -50,7 +50,7 @@ public sealed class ErumaniGame : Game
     string _status = "";
     KeyboardState _prevKeys;
     MouseState _prevMouse;
-    int _activeFrames;
+    int _activeFrames, _leftHeld;
 
     static readonly BlendState Multiply = new()
     {
@@ -310,6 +310,9 @@ public sealed class ErumaniGame : Game
         bool cancel = _controls.Pressed(GameAction.Cancel) || rclick;
         if (_settings.FastForwardMode == FastForwardMode.Toggle && _controls.Pressed(GameAction.FastForward)) _ffToggle = !_ffToggle;
         bool ff = _settings.FastForwardMode == FastForwardMode.Hold ? _controls.Down(GameAction.FastForward) : _ffToggle;
+        // holding the left button (after a quarter second, so ordinary clicks stay clicks) fast-forwards too
+        _leftHeld = mouseHere && m.LeftButton == ButtonState.Pressed ? _leftHeld + 1 : 0;
+        if (_settings.FastForwardMouse && _leftHeld > 15) ff = true;
 
         var input = new EventInput(confirm, cancel, up, down, ff);
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
@@ -341,6 +344,23 @@ public sealed class ErumaniGame : Game
             _audio.Update();
             _options.Update(battleInput, _mouseVirtual, _controls);
             if (_options.Done) _options = null;
+            EndUpdate(gameTime, k, m);
+            return;
+        }
+
+        // cutscene skip (modern option): Space during an event asks はい / いいえ first
+        if (_opts.Screenshot is null && _skipPrompt is null && _controls.Pressed(GameAction.SkipCutscene) && CanSkipCutscene)
+            OpenSkipPrompt();
+        if (_skipPrompt is not null)
+        {
+            _frame++;
+            _audio.Update();
+            if (_opts.Screenshot is null)
+            {
+                int pick = _skipPrompt.Navigate(battleInput with { MouseMoved = mouseMoved }, _mouseVirtual);
+                if (pick == 0) { _skipPrompt = null; _runner?.Skip(); }
+                else if (pick == 1 || cancel) _skipPrompt = null;
+            }
             EndUpdate(gameTime, k, m);
             return;
         }
@@ -423,6 +443,9 @@ public sealed class ErumaniGame : Game
             _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, telopTok)));
             _shotAt = _frame + int.Parse(tm.Groups[2].Value);
         }
+        // cutscene skip: "skip" opens the prompt on the next message, "skipyes" answers はい
+        if (_script.TryPeek(out var sk) && sk == "skip" && _runner is { Running: true, Message: not null }) { _script.Dequeue(); OpenSkipPrompt(); }
+        if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _skipPrompt = null; _runner?.Skip(); }
         bool idle = _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null };
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || ++_scriptWait < 10) return bi;
@@ -521,6 +544,27 @@ public sealed class ErumaniGame : Game
         }
     }
 
+    Camp.MenuList? _skipPrompt;
+
+    /// <summary>An event is playing on a map and isn't waiting for a choice.</summary>
+    bool CanSkipCutscene => _session is not null && _title is null && _camp is null && _runner is { Running: true, Choice: null }
+        && _battle?.SceneShowing != true;
+
+    void OpenSkipPrompt()
+    {
+        // the original's はい / いいえ (WORD.DAT 45, 46), defaulting to はい
+        _skipPrompt = new Camp.MenuList { Rect = new Rectangle(216, 196, 208, 84), Header = "イベントをスキップしますか？", Indent = 16 };
+        _skipPrompt.Set(new[] { _db.Words[45], _db.Words[46] });
+        Sfx.Click();
+    }
+
+    void DrawSkipPrompt()
+    {
+        if (_skipPrompt is null) return;
+        _ui.Fill(_sb, new Rectangle(0, 0, 640, 480), Color.Black * 0.35f);
+        _skipPrompt.Draw(_sb, _ui, true, _frame);
+    }
+
     int? _pendingMap, _pendingCamp;
     bool _autoAdvance;
     bool _pendingTitle;
@@ -578,6 +622,7 @@ public sealed class ErumaniGame : Game
         DrawStatus();
         if (_debug) DrawDebug();
         _backlog.Draw(_sb);
+        DrawSkipPrompt();
         _options?.Draw(_sb, _frame);
         if (_opts.Screenshot is null && IsActive)
             _ui.Cursor(_sb, _mouseVirtual, _runner?.Message is not null && !_backlog.Open && _options is null, _frame);

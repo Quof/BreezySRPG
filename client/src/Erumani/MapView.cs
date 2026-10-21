@@ -218,6 +218,21 @@ public sealed class MapSession : IMapContext
 
     public bool MovesRunning => Visuals.Values.Any(v => v.Running.Count > 0 || v.StepFrames > 0);
 
+    public void FinishMoves()
+    {
+        foreach (var (u, v) in Visuals)
+        {
+            while (v.Running.Count > 0)
+            {
+                int s = v.Running.Dequeue(), dir = s % 4;
+                v.Facing = FacingRow[dir];
+                if (s < 4) { u.X += StepDelta[dir].X; u.Y += StepDelta[dir].Y; }
+            }
+            v.StepFrames = 0;
+            v.Offset = Vector2.Zero;
+        }
+    }
+
     /// <summary>Animates a unit along a path of tiles (battle movement).</summary>
     public void Walk(BattleUnit u, IReadOnlyList<(int X, int Y)> path)
     {
