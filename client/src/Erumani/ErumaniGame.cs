@@ -120,6 +120,7 @@ public sealed class ErumaniGame : Game
         if (_folder.Find("SRPGEXEC.EXE") is { } exePath && ExeResources.Raw(exePath, 0, "KANJI", "KANJIFONT") is { Length: >= 24 } glyphs)
             _ui.MenuFont = new Ui.ExeFont(GraphicsDevice, glyphs);
         _audio = new Audio(_folder) { Muted = _opts.Screenshot is not null };
+        _audio.Prepare();   // the sound device and the system sounds now, the rest read ahead
         Sfx.Audio = _audio;
         _settings = Settings.Load(persistent: _opts.Screenshot is null);
         _controls = new Controls(_settings);

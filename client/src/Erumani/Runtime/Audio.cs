@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MeltySynth;
 using Microsoft.Xna.Framework.Audio;
 using Srpg95.Data;
@@ -152,7 +153,7 @@ public sealed class Audio(GameFolder game) : IDisposable
         if (!midi)
         {
             // MCI only notices the end when polled, which left a gap before each repeat: a looping sound has none
-            try { _wavBgm = Load(path); } catch (Exception) { _wavBgm = null; }
+            try { _wavBgm = Load(File.ReadAllBytes(path)); } catch (Exception) { _wavBgm = null; }
             if (_wavBgm is not null)
             {
                 _wavLoop = _wavBgm.CreateInstance();
@@ -217,16 +218,44 @@ public sealed class Audio(GameFolder game) : IDisposable
 
     // ---------------- sound effects ----------------
 
+    /// <summary>The EFS folder's files read ahead (<see cref="Prepare"/>), by path, until each becomes a sound.</summary>
+    readonly ConcurrentDictionary<string, byte[]> _readAhead = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the sounds ready before they're needed, as the original does: it starts its sound at start-up and reserves
+    /// its four system sounds then (HarmonyInitWave, FUN_00409484), and caches a battle animation's sound before its
+    /// scene (HarmonyCacheSound). Here the audio device and the system sounds now, and the rest of the game's EFS
+    /// folder read into memory in the background (a few MB), so no sound waits on the disk the first time it plays.
+    /// </summary>
+    public void Prepare()
+    {
+        if (Muted) return;
+        foreach (var f in new[] { "CLICK.WAV", "CANCEL.WAV", "BUZZER.WAV", "DOWN.WAV", "LEVELUP.WAV" }) Sound(f);
+        if (game.Find("EFS") is not { } dir || !Directory.Exists(dir)) return;
+        Task.Run(() =>
+        {
+            foreach (var path in Directory.EnumerateFiles(dir))
+                try { _readAhead.TryAdd(path, File.ReadAllBytes(path)); } catch (Exception) { }   // read when it plays instead
+        });
+    }
+
+    /// <summary>A sound effect from EFS, made once (null for a missing or unreadable file: it isn't heard).</summary>
+    SoundEffect? Sound(string file)
+    {
+        if (_cache.TryGetValue(file, out var se)) return se;
+        try
+        {
+            if (game.Find("EFS/" + file) is { } path)
+                se = Load(_readAhead.TryRemove(path, out var bytes) ? bytes : File.ReadAllBytes(path));
+        }
+        catch (Exception) { se = null; }   // a damaged or unusual WAV stays silent
+        return _cache[file] = se;
+    }
+
     public void PlaySe(string file)
     {
         if (Muted || file.Length == 0) return;
-        if (!_cache.TryGetValue(file, out var se))
-        {
-            try { se = Load(game.Find("EFS/" + file)); }
-            catch (Exception) { se = null; }   // a damaged or unusual WAV stays silent
-            _cache[file] = se;
-        }
-        se?.Play(Math.Clamp(SoundVolume, 0, 1), 0, 0);
+        Sound(file)?.Play(Math.Clamp(SoundVolume, 0, 1), 0, 0);
     }
 
     public void Click() { if (MessageSound) { PlaySe("CLICK.WAV"); _clickAt = Environment.TickCount64; } }
@@ -249,10 +278,8 @@ public sealed class Audio(GameFolder game) : IDisposable
     public void MessageAdvance() { if (AdvanceSound) Click(); }
 
     /// <summary>Minimal RIFF/WAVE PCM loader; 8-bit unsigned samples are widened to 16-bit.</summary>
-    static SoundEffect? Load(string? path)
+    static SoundEffect? Load(byte[] b)
     {
-        if (path is null) return null;
-        var b = File.ReadAllBytes(path);
         if (b.Length < 12 || b[0] != 'R' || b[8] != 'W') return null;
         int pos = 12, channels = 1, rate = 22050, bits = 16;
         byte[]? pcm = null;
