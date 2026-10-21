@@ -897,9 +897,15 @@ public sealed class BattleController
         int defAfter = Math.Max(0, def.Hp - fa.Damage * fa.Strikes);
         int atkAfter = defAfter == 0 ? atk.Hp : Math.Max(0, atk.Hp - fd.Damage * fd.Strikes);
         const int w = 264, h = 122;
-        var tile = _s.ScreenPos(def.X, def.Y, ViewportRect);
-        int x = tile.X < 320 ? ErumaniGame.ViewX + ErumaniGame.ViewWidth - w - 8 : ErumaniGame.ViewX + 8;
-        var r = new Rectangle(x, ErumaniGame.ViewY + 8, w, h);
+        // up and to the right of the two combatants' tiles; up-left when that would run off the right edge
+        var a = _s.ScreenPos(atk.X, atk.Y, ViewportRect).ToPoint();
+        var d = _s.ScreenPos(def.X, def.Y, ViewportRect).ToPoint();
+        int left = Math.Min(a.X, d.X), right = Math.Max(a.X, d.X) + MapSession.Tile, top = Math.Min(a.Y, d.Y);
+        int viewRight = ErumaniGame.ViewX + ErumaniGame.ViewWidth;
+        int x = right + 8 + w <= viewRight - 4 ? right + 8 : left - 8 - w;
+        x = Math.Clamp(x, ErumaniGame.ViewX + 4, viewRight - w - 4);
+        int py = Math.Clamp(top - h - 8, ErumaniGame.ViewY + 4, ErumaniGame.ViewY + ErumaniGame.ViewHeight - h - 4);
+        var r = new Rectangle(x, py, w, h);
         _ui.Panel(sb, r);
         var white = Ui.Ui.PanelText;
         var dim = new Color(200, 210, 200);
