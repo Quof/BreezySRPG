@@ -62,6 +62,7 @@ Options:
   - `endturn` ends the player's turn, as ターン終了 does.
   - `turnmenu` opens the turn menu, as a click on an empty tile does (`down,down,down,enter` then picks ロードする).
   - `wheelup` / `wheeldown` turn the mouse wheel a notch.
+  - `ffhold` / `ffrelease` hold or let go of the fast-forward key at once; `msg` waits until an event shows a message or a choice.
   - `rclick` right-clicks as soon as an event shows a message or a choice, once the `--advance` confirms are done (the event's menu: save, load, options); `rclickfx` as soon as it shows neither (a screen effect, a move, a pan, a wait). With the menu up, the other keys work it: `enter` saves, `down,enter` loads, `down,down,enter` opens the options; in the save screen `enter` picks the file (a save made in an event starts on file 9).
 
   Example: select ジュナ on map 1 and move her 3 tiles up:
@@ -104,7 +105,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | Arrows | move the map cursor (hold to repeat); move in menus |
 | W A S D | scroll the map camera; W/S also move in menus |
 | C / Left Shift, right click on a unit | unit status; C / Left Shift again shows the weapon's, armour's, accessory's stats in turn (pointing at an item's name does too) |
-| Tab / Left Ctrl | fast-forward (hold, or toggle; see Options) |
+| Tab / Left Ctrl | fast-forward (hold, or toggle; see Options). When gameplay gives way to an event's story, a fast-forward stops before its first line: let go and press again (toggle again) to skip the story too |
 | Mouse wheel up / L | text backlog (wheel down or click to close) |
 | Space | during an event: skip the rest of it (asks first) |
 | R | enemy ranges: every enemy's reach (moves and attacks, spells included) as one red area; press again to hide |

@@ -513,9 +513,17 @@ public sealed class ErumaniGame : Game
         // and the confirm key the same way (its press confirms; held, it fast-forwards)
         _confirmHeld = !alt && _controls.Down(GameAction.Confirm) ? _confirmHeld + 1 : 0;
         if (_settings.FastForwardMouse && Math.Max(_leftHeld, _confirmHeld) > GameClock.Frames(600)) ff = true;
+        if (_scriptFf) ff = true;   // a scripted run's held fast-forward ("ffhold")
+        // a story that began under a fast-forward stopped it (StoryBegins): it comes back only once every way of fast-
+        // forwarding has been let go and is given again
+        if (_ffStopped)
+        {
+            if (_controls.Down(GameAction.FastForward) || _leftHeld > 0 || _confirmHeld > 0 || _scriptFf) { ff = false; _leftHeld = _confirmHeld = 0; }
+            else _ffStopped = false;
+        }
 
         var input = new EventInput(confirm, cancel, up, down, ff);
-        if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
+        if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, ff);   // scripted runs ignore real input (ff: "ffhold")
         // "choice+N" / "choiceK+N": the shot N frames after the next (the K-th) character choice comes up, left unanswered
         bool choiceUp = _runner?.Choice is not null;
         if (choiceUp && !_choiceWasUp) _choicesSeen++;
@@ -547,7 +555,7 @@ public sealed class ErumaniGame : Game
             Info: _controls.Pressed(GameAction.Info), Wheel: wheel);
         if (_battle is not null) _battle.MouseVirtual = _mouseVirtual;
         if (_opts.Screenshot is not null)   // ignore the real mouse while scripted
-            battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, false));
+            battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, input.FastForward));
 
         // a right click during an event on the map opens a menu there — save, load, options (modern; in the original it
         // does nothing then): the event waits while it's open and carries on where it was. The click is used up here.
@@ -688,6 +696,13 @@ public sealed class ErumaniGame : Game
             if (i == 0) Step(k, input, battleInput);
             else Step(k, input with { Confirm = false, Up = false, Down = false, Cancel = false },
                 battleInput with { Confirm = false, Cancel = false, Up = false, Down = false, Left = false, Right = false, Click = false, RightClick = false, MouseMoved = false });
+            // gameplay giving way to an event's story stops a fast-forward before its first words go by
+            if (StoryBegins() && input.FastForward)
+            {
+                (_ffStopped, _ffToggle) = (true, false);
+                if (_opts.Screenshot is not null) Trace($"{_frame}: fast-forward stopped: {_runner?.Name} begins");
+                break;
+            }
         }
         EdgeScroll(m, mouseHere);
         _prevKeys = k;
@@ -712,6 +727,9 @@ public sealed class ErumaniGame : Game
         if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _skipPrompt = null; _runner?.Skip(); }
         // "rclick": a right click as soon as an event shows a message or a choice, once the --advance confirms are done (the
         // event's menu: save, load, options); "rclickfx" as soon as it shows neither (a screen effect, a move, a pan, a wait)
+        // "ffhold" / "ffrelease": the fast-forward key held or let go, at once; "msg": waits until an event shows a message or a choice
+        if (_script.TryPeek(out sk) && sk is "ffhold" or "ffrelease") { _script.Dequeue(); _scriptFf = sk == "ffhold"; Trace($"{_frame}: {sk}"); }
+        if (_script.TryPeek(out sk) && sk == "msg" && _runner is { Message: not null } or { Choice: not null }) { _script.Dequeue(); Trace($"{_frame}: msg ({_runner?.Name})"); }
         if (_script.TryPeek(out sk) && sk is "rclick" or "rclickfx" && EventShowing && _options is null && _eventMenu is null && _shotAdvance <= 0 && !bi.Confirm
             && !_fx.Holding && _afterFade is null   // a right click then does nothing (a load's hold, a fade)
             && (sk == "rclick" ? _runner is { Message: not null } or { Choice: not null } : _runner is { Message: null, Choice: null }))
@@ -757,7 +775,7 @@ public sealed class ErumaniGame : Game
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
             || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice") || _script.Peek().StartsWith("click+") || _script.Peek().StartsWith("state:")
-            || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
+            || _script.Peek() is "logos" or "msg" || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
@@ -893,6 +911,29 @@ public sealed class ErumaniGame : Game
     }
 
     Camp.MenuList? _skipPrompt;
+
+    /// <summary>A fast-forward that a story's start stopped: none until its inputs have all been let go (<see cref="StoryBegins"/>).</summary>
+    bool _ffStopped;
+    /// <summary>A scripted run's fast-forward key, held ("ffhold") or let go ("ffrelease").</summary>
+    bool _scriptFf;
+    /// <summary>An event was running at the last step; the one running began after gameplay and hasn't shown anything yet.</summary>
+    bool _eventWasRunning, _eventUnseen;
+
+    /// <summary>
+    /// Called after every step: true once, when an event that began after gameplay shows its first message or choice —
+    /// the story begins. An event that runs and ends showing nothing (a switch set) doesn't count, and one the checkpoint
+    /// starts as another ends (in the same step) is the same story going on.
+    /// </summary>
+    bool StoryBegins()
+    {
+        bool running = _runner is { Running: true };
+        if (running && !_eventWasRunning) _eventUnseen = true;
+        if (!running) _eventUnseen = false;
+        _eventWasRunning = running;
+        if (!_eventUnseen || _runner is not ({ Message: not null } or { Choice: not null })) return false;
+        _eventUnseen = false;
+        return true;
+    }
 
     /// <summary>An event is playing on the map (a cutscene, a choice included), not a battle scene nor one of the client's own boxes.</summary>
     bool EventShowing => _session is not null && _title is null && _camp is null && _gameOver < 0 && _runner is { Running: true }
