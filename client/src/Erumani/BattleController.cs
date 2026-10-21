@@ -37,6 +37,8 @@ public sealed class BattleController
     BattleUnit? _sel;
     (int X, int Y) _selFrom;
     Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)>? _reach;
+    /// <summary>A clicked enemy's attack range around its movement (modern): what it could hit from where it can stop, past <see cref="_reach"/>.</summary>
+    List<(int X, int Y)>? _reachHits;
     List<BattleUnit> _targets = new();
     int _menuIndex;
     string[] _menu = Array.Empty<string>();
@@ -147,6 +149,8 @@ public sealed class BattleController
     /// <summary>A menu has keyboard focus (W/S move in it instead of the camera).</summary>
     public bool MenuOpen => _state_ is State.WholeMap or State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
         or State.QuitConfirm or State.EquipList or State.EndTurnConfirm or State.EquipSlots or State.UseConfirm;
+    /// <summary>The wheel is the map's own, not the backlog's: a menu's, or the spell forecast's while a spell is aimed (FocusAim).</summary>
+    public bool UsesWheel => MenuOpen || _state_ == State.Aiming;
     /// <summary>A click would move things on: a battle scene's death message, or COMPLETE!! from its 60th tick.</summary>
     public bool WaitingForClick => _scene?.WaitingForClick == true || _state_ == State.Showing
         || (_telop == CompleteTelop && _telopTick >= 60 && _ending == MapOutcome.None);
@@ -925,7 +929,8 @@ public sealed class BattleController
 
     /// <summary>
     /// FUN_0040e658, the player's phase: a click on a unit that can act shows its movement range — the player's own
-    /// to move it, anyone else's just to look (FUN_0040ebcc) — while acted or sleeping units do nothing; a right
+    /// to move it, anyone else's just to look (FUN_0040ebcc), an enemy's with its attack range around it (modern,
+    /// <see cref="EnemyAi.Hits"/>) — while acted or sleeping units do nothing; a right
     /// click (or the info key) opens the status window; a click on an empty tile opens the turn menu (a right click there too, modern).
     /// </summary>
     void UpdateIdle(BattleInput i)
@@ -943,6 +948,7 @@ public sealed class BattleController
         _selFrom = (u.X, u.Y);
         _reach = _s.Field.Reachable(u);
         _viewOnly = u.Side != Side.Ally;
+        _reachHits = u.Side == Side.Enemy ? EnemyAi.Hits(_s.Field, u, _reach.Keys).Where(t => !_reach.ContainsKey(t)).ToList() : null;
         _state_ = State.Selected;
     }
 
@@ -1016,6 +1022,10 @@ public sealed class BattleController
     Magic? _aimSpell;
     Item? _aimItem;
     HashSet<(int X, int Y)> _aimRange = new();
+    /// <summary>The units the spell would reach from the aim now (<see cref="AimTargets"/>), and the one whose forecast shows, chosen at that aim.</summary>
+    List<BattleUnit> _aimTargets = new();
+    BattleUnit? _aimFocus;
+    (int X, int Y)? _aimFocusAt;
     List<BattleUnit> _medTargets = new();
     HashSet<(int X, int Y)> _medRange = new();
 
@@ -1273,6 +1283,9 @@ public sealed class BattleController
         _aimSpell = m;
         _aimItem = fromItem;
         _aimRange = _s.Field.SpellRange(m, u.X, u.Y).ToHashSet();
+        _aimTargets = new();
+        _aimFocus = null;
+        _aimFocusAt = null;
         PointAt(u);
         _state_ = State.Aiming;
     }
@@ -1287,12 +1300,42 @@ public sealed class BattleController
             return;
         }
         MoveCursor(i);
+        FocusAim(i);
         if (!Pick(i) || _aimSpell is null) return;
         var a = (_cursor.X, _cursor.Y);
         // nothing unless the aim is in range (any aim for a spell covering the whole map) and meets someone (FUN_00410050)
         if ((!_aimSpell.EffectWholeMap && !_aimRange.Contains(a)) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) return;
         Sfx.Click();
         Cast(_sel!, _aimSpell, a, _aimItem);
+    }
+
+    /// <summary>
+    /// The spell forecast's unit (modern): whenever the aim moves, the first of the units the spell would reach from
+    /// there — the nearest it's meant for; then the info key steps on through them all, the wheel either way.
+    /// </summary>
+    void FocusAim(BattleInput i)
+    {
+        var aim = (_cursor.X, _cursor.Y);
+        _aimTargets = AimTargets(aim);
+        if (aim != _aimFocusAt || _aimFocus is null || !_aimTargets.Contains(_aimFocus)) { _aimFocus = _aimTargets.FirstOrDefault(); _aimFocusAt = aim; }
+        int step = (i.Info ? 1 : 0) - Math.Sign(i.Wheel);
+        if (step == 0 || _aimTargets.Count < 2) return;
+        _aimFocus = _aimTargets[(_aimTargets.IndexOf(_aimFocus!) + step + _aimTargets.Count) % _aimTargets.Count];
+        Sfx.Click();
+    }
+
+    /// <summary>
+    /// The units the spell would reach aimed at <paramref name="aim"/> (none out of its range, unless it covers the whole
+    /// map), in the order its forecast goes through them: those it's meant for first — the other side for a harmful
+    /// spell, the caster's own for a support one, sides as <see cref="Battlefield.Affects"/> counts them — each group
+    /// nearest the aim first, then in the map's row order.
+    /// </summary>
+    List<BattleUnit> AimTargets((int X, int Y) aim)
+    {
+        if (_aimSpell is not { } m || _sel is not { } c || (!m.EffectWholeMap && !_aimRange.Contains(aim))) return new();
+        bool Meant(BattleUnit t) => ((t.Side == Side.Enemy) != (c.Side == Side.Enemy)) == (m.Type is 0 or 1);
+        return _s.Field.SpellTargets(c, m, aim.X, aim.Y)
+            .OrderBy(t => Meant(t) ? 0 : 1).ThenBy(t => Math.Abs(t.X - aim.X) + Math.Abs(t.Y - aim.Y)).ToList();
     }
 
     void UpdateMedicineTarget(BattleInput i)
@@ -1739,10 +1782,10 @@ public sealed class BattleController
     }
 
     /// <summary>
-    /// The forecast for a spell (modern) on the unit under the pointer, one of those it reaches: the unit's HP before →
-    /// after, what the spell does to it and its chance to land; the caster's TP before → after (no counter to spells).
+    /// The forecast for a spell (modern) on one of the units it reaches (FocusAim): the unit's HP before → after, what
+    /// the spell does to it and its chance to land; the caster's TP before → after (no counter to spells).
     /// </summary>
-    void DrawSpellForecast(SpriteBatch sb, BattleUnit caster, Magic m, BattleUnit t, bool fromItem)
+    void DrawSpellForecast(SpriteBatch sb, BattleUnit caster, Magic m, BattleUnit t, bool fromItem, string? count = null)
     {
         var (kind, amount, hit) = _s.Field.SpellForecast(caster, m, t);
         int after = kind switch { EffectKind.Damage => Math.Max(0, t.Hp - amount), EffectKind.Heal => t.Hp + amount, _ => t.Hp };
@@ -1762,11 +1805,26 @@ public sealed class BattleController
             (Word(3), $"{t.Mp}", $"{caster.Mp} → {mpAfter}"),
             (kind == EffectKind.Heal ? "回復" : kind == EffectKind.Damage ? "威力" : "効果", effect, "－"),
             ("命中", kind == EffectKind.Resisted ? "－" : $"{hit}%", "－"),
-        });
+        }, count);
     }
 
-    /// <summary>The forecast's panel: <paramref name="left"/> (the one acted on) and <paramref name="right"/> (who acts), named over strips in their sides' colours, then the rows.</summary>
-    void ForecastPanel(SpriteBatch sb, BattleUnit left, BattleUnit right, (string Label, string Left, string Right)[] rows)
+    /// <summary>The unit whose spell forecast shows, of several the spell reaches: a frame around its tile, its brightness pulsing.</summary>
+    void DrawFocusFrame(SpriteBatch sb, BattleUnit u, int frame)
+    {
+        var p = _s.ScreenPos(u.X, u.Y, ViewportRect).ToPoint();
+        const int T = MapSession.Tile;
+        var c = Color.White * (0.7f + 0.3f * MathF.Sin(frame * MathF.Tau / 40));
+        _ui.Fill(sb, new Rectangle(p.X, p.Y, T, 2), c);
+        _ui.Fill(sb, new Rectangle(p.X, p.Y + T - 2, T, 2), c);
+        _ui.Fill(sb, new Rectangle(p.X, p.Y + 2, 2, T - 4), c);
+        _ui.Fill(sb, new Rectangle(p.X + T - 2, p.Y + 2, 2, T - 4), c);
+    }
+
+    /// <summary>
+    /// The forecast's panel: <paramref name="left"/> (the one acted on) and <paramref name="right"/> (who acts), named over
+    /// strips in their sides' colours, then the rows; <paramref name="count"/> ("2/3") between the names where it fits.
+    /// </summary>
+    void ForecastPanel(SpriteBatch sb, BattleUnit left, BattleUnit right, (string Label, string Left, string Right)[] rows, string? count = null)
     {
         const int w = 264, h = 122;
         // up and to the right of the two units' tiles; up-left when that would run off the right edge
@@ -1793,6 +1851,9 @@ public sealed class BattleController
         _ui.Fill(sb, new Rectangle(r.Right - 116, r.Y + 26, 108, 2), SideColor(right));
         T(left.Name, 10, 8, white, -1);
         T(right.Name, w - 10, 8, white, 1);
+        if (count is not null && _ui.SmallText.Get(count) is { } ct && Math.Max(Width(left.Name), Width(right.Name)) + 10 + 8 <= (w - ct.Width) / 2f)
+            T(count, w / 2, 8, dim, 0);
+        float Width(string s) => _ui.SmallText.Get(s)?.Width ?? 0;
         for (int k = 0; k < rows.Length; k++)
         {
             int y = 36 + k * 20;
@@ -2068,7 +2129,8 @@ public sealed class BattleController
     /// way; 2 salmon: the reach of an attack, a spell or a medicine; 3 orange: the area of an attack or a harmful spell;
     /// 4 blue: a support spell's or a medicine's — and solid (the value + 4) where a unit the action reaches stands. The
     /// area follows the cursor over the reach: its tile for an attack (FUN_00410190) or a medicine (FUN_00411c90), the
-    /// spell's effect grid around it (FUN_00411a48), the whole map for a spell that covers it.
+    /// spell's effect grid around it (FUN_00411a48), the whole map for a spell that covers it. A clicked enemy's attack
+    /// range shows salmon around its cyan movement (modern).
     /// </summary>
     public void DrawOverlays(SpriteBatch sb, Rectangle viewport, int frame)
     {
@@ -2084,6 +2146,7 @@ public sealed class BattleController
         {
             case State.Selected when _reach is not null:
                 _s.DrawRange(sb, viewport, _reach.Keys, 0, frame);
+                if (_reachHits is not null) _s.DrawRange(sb, viewport, _reachHits, 1, frame);
                 break;
             case State.Targeting when _sel is not null:
             {
@@ -2112,13 +2175,16 @@ public sealed class BattleController
         }
     }
 
-    /// <summary>The enemy ranges key (a modern aid): every enemy's reach for its coming phase, shown as one red area.</summary>
+    /// <summary>The enemy ranges key (a modern aid): every enemy's reach for its coming phase, shown as one area — yellow where they can move, red where they can only hit.</summary>
     public bool ShowThreat { get; set; }
-    HashSet<(int X, int Y)> _threat = new();
+    HashSet<(int X, int Y)> _threat = new(), _threatStops = new(), _threatAll = new();
     int? _threatKey;
 
-    /// <summary>The union of the enemies' threats (<see cref="EnemyAi.Threat"/>), worked out again only when something it depends on changes.</summary>
-    HashSet<(int X, int Y)> Threat()
+    /// <summary>
+    /// The union of the enemies' threats (<see cref="EnemyAi.Threat"/>): the tiles they could stop on, those they could
+    /// hit, and both together — worked out again only when something they depend on changes.
+    /// </summary>
+    (HashSet<(int X, int Y)> Stops, HashSet<(int X, int Y)> Hits, HashSet<(int X, int Y)> All) Threat()
     {
         var key = new HashCode();
         foreach (var u in _s.Field.Units)
@@ -2128,30 +2194,45 @@ public sealed class BattleController
         }
         foreach (bool sw in _state.Switches) key.Add(sw);
         int k = key.ToHashCode();
-        if (k == _threatKey) return _threat;
+        if (k == _threatKey) return (_threatStops, _threat, _threatAll);
         _threatKey = k;
         _threat = new HashSet<(int X, int Y)>();
-        foreach (var e in _s.Field.Alive.Where(u => u.Side == Side.Enemy)) _threat.UnionWith(EnemyAi.Threat(_s.Field, e, _state.Switches));
-        return _threat;
+        _threatStops = new HashSet<(int X, int Y)>();
+        foreach (var e in _s.Field.Alive.Where(u => u.Side == Side.Enemy))
+        {
+            var (stops, hits) = EnemyAi.Threat(_s.Field, e, _state.Switches);
+            _threatStops.UnionWith(stops);
+            _threat.UnionWith(hits);
+        }
+        _threatAll = _threat.Union(_threatStops).ToHashSet();
+        return (_threatStops, _threat, _threatAll);
     }
 
-    /// <summary>The enemies' threat as one block: a translucent red fill with a bright line only along its outer edge.</summary>
+    /// <summary>
+    /// The enemies' threat as one block: a translucent fill — yellow where an enemy could stop, red where it could only
+    /// hit — with a bright red line along the block's outer edge and a yellow one around the yellow inside it.
+    /// </summary>
     public void DrawThreat(SpriteBatch sb, Rectangle viewport)
     {
         if (!ShowThreat) return;
-        var tiles = Threat();
+        var (stops, _, tiles) = Threat();
         var fill = new Color(208, 24, 32) * 0.36f;
         var edge = new Color(255, 84, 84) * 0.95f;
+        var moveFill = new Color(255, 190, 0) * 0.5f;   // red well over green, so it reads yellow on grass
+        var moveEdge = new Color(255, 228, 72) * 0.95f;
         const int T = MapSession.Tile;
         foreach (var (x, y) in tiles)
         {
             var p = _s.ScreenPos(x, y, viewport).ToPoint();
             if (p.X + T <= viewport.X || p.Y + T <= viewport.Y || p.X >= viewport.Right || p.Y >= viewport.Bottom) continue;
-            _ui.Fill(sb, new Rectangle(p.X, p.Y, T, T), fill);
-            if (!tiles.Contains((x, y - 1))) _ui.Fill(sb, new Rectangle(p.X, p.Y, T, 2), edge);
-            if (!tiles.Contains((x, y + 1))) _ui.Fill(sb, new Rectangle(p.X, p.Y + T - 2, T, 2), edge);
-            if (!tiles.Contains((x - 1, y))) _ui.Fill(sb, new Rectangle(p.X, p.Y, 2, T), edge);
-            if (!tiles.Contains((x + 1, y))) _ui.Fill(sb, new Rectangle(p.X + T - 2, p.Y, 2, T), edge);
+            bool move = stops.Contains((x, y));
+            _ui.Fill(sb, new Rectangle(p.X, p.Y, T, T), move ? moveFill : fill);
+            // each side: the block's outer edge red; inside it, the yellow's edge where it meets the red
+            Color? Edge((int X, int Y) n) => !tiles.Contains(n) ? edge : move && !stops.Contains(n) ? moveEdge : null;
+            if (Edge((x, y - 1)) is { } top) _ui.Fill(sb, new Rectangle(p.X, p.Y, T, 2), top);
+            if (Edge((x, y + 1)) is { } bottom) _ui.Fill(sb, new Rectangle(p.X, p.Y + T - 2, T, 2), bottom);
+            if (Edge((x - 1, y)) is { } left) _ui.Fill(sb, new Rectangle(p.X, p.Y, 2, T), left);
+            if (Edge((x + 1, y)) is { } right) _ui.Fill(sb, new Rectangle(p.X + T - 2, p.Y, 2, T), right);
         }
     }
 
@@ -2182,10 +2263,14 @@ public sealed class BattleController
         if (_state_ is State.ActionMenu or State.TurnMenu && !_s.Panning) DrawMenu(sb, frame);
         if (_state_ == State.Targeting && _sel is not null && _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y) is { } ft)
             DrawForecast(sb, _sel, ft);
-        // a spell's aim: the forecast for the unit under the pointer among those the spell would reach from there
-        if (_state_ == State.Aiming && _sel is not null && _aimSpell is { } spell && _s.Field.UnitAt(_cursor.X, _cursor.Y) is { } st
-            && (spell.EffectWholeMap || _aimRange.Contains((_cursor.X, _cursor.Y))) && _s.Field.SpellTargets(_sel, spell, _cursor.X, _cursor.Y).Contains(st))
-            DrawSpellForecast(sb, _sel, spell, st, _aimItem is not null);
+        // a spell's aim: the forecast for one of the units the spell would reach from there (FocusAim) — with more than
+        // one, that unit framed and the count in the forecast's top line
+        if (_state_ == State.Aiming && _sel is not null && _aimSpell is { } spell && _aimFocus is { } st && _aimTargets.IndexOf(st) is var k and >= 0)
+        {
+            bool several = _aimTargets.Count > 1;
+            if (several) DrawFocusFrame(sb, st, frame);
+            DrawSpellForecast(sb, _sel, spell, st, _aimItem is not null, several ? $"{k + 1}/{_aimTargets.Count}" : null);
+        }
         if (_state_ == State.WholeMap)
             _s.DrawWholeMap(sb, _ui, _s.Field.Alive.Where(u => !u.Hidden).Select(u => (u.X, u.Y, u.Side switch { Side.Enemy => 0, Side.Ally => 1, _ => 2 })), frame);
         if (_state_ == State.Files)

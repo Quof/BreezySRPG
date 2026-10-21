@@ -624,10 +624,10 @@ public sealed class ErumaniGame : Game
         if (_session is not null && _opts.Screenshot is null && _controls.Pressed(GameAction.EnemyRanges)) ToggleThreat();
 
         // text backlog: mouse wheel (or its key) on a map, outside battle scenes; with one of the map's menus up (the turn
-        // menu's save screen...) the wheel is the menu's
+        // menu's save screen...) the wheel is the menu's, and while a spell is aimed it steps through the units it reaches
         if (_session is not null && _battle?.SceneShowing != true)
         {
-            if (wheel != 0 && _battle?.MenuOpen != true) _backlog.Scroll(wheel);
+            if (wheel != 0 && _battle?.UsesWheel != true) _backlog.Scroll(wheel);
             if (_controls.Pressed(GameAction.Backlog)) _backlog.Toggle();
             if (_backlog.Open)
             {

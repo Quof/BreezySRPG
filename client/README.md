@@ -100,15 +100,15 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 | Keys | Action |
 |---|---|
-| Enter / Z, left click | confirm. On a unit: select it, or show its status if it can't act. On an empty tile: the turn menu |
+| Enter / Z, left click | confirm. On a unit: select it, or show its status if it can't act; an enemy shows its movement range (blue) and, around it, its attack range (red: its weapon's and its harmful spells' reach). On an empty tile: the turn menu |
 | Esc / X / Backspace, right click | cancel or back (at the command menu: undo the move). During a battle scene: skip it. A right click on an empty tile opens the turn menu, which also has 環境設定 (Options) |
 | Arrows | move the map cursor (hold to repeat); move in menus |
 | W A S D | scroll the map camera; W/S also move in menus |
-| C / Left Shift, right click on a unit | unit status; C / Left Shift again shows the weapon's, armour's, accessory's stats in turn (pointing at an item's name does too) |
+| C / Left Shift, right click on a unit | unit status; C / Left Shift again shows the weapon's, armour's, accessory's stats in turn (pointing at an item's name does too). While a spell is aimed, C / Left Shift steps the forecast on to the next unit the spell reaches |
 | Tab / Left Ctrl | fast-forward (hold, or toggle; see Options). When gameplay gives way to an event's story, a fast-forward stops before its first line: let go and press again (toggle again) to skip the story too |
-| Mouse wheel up / L | text backlog (wheel down or click to close) |
+| Mouse wheel up / L | text backlog (wheel down or click to close). While a spell is aimed, the wheel is the forecast's instead: it opens on the nearest unit the spell is meant for (framed when there are several, with "2/3" between the names), and the wheel steps through all the units it reaches |
 | Space | during an event: skip the rest of it (asks first) |
-| R | enemy ranges: every enemy's reach (moves and attacks, spells included) as one red area; press again to hide |
+| R | enemy ranges: every enemy's reach for its coming phase (moves and attacks, spells included) as one area — yellow where enemies can move to, red around it where they can only hit; press again to hide |
 | F1 | options (anywhere) |
 | Right click during an event | a menu at the pointer: save, load, options (環境設定), in the middle of the cutscene |
 | F4 or Alt+Enter | fullscreen |

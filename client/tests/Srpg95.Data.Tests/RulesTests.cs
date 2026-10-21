@@ -234,6 +234,35 @@ public class RulesTests
     }
 
     [Fact]
+    public void An_enemys_threat_is_where_it_can_stop_and_what_it_hits_from_there()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var nasu = f.Units.Single(u => u.Unit == 3);   // class 2: ナスビーム at level 10
+        var off = new bool[500];
+        nasu.MovePatterns[0] = new MovePattern(-1, 0, 0, 0, -1);   // rush
+        nasu.Mp = 0;                                                // no spell yet: the weapon alone
+        var (stops, hits) = EnemyAi.Threat(f, nasu, off);
+        Assert.Equal(f.Reachable(nasu).Keys.ToHashSet(), stops);   // the clicked enemy's movement range, as the original shows it
+        var st = f.Stats(nasu);
+        var ring = stops.SelectMany(s => Enumerable.Range(0, f.Map.Width * f.Map.Height).Select(i => (X: i % f.Map.Width, Y: i / f.Map.Width))
+            .Where(t => Math.Abs(t.X - s.X) + Math.Abs(t.Y - s.Y) is var d && d >= st.RangeMin && d <= st.RangeMax)).ToHashSet();
+        Assert.Equal(ring, hits);
+        // a harmful spell it has the TP for reaches further than the weapon
+        nasu.Level = 10;
+        nasu.Mp = 30;
+        Assert.True(EnemyAi.Threat(f, nasu, off).Hits.IsProperSupersetOf(hits));
+        // the None pattern stays where it is and hits only from there; asleep through its coming phase, nothing
+        nasu.Mp = 0;
+        nasu.MovePatterns[0] = new MovePattern(-1, 3, 0, 0, -1);
+        var (still, near) = EnemyAi.Threat(f, nasu, off);
+        Assert.Equal(new[] { (nasu.X, nasu.Y) }, still);
+        Assert.Equal(EnemyAi.Hits(f, nasu, still), near);
+        nasu.SleepTurns = 2;
+        Assert.Empty(EnemyAi.Threat(f, nasu, off).Stops);
+    }
+
+    [Fact]
     public void Paths_through_an_ally_are_whole_and_never_end_on_a_unit()
     {
         if (Game() is null) return;

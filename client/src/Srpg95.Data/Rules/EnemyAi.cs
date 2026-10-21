@@ -32,28 +32,39 @@ public static class EnemyAi
 
     /// <summary>
     /// Every tile a computer unit could hit in its coming phase, as its AI would go about it (a modern aid; the original
-    /// shows nothing like it): its weapon's reach from every tile it can stop on this turn — only its own for the None
-    /// pattern — and the area of every harmful spell it has the TP for, aimed from those tiles. Nothing for a unit that
-    /// sleeps through that phase or follows a Specific pattern, which never attacks.
+    /// shows nothing like it), and the tiles it could stop on to do it: every free one its movement reaches this turn —
+    /// only its own for the None pattern — and from them its <see cref="Hits"/>. Nothing for a unit that sleeps through
+    /// that phase or follows a Specific pattern, which never attacks.
     /// </summary>
-    public static HashSet<(int X, int Y)> Threat(Battlefield f, BattleUnit u, bool[] switches)
+    public static (HashSet<(int X, int Y)> Stops, HashSet<(int X, int Y)> Hits) Threat(Battlefield f, BattleUnit u, bool[] switches)
+    {
+        var p = ActivePattern(u, switches);
+        if (u.SleepTurns > 1 || p.Action == 2) return (new(), new());   // asleep still once its phase's upkeep has counted down
+        var stops = f.Flood(u, p.Action < 3 ? f.Stats(u).Movement : 0).Keys
+            .Where(t => f.UnitAt(t.X, t.Y) is not { } o || o == u).ToHashSet();
+        return (stops, Hits(f, u, stops));
+    }
+
+    /// <summary>
+    /// The tiles a unit could hit from any of <paramref name="stops"/> (a modern aid): its weapon's reach from each, and
+    /// the area of every harmful spell it has the TP for, aimed anywhere in its range from them — none for a neutral
+    /// unit, which casts nothing (FUN_0041589c).
+    /// </summary>
+    public static HashSet<(int X, int Y)> Hits(Battlefield f, BattleUnit u, IEnumerable<(int X, int Y)> stops)
     {
         var tiles = new HashSet<(int X, int Y)>();
-        var p = ActivePattern(u, switches);
-        if (u.SleepTurns > 1 || p.Action == 2) return tiles;   // asleep still once its phase's upkeep has counted down
         var st = f.Stats(u);
-        var stops = f.Flood(u, p.Action < 3 ? st.Movement : 0).Keys
-            .Where(t => f.UnitAt(t.X, t.Y) is not { } o || o == u).ToList();
-        foreach (var (sx, sy) in stops)
+        var from = stops.ToList();
+        foreach (var (sx, sy) in from)
             for (int y = sy - st.RangeMax; y <= sy + st.RangeMax; y++)
                 for (int x = sx - st.RangeMax; x <= sx + st.RangeMax; x++)
                     if (Math.Abs(x - sx) + Math.Abs(y - sy) is var d && d >= st.RangeMin && d <= st.RangeMax && f.InBounds(x, y))
                         tiles.Add((x, y));
-        if (u.Side == Side.Neutral) return tiles;   // neutral units cast nothing (FUN_0041589c)
+        if (u.Side == Side.Neutral || from.Count == 0) return tiles;
         foreach (var m in f.KnownSpells(u).Where(m => m.Type is 0 or 1 && Battlefield.CanCast(u, m)))
         {
             var aims = new HashSet<(int X, int Y)>();
-            foreach (var (sx, sy) in m.RangeWholeMap || m.EffectWholeMap ? stops.Take(1) : stops) aims.UnionWith(f.SpellRange(m, sx, sy));
+            foreach (var (sx, sy) in m.RangeWholeMap || m.EffectWholeMap ? from.Take(1) : from) aims.UnionWith(f.SpellRange(m, sx, sy));
             foreach (var (ax, ay) in m.EffectWholeMap ? aims.Take(1) : aims) tiles.UnionWith(f.SpellArea(m, ax, ay));
         }
         return tiles;
