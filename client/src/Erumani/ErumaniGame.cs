@@ -498,9 +498,9 @@ public sealed class ErumaniGame : Game
         bool cancel = _controls.Pressed(GameAction.Cancel) || rclick;
         if (_settings.FastForwardMode == FastForwardMode.Toggle && _controls.Pressed(GameAction.FastForward)) _ffToggle = !_ffToggle;
         bool ff = _settings.FastForwardMode == FastForwardMode.Hold ? _controls.Down(GameAction.FastForward) : _ffToggle;
-        // holding the left button (after about a second, so ordinary clicks and a slow press stay clicks) fast-forwards too
+        // holding the left button (after 0.75 s, so ordinary clicks stay clicks) fast-forwards too
         _leftHeld = mouseHere && m.LeftButton == ButtonState.Pressed ? _leftHeld + 1 : 0;
-        if (_settings.FastForwardMouse && _leftHeld > 15 + GameClock.Frames(750)) ff = true;
+        if (_settings.FastForwardMouse && _leftHeld > GameClock.Frames(750)) ff = true;
 
         var input = new EventInput(confirm, cancel, up, down, ff);
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
