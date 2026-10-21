@@ -10,18 +10,19 @@ namespace Erumani.Ui;
 /// The options menu (modern; from the title screen, F1 anywhere, or a right click during an event). It opens on a list
 /// of categories (Display, Audio, Gameplay, Controls); each opens its own page. A toggle changes on a click or left /
 /// right; a setting with several values steps through them with left / right and opens a drop-down list of them on a
-/// click or Confirm; on the Controls page Confirm on an action waits for a key (pressing a key already bound to it
-/// removes it; right click cancels). Every word is in the Language setting's language.
+/// click or Confirm; the mouse wheel turns a volume under the pointer up or down; on the Controls page Confirm on an
+/// action waits for a key (pressing a key already bound to it removes it; right click cancels). Every word is in the
+/// Language setting's language.
 /// </summary>
 public sealed class OptionsScreen
 {
     /// <summary>
     /// A row: its label and value. <see cref="Change"/> steps a toggle or a choice (−1 / +1); a choice also lists its values
     /// (<see cref="Choices"/>, the current one <see cref="Chosen"/>) for the drop-down, which sets one with <see cref="Pick"/>;
-    /// <see cref="Activate"/> opens a page or runs a command.
+    /// <see cref="Activate"/> opens a page or runs a command. <see cref="Wheel"/>: the wheel steps it too (a volume).
     /// </summary>
     sealed record Row(string Label, Func<string> Value, Action<int>? Change = null, Action? Activate = null,
-        Func<string[]>? Choices = null, Func<int>? Chosen = null, Action<int>? Pick = null);
+        Func<string[]>? Choices = null, Func<int>? Chosen = null, Action<int>? Pick = null, bool Wheel = false);
 
     static Row Choice(string label, Func<string[]> names, Func<int> chosen, Action<int> pick) =>
         new(label, () => names().ElementAtOrDefault(chosen()) ?? "",
@@ -141,8 +142,8 @@ public sealed class OptionsScreen
         string FontName(string f) => f == Settings.BuiltIn ? T("GeneralUser GS (built-in)", "GeneralUser GS（内蔵）") : Path.GetFileName(f);
         return new()
         {
-            new(T("BGM volume", "BGMの音量"), () => $"{_s.MusicVolume}%", d => _s.MusicVolume = Math.Clamp(_s.MusicVolume + 10 * d, 0, 100)),
-            new(T("SE volume", "SEの音量"), () => $"{_s.SoundVolume}%", d => _s.SoundVolume = Math.Clamp(_s.SoundVolume + 10 * d, 0, 100)),
+            new(T("BGM volume", "BGMの音量"), () => $"{_s.MusicVolume}%", d => _s.MusicVolume = Math.Clamp(_s.MusicVolume + 10 * d, 0, 100), Wheel: true),
+            new(T("SE volume", "SEの音量"), () => $"{_s.SoundVolume}%", d => _s.SoundVolume = Math.Clamp(_s.SoundVolume + 10 * d, 0, 100), Wheel: true),
             Choice(T("MIDI playback", "MIDI再生"), () => new[] { T("Windows MIDI (original)", "Windows MIDI（オリジナル）"), T("SoundFont", "サウンドフォント") },
                 () => (int)_s.Music, i => _s.Music = (MusicEngine)i),
             Choice(T("SoundFont", "サウンドフォント"), () => fonts.Select(FontName).ToArray(),
@@ -259,6 +260,15 @@ public sealed class OptionsScreen
         if (i.Cancel || i.RightClick) { if (_page != Page.Main) Open(Page.Main); else Done = true; Sfx.Cancel(); return; }
         var row = _rows.ElementAtOrDefault(_list.Index);
         if ((i.Left || i.Right) && row?.Change is not null) { row.Change(i.Right ? 1 : -1); Sfx.Click(); Changed(); return; }
+        // the wheel over a volume: up louder, down quieter, a step a notch as left / right
+        if (i.Wheel != 0 && _list.Hover(mouse) is var over and >= 0 && _rows[over] is { Wheel: true, Change: { } step })
+        {
+            _list.Index = over;
+            step(Math.Sign(i.Wheel));
+            Sfx.Click();
+            Changed();
+            return;
+        }
         int pick = _list.Navigate(i, mouse);
         if (pick < 0) return;
         var r = _rows[pick];

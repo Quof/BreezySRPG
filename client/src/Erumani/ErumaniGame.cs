@@ -450,7 +450,7 @@ public sealed class ErumaniGame : Game
         // play time (EasySRPG95's own count): while a game is on, a map or a camp, and the window is in front
         if (IsActive && _logo < 0 && _title is null && _gameOver < 0 && (_session is not null || _camp is not null))
             _state.PlaySeconds += gameTime.ElapsedGameTime.TotalSeconds;
-        _mouseVirtual = ToVirtual(m.Position);
+        _mouseVirtual = _scriptPointer ?? ToVirtual(m.Position);
         bool Pressed(Keys key) => k.IsKeyDown(key) && !_prevKeys.IsKeyDown(key);
         bool alt = k.IsKeyDown(Keys.LeftAlt) || k.IsKeyDown(Keys.RightAlt);
         // clicks only count inside the window, and not just after it lost or regained focus (clicking another window,
@@ -799,6 +799,8 @@ public sealed class ErumaniGame : Game
             "wheeldown" => bi with { Wheel = -1 },
             _ when tok.StartsWith("at:") && tok[3..].Split('.') is [var x, var y] =>
                 bi with { MouseTile = new Point(int.Parse(x), int.Parse(y)), MouseMoved = true },
+            _ when tok.StartsWith("point:") && tok[6..].Split('.') is [var px, var py] =>
+                Do(() => _mouseVirtual = (_scriptPointer = new Point(int.Parse(px), int.Parse(py))).Value, bi with { MouseMoved = true }),
             _ => bi,
         };
     }
@@ -917,6 +919,8 @@ public sealed class ErumaniGame : Game
     bool _ffStopped;
     /// <summary>A scripted run's fast-forward key, held ("ffhold") or let go ("ffrelease").</summary>
     bool _scriptFf;
+    /// <summary>A scripted run's pointer on the 640 × 480 screen ("point:X.Y"), in place of the real one, which it ignores.</summary>
+    Point? _scriptPointer;
     /// <summary>An event was running at the last step; the one running began after gameplay and hasn't shown anything yet.</summary>
     bool _eventWasRunning, _eventUnseen;
 

@@ -65,6 +65,14 @@ public class ClientFeatureTests
         Assert.Equal(UiLanguage.English, kept!.Language);              // a settings.json that chose English keeps it
     }
 
+    [Fact]
+    public void Fast_forward_starts_at_x2_and_still_shows_battles()
+    {
+        var s = new Settings();
+        Assert.Equal(2, s.FastForwardSpeed);
+        Assert.False(s.FastForwardSkipsScenes);
+    }
+
     static MessageNode Say(string s) => new(2, new List<string> { s });
 
     /// <summary>What a runner shows now: a message's lines, a choice and its option, "…" while it waits, "end".</summary>

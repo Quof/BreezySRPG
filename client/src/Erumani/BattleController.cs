@@ -158,7 +158,7 @@ public sealed class BattleController
     public bool PanelShowing => _state_ == State.Showing && _panel is not null;
     /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
     public bool ShowScenes { get; set; } = true;
-    public bool FastForwardSkipsScenes { get; set; } = true;
+    public bool FastForwardSkipsScenes { get; set; }
 
     /// <summary>
     /// Battle music, chosen at each step's start (FUN_00419574; the same file already playing goes on, FUN_0040931c): map

@@ -63,8 +63,8 @@ public sealed class Settings
     public bool CombatBgm { get; set; } = true;           // the map's battle BGM during battle scenes (off: the phase's music, as a fight leaves it)
     public bool ActionMenuFromTop { get; set; } = true;   // after a move the pointer goes to the action menu's first entry (off: 行動終了, as the original)
     public FastForwardMode FastForwardMode { get; set; } = FastForwardMode.Hold;
-    public int FastForwardSpeed { get; set; } = 4;
-    public bool FastForwardSkipsScenes { get; set; } = true;
+    public int FastForwardSpeed { get; set; } = 2;
+    public bool FastForwardSkipsScenes { get; set; }
     public bool FastForwardAdvancesText { get; set; } = true;
     public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button or the confirm key fast-forwards (after 0.4 s)
     public bool EdgeScrollHover { get; set; } = true;     // the pointer on the screen frame scrolls the map, no button held
