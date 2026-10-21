@@ -166,12 +166,33 @@ public sealed class BattleController
         PlayMapBgm?.Invoke(Boss(actor) || Boss(other) ? 5 : _s.Field.AllyPhase ? 3 : 4);
     }
 
+    /// <summary>The attack or spell being shown, for its EXP once its scenes are over.</summary>
+    ExchangeResult? _fight;
+
     void RunScenes()
     {
-        if (_scenes.Count == 0) { _action = null; NextPopup(); return; }
+        if (_scenes.Count == 0) { AfterScenes(); return; }
         _scene = _scenes.Dequeue();
         _scene.PlaySound = PlaySound;
         _state_ = State.Scene;
+    }
+
+    /// <summary>
+    /// The action's scenes are over, or it had none: the overlay goes and the actor has acted (FUN_00419574's end); then
+    /// a player unit still standing gets the EXP rolled for it, its level-ups rolled now, and the rewards and level-up
+    /// panels (FUN_0041093c).
+    /// </summary>
+    void AfterScenes()
+    {
+        _action = null;
+        if (_fight is { } r)
+        {
+            _fight = null;
+            if (_actor is not null) _actor.Acted = true;
+            _s.Field.ApplyGrowth(r);
+            ShowGrowth(r);
+        }
+        NextPopup();
     }
 
     void UpdateScene(BattleInput i)
@@ -189,7 +210,7 @@ public sealed class BattleController
         _fx.FadeIn(0, 20);   // the scene leaves the palette black with the fade-in flag: the map comes back 20 % a tick
         if (_scenes.Count > 0) { RunScenes(); return; }
         PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);   // back to the phase music
-        NextPopup();
+        AfterScenes();
     }
 
     Dictionary<BattleUnit, int> HpSnapshot(IEnumerable<BattleUnit> units) => units.Distinct().ToDictionary(u => u, u => u.Hp);
@@ -1137,34 +1158,45 @@ public sealed class BattleController
         fight();
     }
 
-    void Attack(BattleUnit atk, BattleUnit def) =>
-        BeginAction(new((atk.X, atk.Y), 2, new HashSet<(int X, int Y)> { (def.X, def.Y) }, new[] { (def.X, def.Y) }), () => DoAttack(atk, def));
-
-    void Cast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
+    /// <summary>
+    /// An attack chosen (FUN_00410190 on the player's click, FUN_00416e04 on the computer's decision): the exchange is
+    /// rolled at once (FUN_0041b4b0), so whatever the lead-in's "before" events do, the outcome stands.
+    /// </summary>
+    void Attack(BattleUnit atk, BattleUnit def)
     {
-        if (item is not null) _state.AddItem(item.Index, -1);   // FUN_0040ae68: one less, at the click
-        var met = _s.Field.SpellTargets(caster, m, aim.X, aim.Y).Select(t => (t.X, t.Y)).ToList();
-        BeginAction(new((caster.X, caster.Y), m.Type is 0 or 1 ? 2 : 3, _s.Field.SpellArea(m, aim.X, aim.Y).ToHashSet(), met),
-            () => DoCast(caster, m, aim, item));
+        var r = _s.Field.RollAttack(atk, def);
+        BeginAction(new((atk.X, atk.Y), 2, new HashSet<(int X, int Y)> { (def.X, def.Y) }, new[] { (def.X, def.Y) }), () => DoAttack(atk, def, r));
     }
 
-    void DoCast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
+    /// <summary>
+    /// A spell cast (FUN_00410050; FUN_0040fda8 for a magic item, which is one less and its user done at once;
+    /// FUN_00416e98 for the computer's): rolled at once (FUN_0041c8c0), then the lead-in.
+    /// </summary>
+    void Cast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
+    {
+        if (item is not null) { _state.AddItem(item.Index, -1); caster.Acted = true; }   // FUN_0040ae68, and +8 at the click
+        var r = _s.Field.RollCast(caster, m, aim.X, aim.Y, fromItem: item is not null);
+        BeginAction(new((caster.X, caster.Y), m.Type is 0 or 1 ? 2 : 3, _s.Field.SpellArea(m, aim.X, aim.Y).ToHashSet(),
+            r.Effects.Select(e => (e.Target.X, e.Target.Y)).ToList()), () => DoCast(caster, m, r));
+    }
+
+    void DoCast(BattleUnit caster, Magic m, ExchangeResult r)
     {
         // the units the spell meets on the other side get their first-attack slots (FUN_00410388)
-        var met = OpposingOf(caster, _s.Field.SpellTargets(caster, m, aim.X, aim.Y));
-        if (BeforeFight(caster, met, () => DoCast(caster, m, aim, item))) return;
-        if (caster.Dead || caster.Hidden) { AfterFight(); return; }
-        var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
-        int mpBefore = caster.Mp;
-        var r = _s.Field.Cast(caster, m, aim.X, aim.Y, fromItem: item is not null);
-        if (ShowScenes && !Quiet && r.Effects.Count > 0)
+        var met = OpposingOf(caster, r.Effects.Select(e => e.Target));
+        if (BeforeFight(caster, met, () => DoCast(caster, m, r))) return;
+        if (caster.Dead || caster.Hidden) { caster.Acted = true; _actor = caster; AfterFight(); return; }
+        if (ShowScenes && !Quiet && r.Effects.Count > 0) QueueSpellScenes(caster, m, r);
+        else
         {
-            QueueSpellScenes(caster, m, r, before);
-            if (_scenes.Count > 0) _scenes.Peek().ShowMpBefore(caster, mpBefore);
+            Battlefield.ApplyCost(caster, r);
+            foreach (var e in r.Effects) _s.Field.ApplyEffect(caster, m, e);
+            if (!Quiet) ResultPopups(caster, r);
         }
-        if (!Quiet) ShowResult(caster, r, numbersShown: ShowScenes);
+        _fight = r;
         _after = (caster, met);
-        Finish(caster);
+        _actor = caster;
+        RunScenes();
     }
 
     /// <summary>
@@ -1246,12 +1278,14 @@ public sealed class BattleController
     bool HasDeathMessage(BattleUnit u) => u.Unit >= 0 && u.Unit < _db.Units.Length && _db.Units[u.Unit].DeathMessage.Length > 0;
 
     /// <summary>
-    /// A spell's scene (FUN_0041c8c0): the caster alone plays its class's cast animation — magic-to-enemy for damage and
-    /// status spells, magic-to-ally for the rest (FUN_0041b6ec) — then each unit it lands on alone in turn plays the spell's
-    /// animation (ANIME 80 + its animation, FUN_0041ba0c): damage and recovery with a number and the bar (the damage as
-    /// rolled, a recovery as far as the HP goes), other spells without.
+    /// A spell's scene (FUN_0041c8c0), as rolled at the cast: the caster alone plays its class's cast animation —
+    /// magic-to-enemy for damage and status spells, magic-to-ally for the rest — its TP going at the step's end
+    /// (FUN_0041b6ec); then each unit it lands on alone in turn plays the spell's animation (ANIME 80 + its animation,
+    /// FUN_0041ba0c), its share landing at the step's end: damage and recovery with a number and the bar (the damage as
+    /// rolled, 0 for a damage spell's miss, a recovery as far as the HP goes), other spells — status spells' misses too —
+    /// without.
     /// </summary>
-    void QueueSpellScenes(BattleUnit caster, Magic m, ExchangeResult r, Dictionary<BattleUnit, int> before)
+    void QueueSpellScenes(BattleUnit caster, Magic m, ExchangeResult r)
     {
         var cls = _s.Field.Class(caster);
         bool harmful = m.Type is 0 or 1;
@@ -1260,39 +1294,44 @@ public sealed class BattleController
         string spellSheet = BattleScene.SheetFor(_db, _s.Field, caster, spell);
         var steps = new List<BattleScene.Step>
         {
-            new(BattleScene.StepKind.Cast, caster, null, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true) { MpAfter = caster.Mp },
+            new(BattleScene.StepKind.Cast, caster, null, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true)
+            {
+                MpAfter = r.MpAfter ?? caster.Mp, Apply = () => Battlefield.ApplyCost(caster, r),
+            },
         };
         foreach (var e in r.Effects)
         {
             var t = e.Target;
-            int from = before.TryGetValue(t, out var h) ? h : t.Hp;
-            var step = new BattleScene.Step(BattleScene.StepKind.Spell, null, t, spell, spellSheet, e.Kind is not (EffectKind.Miss or EffectKind.Resisted));
+            var step = new BattleScene.Step(BattleScene.StepKind.Spell, null, t, spell, spellSheet, e.Kind is not (EffectKind.Miss or EffectKind.Resisted))
+            {
+                Apply = () => _s.Field.ApplyEffect(caster, m, e),
+            };
             steps.Add(e.Kind switch
             {
                 EffectKind.Damage => step with
                 {
-                    Numbered = true, Amount = e.Amount, Moved = Math.Min(e.Amount, from), HpAfter = from - Math.Min(e.Amount, from),
-                    DeathMessage = e.Amount >= from && HasDeathMessage(t),
+                    Numbered = true, Amount = e.Amount, Moved = e.Moved, HpAfter = e.HpAfter, DeathMessage = e.Killed && HasDeathMessage(t),
                 },
-                EffectKind.Miss => step with { Numbered = true, HpAfter = from },
-                EffectKind.Heal => step with
-                {
-                    Numbered = true, Recovery = true, Amount = Math.Min(e.Amount, t.MaxHp - from), Moved = Math.Min(e.Amount, t.MaxHp - from),
-                    HpAfter = from + Math.Min(e.Amount, t.MaxHp - from),
-                },
+                EffectKind.Miss when m.Type == 0 => step with { Numbered = true, HpAfter = e.HpAfter },
+                EffectKind.Heal => step with { Numbered = true, Recovery = true, Amount = e.Amount, Moved = e.Moved, HpAfter = e.HpAfter },
                 _ => step,
             });
         }
-        _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before) { StepStarted = st => BattleMusic(caster, st.Target) });
+        var scene = new BattleScene(_db, _tex, _ui, _s.Field, steps, HpSnapshot(r.Effects.Select(e => e.Target).Append(caster)))
+        {
+            StepStarted = st => BattleMusic(caster, st.Target),
+        };
+        scene.ShowMpBefore(caster, caster.Mp);
+        _scenes.Enqueue(scene);
     }
 
     /// <summary>
-    /// A spell's outcome. The original shows it only in the battle scene, then the rewards and level-up panels; with the
-    /// scenes off the client sums it up in its own one-line messages first.
+    /// A spell's outcome in the client's own one-line messages, when the battle scenes are off (the original shows it
+    /// only in the scene, then the rewards and level-up panels).
     /// </summary>
-    void ShowResult(BattleUnit actor, ExchangeResult r, bool numbersShown = false)
+    void ResultPopups(BattleUnit actor, ExchangeResult r)
     {
-        foreach (var e in numbersShown ? Enumerable.Empty<Srpg95.Rules.Effect>() : r.Effects)
+        foreach (var e in r.Effects)
         {
             var n = e.Target.Name;
             // the client's own wording, in the style of the original's medicine messages
@@ -1320,7 +1359,6 @@ public sealed class BattleController
             }, e.Killed ? e.Target : null);
             if (e.Killed) _s.Ghosts.Add(e.Target);
         }
-        ShowGrowth(r);
     }
 
     /// <summary>Numbers as the original's messages print them (FUN_004051a0): full-width digits and minus sign.</summary>
@@ -1544,43 +1582,41 @@ public sealed class BattleController
         }
     }
 
-    void DoAttack(BattleUnit atk, BattleUnit def)
+    void DoAttack(BattleUnit atk, BattleUnit def, ExchangeResult r)
     {
         var met = OpposingOf(atk, new[] { def });
-        if (BeforeFight(atk, met, () => DoAttack(atk, def))) return;
+        if (BeforeFight(atk, met, () => DoAttack(atk, def, r))) return;
         // a "before" event can change things (rarely): no fight if either side is gone
         if (atk.Dead || atk.Hidden || def.Dead || def.Hidden) { atk.Acted = true; _actor = atk; AfterFight(); return; }
-        var before = HpSnapshot(new[] { atk, def });
-        var r = _s.Field.Attack(atk, def);
-        if (Quiet) { }
-        else if (ShowScenes)
+        if (ShowScenes && !Quiet)
         {
-            // a strike a step (FUN_0041b4b0 → FUN_0041a9c4): the damage as rolled for the number, the bar moving as far
-            // as the HP left
-            var hp = new Dictionary<BattleUnit, int>(before);
-            var steps = new List<BattleScene.Step>();
-            foreach (var st in r.Strikes)
+            // a strike a step (FUN_0041b4b0 → FUN_0041a9c4) as rolled at the click: the damage as rolled for the number,
+            // the bar moving as far as the HP went, the HP set at the step's end
+            var steps = r.Strikes.Select(st =>
             {
                 var a = BattleScene.WeaponAnim(_db, _s.Field, st.Attacker);
-                int from = hp.TryGetValue(st.Target, out var h) ? h : st.Target.Hp, moved = st.Hit ? Math.Min(st.Damage, from) : 0;
-                hp[st.Target] = from - moved;
-                steps.Add(new(BattleScene.StepKind.Strike, st.Attacker, st.Target, a, BattleScene.SheetFor(_db, _s.Field, st.Attacker, a), st.Hit)
+                return new BattleScene.Step(BattleScene.StepKind.Strike, st.Attacker, st.Target, a, BattleScene.SheetFor(_db, _s.Field, st.Attacker, a), st.Hit)
                 {
-                    Critical = st.Hit && st.Critical, Numbered = true, Amount = st.Hit ? st.Damage : 0, Moved = moved, HpAfter = from - moved,
-                    DeathMessage = from - moved == 0 && HasDeathMessage(st.Target),
-                });
-            }
-            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before) { StepStarted = st => BattleMusic(st.Actor!, st.Target) });
+                    Critical = st.Critical, Numbered = true, Amount = st.Damage, Moved = st.Moved, HpAfter = st.HpAfter,
+                    DeathMessage = st.Killed && HasDeathMessage(st.Target), Apply = () => _s.Field.ApplyStrike(st),
+                };
+            }).ToList();
+            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, HpSnapshot(new[] { atk, def }))
+            {
+                StepStarted = st => BattleMusic(st.Actor!, st.Target),
+            });
         }
         else
             foreach (var st in r.Strikes)
             {
+                _s.Field.ApplyStrike(st);
+                if (Quiet) continue;
                 Popup(st.Hit
                     ? $"{st.Attacker.Name} → {st.Target.Name}：{st.Damage}{(st.Critical ? "（会心）" : "")}{(st.Killed ? "　撃破" : "")}"
                     : $"{st.Attacker.Name} → {st.Target.Name}：ミス", st.Killed ? st.Target : null);
                 if (st.Killed) _s.Ghosts.Add(st.Target);
             }
-        ShowGrowth(r);
+        _fight = r;
         _after = (atk, met);
         _actor = atk;
         RunScenes();
@@ -1740,10 +1776,10 @@ public sealed class BattleController
             }
             if (_s.MovesRunning) return;
             _plan = null;
-            p.Unit.Acted = true;
             _actor = p.Unit;
-            // the move's end: tile marks and contacts; a contact event takes the unit's action away
+            // the move's end: tile marks and contacts; a contact event takes the unit's action away (and it has acted)
             if (MoveEnded(p.Unit, p.Path)) return;
+            // a spell or an attack: the unit has acted once its scene is over (FUN_00419574); one that only walked, now
             if (p.Spell is { } sp && Battlefield.CanCast(p.Unit, sp) && _s.Field.SpellTargets(p.Unit, sp, p.Aim.X, p.Aim.Y).Count > 0)
             {
                 _cursor = new Point(p.Aim.X, p.Aim.Y);
@@ -1751,6 +1787,7 @@ public sealed class BattleController
                 return;
             }
             if (p.Target is { Dead: false } t && _s.Field.InRange(p.Unit, p.Unit.X, p.Unit.Y, t)) { Attack(p.Unit, t); return; }
+            p.Unit.Acted = true;
             if (CheckPoint()) return;
             _wait = Quiet ? 0 : 8;
             return;

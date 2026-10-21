@@ -54,6 +54,8 @@ public sealed class BattleScene
         /// <summary>A cast's TP afterwards (+0x6144).</summary>
         public int MpAfter { get; init; }
         public bool DeathMessage { get; init; }
+        /// <summary>What the step does to the units, done at its end (FUN_00419574 writes HP, TP and statuses there).</summary>
+        public Action? Apply { get; init; }
 
         public int Drain => Target is { MaxHp: > 0 } t ? Moved * 37 / t.MaxHp : 0;
         /// <summary>15 ticks after the hit frame (the flash, the shake, the TP); the number and the bar start 4 later.</summary>
@@ -174,11 +176,12 @@ public sealed class BattleScene
         else StepStarted?.Invoke(_steps[_stepIndex]);
     }
 
-    /// <summary>A step's end: the HP and TP it left.</summary>
+    /// <summary>A step's end: the HP and TP it left, and its outcome put on the units.</summary>
     void EndStep(Step st)
     {
         if (st.Numbered && st.Target is { } t) _hp[t] = st.HpAfter;
         if (st.Kind == StepKind.Cast && st.Actor is { } a) _mp[a] = st.MpAfter;
+        st.Apply?.Invoke();
     }
 
     /// <summary>The HP the panel and the dying blink go by: the bar moving after the hit (FUN_00419574).</summary>

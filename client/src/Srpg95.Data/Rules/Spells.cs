@@ -10,8 +10,11 @@ public enum EffectKind
     AttackRestored, DefenseRestored,
 }
 
-/// <summary>What a spell or item did to one unit.</summary>
-public readonly record struct Effect(BattleUnit Target, EffectKind Kind, int Amount, bool Killed);
+/// <summary>
+/// What a spell or item does to one unit: for a spell's damage and healing as rolled (FUN_0041ba0c), the unit's HP after
+/// it and how far its HP bar moves.
+/// </summary>
+public readonly record struct Effect(BattleUnit Target, EffectKind Kind, int Amount, bool Killed, int HpAfter = 0, int Moved = 0);
 
 /// <summary>Magic and battle items (help "Magic Editor", "Item Editor", "Battle Algorithm"; FORMAT_NOTES §4, §5).</summary>
 public sealed partial class Battlefield
@@ -65,13 +68,14 @@ public sealed partial class Battlefield
     }
 
     /// <summary>
-    /// The units a spell aimed at (aimX, aimY) affects (FUN_00411a48). A click casts only when there is one; the aim must
-    /// be in range, except for a spell that covers the whole map (FUN_00410050).
+    /// The units a spell aimed at (aimX, aimY) affects (FUN_00411a48), in the order the exe goes through them: by rows from
+    /// the top, each from the left (FUN_0041c8c0). A click casts only when there is one; the aim must be in range, except
+    /// for a spell that covers the whole map (FUN_00410050).
     /// </summary>
     public List<BattleUnit> SpellTargets(BattleUnit caster, Magic m, int aimX, int aimY)
     {
         var area = SpellArea(m, aimX, aimY).ToHashSet();
-        return Alive.Where(t => area.Contains((t.X, t.Y)) && Affects(caster, m, t)).ToList();
+        return Alive.Where(t => area.Contains((t.X, t.Y)) && Affects(caster, m, t)).OrderBy(t => t.Y).ThenBy(t => t.X).ToList();
     }
 
     bool Resists(BattleUnit t, int effect)
@@ -97,20 +101,20 @@ public sealed partial class Battlefield
     }
 
     /// <summary>
-    /// Casts a spell at (aimX, aimY). From a magic item it costs no MP (the exe puts the caster's TP back after the
-    /// scene) but works otherwise the same, EXP included: FUN_0040fda8 calls the same FUN_0041c8c0.
-    /// EXP (FUN_0041b6ec, FUN_0041ba0c): Damage spells add an attack's worth for every enemy they hurt (kill or hit);
-    /// Degrade/Raise give the spell's Exp Value per cast. Only an ally that lives gets it.
+    /// A spell at (aimX, aimY), rolled when it's cast (FUN_0041c8c0): the caster's TP after it — the cost off, none from a
+    /// magic item, which works otherwise the same (FUN_0040fda8 calls the same function) — and an effect for each unit it
+    /// affects, in the map's row order (FUN_0041ba0c). EXP (FUN_0041b6ec, FUN_0041ba0c): Damage spells add an attack's
+    /// worth for every enemy they hurt (kill or hit); Degrade/Raise give the spell's Exp Value per cast; only a player unit
+    /// standing after it gets it. Nothing changes until <see cref="ApplyCost"/>, <see cref="ApplyEffect"/> and
+    /// <see cref="ApplyGrowth"/>.
     /// </summary>
-    public ExchangeResult Cast(BattleUnit caster, Magic m, int aimX, int aimY, bool fromItem = false)
+    public ExchangeResult RollCast(BattleUnit caster, Magic m, int aimX, int aimY, bool fromItem = false)
     {
-        var r = new ExchangeResult();
-        if (!fromItem) caster.Mp = Math.Max(0, caster.Mp - m.MpCost);
+        var r = new ExchangeResult { MpAfter = fromItem ? caster.Mp : Math.Max(0, caster.Mp - m.MpCost) };
         int power = Combat.SpellEffect(m, Stats(caster).Mag);
         foreach (var t in SpellTargets(caster, m, aimX, aimY))
-            r.Effects.Add(Apply(caster, m, t, power));
-        caster.Acted = true;
-        if (caster.Side != Side.Ally || caster.Dead) return r;
+            r.Effects.Add(Roll(caster, m, t, power));
+        if (caster.Side != Side.Ally) return r;
 
         // damage spells: EXP summed over every enemy (computer unit) damaged — not neutral units or one's own side —
         // unlike attacks, which take the largest; kills collect rewards; status / raise spells: the spell's Exp Value
@@ -122,54 +126,89 @@ public sealed partial class Battlefield
                 if (e.Killed) CollectReward(r, e.Target);
             }
         else exp = m.ExpValue;
-        if (exp > 0) AwardExp(r, caster, exp);
+        if (exp > 0) r.ExpGained[caster] = exp;
         return r;
     }
 
-    Effect Apply(BattleUnit caster, Magic m, BattleUnit t, int power)
+    /// <summary>One unit's share of a spell, rolled (FUN_0041ba0c).</summary>
+    Effect Roll(BattleUnit caster, Magic m, BattleUnit t, int power)
     {
         switch (m.Type)
         {
             case 0:
             {
-                if (Rng.Next(100) >= MagicHit(caster, m, t)) return new Effect(t, EffectKind.Miss, 0, false);
-                int dmg = PredictSpellDamage(caster, m, t);
-                t.Hp = Math.Max(0, t.Hp - dmg);
-                if (t.Hp == 0) { t.Dead = true; t.KilledBy = caster.Unit; }
-                return new Effect(t, EffectKind.Damage, dmg, t.Dead);
+                if (Rng.Next(100) >= MagicHit(caster, m, t)) return new Effect(t, EffectKind.Miss, 0, false, t.Hp);
+                int dmg = PredictSpellDamage(caster, m, t), moved = Math.Min(dmg, t.Hp);
+                return new Effect(t, EffectKind.Damage, dmg, t.Hp - moved == 0, t.Hp - moved, moved);
             }
             case 1:
-            {
                 if (Resists(t, m.DegradeEffect)) return new Effect(t, EffectKind.Resisted, 0, false);
                 if (Rng.Next(100) >= MagicHit(caster, m, t)) return new Effect(t, EffectKind.Miss, 0, false);
-                switch (m.DegradeEffect)
+                return m.DegradeEffect switch
                 {
-                    case 0: t.PoisonTurns = 3; return new Effect(t, EffectKind.Poison, 0, false);
-                    // asleep for 2 of its own turns, acting again on the 3rd (help); counted down at its phase start
-                    case 1: t.SleepTurns = 3; return new Effect(t, EffectKind.Sleep, 0, false);
-                    // buffs don't stack: a down only replaces a smaller one, an up a lower one (FUN_00417.., battle end)
-                    case 2: t.PowerUp = Math.Min(t.PowerUp, -power); return new Effect(t, EffectKind.AttackDown, power, false);
-                    default: t.DefUp = Math.Min(t.DefUp, -power); return new Effect(t, EffectKind.DefenseDown, power, false);
-                }
-            }
+                    0 => new Effect(t, EffectKind.Poison, 0, false),
+                    1 => new Effect(t, EffectKind.Sleep, 0, false),
+                    2 => new Effect(t, EffectKind.AttackDown, power, false),
+                    _ => new Effect(t, EffectKind.DefenseDown, power, false),
+                };
             default:
                 switch (m.RaiseEffect)
                 {
                     case 0:
-                    {
-                        int before = t.Hp;
-                        t.Hp = Math.Min(t.MaxHp, t.Hp + power);
-                        return new Effect(t, EffectKind.Heal, t.Hp - before, false);
-                    }
-                    case 1: t.PowerUp = Math.Max(t.PowerUp, power); return new Effect(t, EffectKind.PowerUp, power, false);
-                    case 2: t.DefUp = Math.Max(t.DefUp, power); return new Effect(t, EffectKind.DefUp, power, false);
-                    case 3: t.PoisonTurns = 0; return new Effect(t, EffectKind.CurePoison, 0, false);
-                    case 4: Cleanse(t); return new Effect(t, EffectKind.Cleanse, 0, false);
-                    default:
-                        if (t != caster) t.Acted = false;
-                        return new Effect(t, EffectKind.ExtraTurn, 0, false);
+                        int restored = Math.Max(0, Math.Min(power, t.MaxHp - t.Hp));
+                        return new Effect(t, EffectKind.Heal, restored, false, t.Hp + restored, restored);
+                    case 1: return new Effect(t, EffectKind.PowerUp, power, false);
+                    case 2: return new Effect(t, EffectKind.DefUp, power, false);
+                    case 3: return new Effect(t, EffectKind.CurePoison, 0, false);
+                    case 4: return new Effect(t, EffectKind.Cleanse, 0, false);
+                    default: return new Effect(t, EffectKind.ExtraTurn, 0, false);
                 }
         }
+    }
+
+    /// <summary>The caster's TP after the spell, at the end of its cast step (FUN_00419574).</summary>
+    public static void ApplyCost(BattleUnit caster, ExchangeResult r)
+    {
+        if (r.MpAfter is int mp) caster.Mp = mp;
+    }
+
+    /// <summary>
+    /// One unit's share of a spell, at the end of its step in the battle scene (FUN_00419574): a damage spell sets the HP
+    /// rolled for it (a miss too), as healing does; poison and sleep last 3 of the unit's turns (asleep for 2, acting again
+    /// on the 3rd; counted down at its phase start); buffs don't stack — a down only replaces a smaller one, an up a lower
+    /// one; a cure, a cleanse, or another action for anyone but the caster.
+    /// </summary>
+    public void ApplyEffect(BattleUnit caster, Magic m, Effect e)
+    {
+        var t = e.Target;
+        switch (e.Kind)
+        {
+            case EffectKind.Damage or EffectKind.Heal:
+            case EffectKind.Miss when m.Type == 0:
+                t.Hp = e.HpAfter;
+                if (t.Hp == 0 && !t.Dead) { t.Dead = true; t.KilledBy = caster.Unit; }
+                break;
+            case EffectKind.Poison: t.PoisonTurns = 3; break;
+            case EffectKind.Sleep: t.SleepTurns = 3; break;
+            case EffectKind.AttackDown: t.PowerUp = Math.Min(t.PowerUp, -e.Amount); break;
+            case EffectKind.DefenseDown: t.DefUp = Math.Min(t.DefUp, -e.Amount); break;
+            case EffectKind.PowerUp: t.PowerUp = Math.Max(t.PowerUp, e.Amount); break;
+            case EffectKind.DefUp: t.DefUp = Math.Max(t.DefUp, e.Amount); break;
+            case EffectKind.CurePoison: t.PoisonTurns = 0; break;
+            case EffectKind.Cleanse: Cleanse(t); break;
+            case EffectKind.ExtraTurn: if (t != caster) t.Acted = false; break;
+        }
+    }
+
+    /// <summary>A spell rolled and applied at once (the battle map applies it step by step in its scene).</summary>
+    public ExchangeResult Cast(BattleUnit caster, Magic m, int aimX, int aimY, bool fromItem = false)
+    {
+        var r = RollCast(caster, m, aimX, aimY, fromItem);
+        ApplyCost(caster, r);
+        foreach (var e in r.Effects) ApplyEffect(caster, m, e);
+        ApplyGrowth(r);
+        caster.Acted = true;
+        return r;
     }
 
     static void Cleanse(BattleUnit t)

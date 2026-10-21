@@ -2,13 +2,21 @@ using Srpg95.Data;
 
 namespace Srpg95.Rules;
 
-/// <summary>One strike in an exchange.</summary>
-public readonly record struct Strike(BattleUnit Attacker, BattleUnit Target, bool Hit, bool Critical, int Damage, bool Killed);
+/// <summary>
+/// One strike in an exchange as rolled (FUN_0041a9c4): the damage as rolled (0 on a miss), the target's HP after it and
+/// how far its HP bar moves (the damage up to the HP it had).
+/// </summary>
+public readonly record struct Strike(BattleUnit Attacker, BattleUnit Target, bool Hit, bool Critical, int Damage, bool Killed, int HpAfter, int Moved);
 
-/// <summary>Everything that happened in one action: strikes (attacks), effects (spells/items), EXP, level-ups, new spells.</summary>
+/// <summary>
+/// Everything one action does: strikes (attacks), effects (spells/items), EXP, level-ups, new spells. An attack or a
+/// spell is rolled whole when it's chosen, as the exe does (FUN_0041b4b0 / FUN_0041c8c0), and changes the units only when
+/// applied — strike by strike and effect by effect in its battle scene, the EXP after it.
+/// </summary>
 public sealed class ExchangeResult
 {
     public List<Strike> Strikes { get; } = new();
+    /// <summary>EXP as rolled, per player unit; it counts only if the unit still stands after the fight.</summary>
     public Dictionary<BattleUnit, int> ExpGained { get; } = new();
     public Dictionary<BattleUnit, int[]> LevelUps { get; } = new();   // stat increases (6) per unit
     public List<Effect> Effects { get; } = new();
@@ -16,6 +24,8 @@ public sealed class ExchangeResult
     public int RewardGold { get; set; }
     public List<int> RewardItems { get; } = new();
     public Dictionary<BattleUnit, List<Magic>> Learned { get; } = new();
+    /// <summary>A spell's caster's TP after it: the cost off, unless it came from a magic item.</summary>
+    public int? MpAfter { get; set; }
 }
 
 /// <summary>
@@ -199,41 +209,49 @@ public sealed partial class Battlefield
         return (One(atk, def, doubles ? 2 : 1), One(def, atk, counters ? 1 : 0));
     }
 
-    Strike StrikeOnce(BattleUnit atk, BattleUnit def)
+    /// <summary>
+    /// FUN_0041a9c4: a strike on a target with <paramref name="targetHp"/> HP — hit roll, crit roll only after a hit,
+    /// integer damage, crit ×5/2 unless the damage is 0 — rolled without changing anyone.
+    /// </summary>
+    Strike RollStrike(BattleUnit atk, BattleUnit def, int targetHp)
     {
         var sa = Stats(atk);
         var sd = Stats(def);
         var w = Item(atk.Weapon);
         var arm = Item(def.Armor);
         int terrain = TerrainAt(def.X, def.Y).DefenseBonus;
-        // FUN_0041a9c4: hit roll, crit roll only after a hit, integer damage, crit ×5/2 unless the damage is 0
         int hit = Combat.HitChance(sa.Skl, w, sd.Skl, arm, terrain);
-        bool hits = Rng.Next(100) < hit;
-        if (!hits) return new Strike(atk, def, false, false, 0, false);
+        if (Rng.Next(100) >= hit) return new Strike(atk, def, false, false, 0, false, targetHp, 0);
         bool crit = Rng.Next(100) < Combat.CritChance(sa.Skl, w, sd.Skl, arm);
         int attack = w is null ? sa.Attack : Combat.ApplyAttributes(sa.Attack, w.S.WpnAttackAttr, Class(def).Weakness, arm?.S.ArmDefenseAttr);
         int dmg = Combat.PhysicalDamage(attack, sd.Defense, terrain);
         if (dmg == 0) crit = false;
         if (crit) dmg = Combat.Critical(dmg);
-        def.Hp = Math.Max(0, def.Hp - dmg);
-        if (def.Hp == 0) { def.Dead = true; def.KilledBy = atk.Unit; }
-        return new Strike(atk, def, true, crit, dmg, def.Dead);
+        int moved = Math.Min(dmg, targetHp);
+        return new Strike(atk, def, true, crit, dmg, targetHp - moved == 0, targetHp - moved, moved);
     }
 
     /// <summary>
-    /// FUN_0041b4b0: the attacker strikes; the defender counters (GAME.DAT [2]) if it survived, isn't asleep and
-    /// the attacker is in its range; the attacker strikes again (GAME.DAT [3], off in えるまに) if the last strike's
-    /// target survived and it is 3+ speed faster. A player unit's EXP for the exchange is the largest value of its
-    /// damaging strikes (a 0-damage hit gives none); a kill also collects the defeated object's rewards.
+    /// FUN_0041b4b0, rolled when the attack is chosen: the attacker strikes; the defender counters (GAME.DAT [2]) if it
+    /// survives, isn't asleep and the attacker is in its range; the attacker strikes again (GAME.DAT [3], off in えるまに)
+    /// if the last strike's target survived and it is 3+ speed faster — each strike on the HP the earlier ones left. A
+    /// player unit's EXP for the exchange is the largest value of its damaging strikes (a 0-damage hit gives none); a kill
+    /// also collects the defeated object's rewards. Nothing changes until <see cref="ApplyStrike"/> and
+    /// <see cref="ApplyGrowth"/>.
     /// </summary>
-    public ExchangeResult Attack(BattleUnit atk, BattleUnit def)
+    public ExchangeResult RollAttack(BattleUnit atk, BattleUnit def)
     {
         var r = new ExchangeResult();
-        r.Strikes.Add(StrikeOnce(atk, def));
-        if (Db.Counterattacks && !def.Dead && def.SleepTurns == 0 && InRange(def, def.X, def.Y, atk))
-            r.Strikes.Add(StrikeOnce(def, atk));
-        if (Db.DoubleAttacks && !def.Dead && !atk.Dead && Combat.Doubles(Stats(atk).Speed, Stats(def).Speed))
-            r.Strikes.Add(StrikeOnce(atk, def));
+        var hp = new Dictionary<BattleUnit, int> { [atk] = atk.Hp, [def] = def.Hp };
+        void Strike(BattleUnit a, BattleUnit d)
+        {
+            var s = RollStrike(a, d, hp[d]);
+            hp[d] = s.HpAfter;
+            r.Strikes.Add(s);
+        }
+        Strike(atk, def);
+        if (Db.Counterattacks && hp[def] > 0 && def.SleepTurns == 0 && InRange(def, def.X, def.Y, atk)) Strike(def, atk);
+        if (Db.DoubleAttacks && hp[def] > 0 && hp[atk] > 0 && Combat.Doubles(Stats(atk).Speed, Stats(def).Speed)) Strike(atk, def);
         foreach (var u in new[] { atk, def })
         {
             if (u.Side != Side.Ally) continue;
@@ -243,8 +261,37 @@ public sealed partial class Battlefield
                 best = Math.Max(best, Combat.Exp(u.Level, s.Target.Level, s.Killed));
                 if (s.Killed) CollectReward(r, s.Target);
             }
-            if (best > 0 && !u.Dead) AwardExp(r, u, best);
+            if (best > 0) r.ExpGained[u] = best;
         }
+        return r;
+    }
+
+    /// <summary>
+    /// A strike landing, at the end of its step in the battle scene (FUN_00419574): the target's HP becomes what was rolled
+    /// for it, whatever happened in between; at 0 it has fallen.
+    /// </summary>
+    public void ApplyStrike(Strike s)
+    {
+        s.Target.Hp = s.HpAfter;
+        if (s.HpAfter == 0 && !s.Target.Dead) { s.Target.Dead = true; s.Target.KilledBy = s.Attacker.Unit; }
+    }
+
+    /// <summary>
+    /// After the battle scene (FUN_0041093c): the EXP rolled for each player unit still standing goes in, with the
+    /// level-ups it brings rolled now, into the result's level-ups and learned spells.
+    /// </summary>
+    public void ApplyGrowth(ExchangeResult r)
+    {
+        foreach (var (u, exp) in r.ExpGained.ToList())
+            if (!u.Dead && u.Hp > 0) AwardExp(r, u, exp);
+    }
+
+    /// <summary>An exchange rolled and applied at once (the battle map applies it strike by strike in its scene).</summary>
+    public ExchangeResult Attack(BattleUnit atk, BattleUnit def)
+    {
+        var r = RollAttack(atk, def);
+        foreach (var s in r.Strikes) ApplyStrike(s);
+        ApplyGrowth(r);
         atk.Acted = true;
         return r;
     }

@@ -76,6 +76,66 @@ public class RulesTests
     }
 
     [Fact]
+    public void An_attack_is_rolled_first_and_lands_as_rolled()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        var enemy = f.Units.First(u => u.Unit == 4);
+        enemy.X = juna.X; enemy.Y = juna.Y - 1;
+        int hp = enemy.Hp, junaHp = juna.Hp, total = juna.Level * 100 + juna.Exp;
+        // rolled when chosen (FUN_0041b4b0), changing nobody; each strike on the HP the earlier ones left
+        var r = f.RollAttack(juna, enemy);
+        Assert.Equal((hp, junaHp, total, false), (enemy.Hp, juna.Hp, juna.Level * 100 + juna.Exp, juna.Acted));
+        Assert.Equal(hp - r.Strikes[0].Moved, r.Strikes[0].HpAfter);
+        // whatever happens before it lands (a "before" event), the target ends on the HP rolled for it
+        enemy.Hp = 1;
+        foreach (var s in r.Strikes) f.ApplyStrike(s);
+        Assert.Equal(r.Strikes.Last(s => s.Target == enemy).HpAfter, enemy.Hp);
+        // the EXP only after the scene
+        Assert.Equal(total, juna.Level * 100 + juna.Exp);
+        f.ApplyGrowth(r);
+        Assert.Equal(total + (juna.Hp > 0 && r.ExpGained.TryGetValue(juna, out var gained) ? gained : 0), juna.Level * 100 + juna.Exp);
+    }
+
+    [Fact]
+    public void A_spell_is_rolled_first_and_lands_effect_by_effect()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var rutee = f.Units.Single(u => u.Unit == 242);
+        rutee.Level = 12;
+        rutee.Mp = 20;
+        var ion = db.Magic[45];
+        var enemy = f.Units.First(u => u.Unit == 4);
+        (enemy.X, enemy.Y) = f.SpellRange(ion, rutee.X, rutee.Y).First(a => f.UnitAt(a.X, a.Y) is null);
+        int hp = enemy.Hp;
+        var r = f.RollCast(rutee, ion, enemy.X, enemy.Y);
+        Assert.Equal((20, hp), (rutee.Mp, enemy.Hp));
+        Assert.Equal(20 - ion.MpCost, r.MpAfter);
+        Battlefield.ApplyCost(rutee, r);
+        var e = Assert.Single(r.Effects);
+        f.ApplyEffect(rutee, ion, e);
+        Assert.Equal((20 - ion.MpCost, e.HpAfter), (rutee.Mp, enemy.Hp));   // a miss leaves the HP it was rolled on
+    }
+
+    [Fact]
+    public void A_spell_lands_by_rows_then_columns()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var rutee = f.Units.Single(u => u.Unit == 242);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        var minion = f.Units.First(u => u.Unit == 4);   // listed after ジュナ, but a row above her
+        Assert.True(f.Units.IndexOf(minion) > f.Units.IndexOf(juna));
+        (minion.X, minion.Y) = (rutee.X, rutee.Y - 1);
+        var hit = f.SpellTargets(rutee, db.Magic[4], rutee.X, rutee.Y);   // ルーチェ＝フォルツァ: everyone around her
+        Assert.Contains(juna, hit);
+        Assert.Same(minion, hit[0]);
+        Assert.Equal(hit.OrderBy(t => t.Y).ThenBy(t => t.X), hit);
+    }
+
+    [Fact]
     public void Spells_are_learned_by_class_level()
     {
         if (Game() is null) return;
