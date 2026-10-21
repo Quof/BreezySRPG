@@ -811,6 +811,7 @@ public sealed class ErumaniGame : Game
         if (_session is null || _battle is null) return;
         _session.Update();
         _battle.Update(battleInput, input);
+        if (_session is null || _battle is null) return;   // the turn menu loaded a camp save: the map is gone
 
         if (_battle.Outcome != _seenOutcome)
         {
