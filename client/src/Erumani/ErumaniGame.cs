@@ -900,7 +900,8 @@ public sealed class ErumaniGame : Game
     // ---------------- the event's menu: a right click during an event (modern) ----------------
     // The original does nothing on a right click while an event runs, and saves only from the turn menu and the camp.
     // EasySRPG95 opens セーブ / ロード / 環境設定 at the pointer instead: a save made here holds the event where it
-    // stands (SceneSave) and goes in files 9–100 only; loading leaves the event for the file chosen.
+    // stands (SceneSave) — the original, loading one from files 1–8, gets the battle at the turn menu without the rest
+    // of the event; loading leaves the event for the file chosen.
 
     Camp.MenuList? _eventMenu;
     /// <summary>The save / load screen the menu opened (always the extended one: the original has no saving in an event to keep the look of).</summary>
@@ -948,7 +949,7 @@ public sealed class ErumaniGame : Game
         {
             case 0 or 1:
                 _eventSaving = menu.Index == 0;
-                _eventFiles = new Ui.SaveMenu(_eventSaving, _ui, GraphicsDevice, _folder, _db, scene: true);
+                _eventFiles = new Ui.SaveMenu(_eventSaving, _ui, GraphicsDevice, _folder, _db);
                 break;
             case 2:
                 _eventMenu = null;
