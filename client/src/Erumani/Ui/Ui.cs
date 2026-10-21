@@ -235,12 +235,13 @@ public sealed class Ui : IDisposable
     public enum PanelColor { Blue = 0, Red = 1, Yellow = 2, Green = 3 }
 
     /// <summary>
-    /// Light/dark edge colours per panel colour: SYSTEM.BMP swatches at y 290, 16 px each,
-    /// (light, dark) pairs in Blue/Red/Yellow/Green order. Green and red match screenshots (T17, T22).
+    /// Light/dark edge colours per panel colour (FUN_0041203c): the SYSTEM.BMP swatches FUN_004035e4 reads on row 288,
+    /// 16 px apart, (light, dark) pairs in Blue/Red/Yellow/Green order. Blue's light one is (248,216,192) on that row
+    /// (the rows below it are (240,248,248)); recording r1's blue and red panels have edges of the same brightness.
     /// </summary>
     static readonly (Color Light, Color Dark)[] Edges =
     {
-        (new(240, 248, 248), new(0, 0, 48)), (new(248, 216, 192), new(64, 0, 0)),
+        (new(248, 216, 192), new(0, 0, 48)), (new(248, 216, 192), new(64, 0, 0)),
         (new(248, 248, 224), new(40, 40, 8)), (new(248, 248, 224), new(0, 32, 0)),
     };
 

@@ -635,6 +635,7 @@ public sealed class ErumaniGame : Game
             "right" => bi with { Right = true },
             "enter" => bi with { Confirm = true },
             "esc" => bi with { Cancel = true },
+            "info" => bi with { Info = true },
             "backlog" => Do(() => _backlog.Scroll(1), bi),
             _ when tok.StartsWith("at:") && tok[3..].Split('.') is [var x, var y] =>
                 bi with { MouseTile = new Point(int.Parse(x), int.Parse(y)), MouseMoved = true },
