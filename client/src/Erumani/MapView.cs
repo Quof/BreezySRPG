@@ -490,11 +490,13 @@ public sealed class MapSession : IMapContext
                 sb.Draw(sys, new Vector2(ox + x * s, oy + y * s), new Rectangle(240 + t % 2 * 8, 128 + side * 16 + t / 2 * 8, 8, 8), Color.White);
     }
 
-    /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan = move, 1 salmon = attack /
-    /// medicine, 2 orange = attack spells, 3 blue = own-side spells. The original draws only the tile's odd pixel
-    /// rows, opaque, leaving the map visible in between (T19c, pixel-matched); "solid" tiles (units a spell will
-    /// affect) use every row. The checker scrolls up-left: its phase moves 2 px diagonally every 4 frames
-    /// (measured on the T22 spell recording; it wraps every 16 px).</summary>
+    /// <summary>
+    /// A range overlay (FUN_004132a8) from SYSTEM.BMP's 64 × 64 range blocks at y 64 (copied into a sheet by FUN_00411d74):
+    /// 0 cyan, 1 salmon, 2 orange, 3 blue. A tile shows the 32 × 32 window at the phase (tick / 2) × 2 px down and right,
+    /// wrapping at 64 (the blocks repeat every 32 px, and every 16 diagonally), so the checker drifts up-left; in stripes
+    /// only the tile's odd pixel rows are drawn (FUN_00406c38), the map showing between them, and "solid" uses every row
+    /// (FUN_00406ad8). The blocks hold no transparent pixels.
+    /// </summary>
     public void DrawRange(SpriteBatch sb, Rectangle viewport, IEnumerable<(int X, int Y)> tiles, int colour, int frame, bool solid = false)
     {
         var sys = _tex.Get("SYSTEM.BMP", transparent: false);

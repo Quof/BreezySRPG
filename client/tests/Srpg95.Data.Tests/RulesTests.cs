@@ -108,7 +108,7 @@ public class RulesTests
         // put the enemy on a tile the spell can be aimed at
         var aim = f.SpellRange(ion, rutee.X, rutee.Y).First(a => f.UnitAt(a.X, a.Y) is null);
         enemy.X = aim.X; enemy.Y = aim.Y;
-        Assert.Contains(aim, f.SpellAims(rutee, ion, rutee.X, rutee.Y));
+        Assert.Contains(enemy, f.SpellTargets(rutee, ion, aim.X, aim.Y));
         int hpBefore = enemy.Hp;
         var r = f.Cast(rutee, ion, aim.X, aim.Y);
         Assert.Equal(20 - ion.MpCost, rutee.Mp);

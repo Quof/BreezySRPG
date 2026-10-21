@@ -13,10 +13,7 @@ public enum EffectKind
 /// <summary>What a spell or item did to one unit.</summary>
 public readonly record struct Effect(BattleUnit Target, EffectKind Kind, int Amount, bool Killed);
 
-/// <summary>
-/// Magic and battle items (help "Magic Editor", "Item Editor", "Battle Algorithm"; FORMAT_NOTES §4, §5).
-/// Provisional choices are marked; FORMAT_NOTES §15 lists them.
-/// </summary>
+/// <summary>Magic and battle items (help "Magic Editor", "Item Editor", "Battle Algorithm"; FORMAT_NOTES §4, §5).</summary>
 public sealed partial class Battlefield
 {
     Magic? Spell(int id) => id >= 0 && id < Db.Magic.Length ? Db.Magic[id] : null;
@@ -67,15 +64,15 @@ public sealed partial class Battlefield
         return m.Type is 0 or 1 ? opposing : !opposing;
     }
 
+    /// <summary>
+    /// The units a spell aimed at (aimX, aimY) affects (FUN_00411a48). A click casts only when there is one; the aim must
+    /// be in range, except for a spell that covers the whole map (FUN_00410050).
+    /// </summary>
     public List<BattleUnit> SpellTargets(BattleUnit caster, Magic m, int aimX, int aimY)
     {
         var area = SpellArea(m, aimX, aimY).ToHashSet();
         return Alive.Where(t => area.Contains((t.X, t.Y)) && Affects(caster, m, t)).ToList();
     }
-
-    /// <summary>Aim tiles from (x,y) that would affect at least one unit (provisional: the cursor must hit someone).</summary>
-    public IEnumerable<(int X, int Y)> SpellAims(BattleUnit caster, Magic m, int x, int y) =>
-        SpellRange(m, x, y).Where(a => SpellTargets(caster, m, a.X, a.Y).Count > 0);
 
     bool Resists(BattleUnit t, int effect)
     {
@@ -200,9 +197,24 @@ public sealed partial class Battlefield
 
     public Magic? ItemSpell(Item it) => it.Type == ItemType.Magic ? Spell(it.S.MagicSpell) : null;
 
-    /// <summary>Units a medicine can be given to: the user's side within its range (0 = the user only).</summary>
-    public IEnumerable<BattleUnit> MedicineTargets(BattleUnit user, Item it) =>
-        Alive.Where(t => Friendly(user, t) && Dist(user.X, user.Y, t.X, t.Y) <= Math.Max(0, it.S.MedRange));
+    /// <summary>The tiles a medicine reaches from its user (FUN_00411ba0): the distances its range type allows.</summary>
+    public IEnumerable<(int X, int Y)> MedicineRange(BattleUnit user, Item it)
+    {
+        var (min, max) = it.S.MedRange >= 0 && it.S.MedRange < Data.Item.MedicineRanges.Length ? Data.Item.MedicineRanges[it.S.MedRange] : (0, 0);
+        for (int y = user.Y - max; y <= user.Y + max; y++)
+            for (int x = user.X - max; x <= user.X + max; x++)
+                if (Dist(user.X, user.Y, x, y) is var d && d >= min && d <= max && InBounds(x, y)) yield return (x, y);
+    }
+
+    /// <summary>
+    /// Units a medicine can be given to (FUN_00411c90): in its reach and on the user's side — the exe's sides, the player's
+    /// units and neutral ones together — but not a neutral unit that can't be attacked.
+    /// </summary>
+    public IEnumerable<BattleUnit> MedicineTargets(BattleUnit user, Item it)
+    {
+        var reach = MedicineRange(user, it).ToHashSet();
+        return Alive.Where(t => reach.Contains((t.X, t.Y)) && Friendly(user, t) && !(t.Side == Side.Neutral && t.Unattackable));
+    }
 
     /// <summary>
     /// A medicine on a unit (FUN_0040b188), its effects in the order of the original's messages: HP / TP back by the

@@ -22,7 +22,7 @@ public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
         SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList, WholeMap, EndTurnConfirm, Leaving,
-        EquipSlots, UseConfirm }
+        EquipSlots, UseConfirm, Acting }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -101,7 +101,7 @@ public sealed class BattleController
         string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
     public bool EventRunning => _state_ == State.Events && _runner.Running;
     public bool Busy => _telop is not null || _ending != MapOutcome.None
-        || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene or State.Leaving
+        || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene or State.Leaving or State.Acting
         || (_s.Panning && _state_ is State.ActionMenu or State.Targeting);
     /// <summary>
     /// The frame's red arrows may show (FUN_00413768): the player's phase, the map idle, a unit selected, or a target or
@@ -120,7 +120,7 @@ public sealed class BattleController
     /// whole map is up; the arrow otherwise (a choice needs it).
     /// </summary>
     public int PointerMode =>
-        _telop is not null || _ending != MapOutcome.None || _state_ is State.Scene or State.Leaving ? 2
+        _telop is not null || _ending != MapOutcome.None || (_state_ == State.Scene && _scene?.OverMap != true) || _state_ == State.Leaving ? 2
         : _state_ == State.Events && _runner.Running ? (_runner.Message is not null ? 1 : _runner.Choice is not null ? 0 : 2)
         : _state_ is State.Showing or State.WholeMap ? 1
         : _s.Field.AllyPhase ? 0 : 2;
@@ -149,18 +149,20 @@ public sealed class BattleController
     public bool FastForwardSkipsScenes { get; set; } = true;
 
     /// <summary>
-    /// Battle music while a scene plays (FUN_00419574 at each step's start): map BGM slot 5 when a leader of the computer's
-    /// takes part, else 3 in the player's phase and 4 in the computer's.
+    /// Battle music, chosen at each step's start (FUN_00419574; the same file already playing goes on, FUN_0040931c): map
+    /// BGM slot 5 when a leader of the computer's takes part in the step — a strike's two units, a cast's caster, a
+    /// spell's caster and the unit it lands on (+0x6122, FUN_0041a9c4 / FUN_0041b6ec / FUN_0041ba0c) — else 3 in the
+    /// player's phase and 4 in the computer's.
     /// </summary>
-    void BattleMusic(BattleUnit actor, BattleUnit other)
+    void BattleMusic(BattleUnit actor, BattleUnit? other)
     {
-        bool boss = (actor.Leader && actor.Side == Side.Enemy) || (other.Leader && other.Side == Side.Enemy);
-        PlayMapBgm?.Invoke(boss ? 5 : _s.Field.AllyPhase ? 3 : 4);
+        static bool Boss(BattleUnit? u) => u is { Leader: true, Side: Side.Enemy };
+        PlayMapBgm?.Invoke(Boss(actor) || Boss(other) ? 5 : _s.Field.AllyPhase ? 3 : 4);
     }
 
     void RunScenes()
     {
-        if (_scenes.Count == 0) { NextPopup(); return; }
+        if (_scenes.Count == 0) { _action = null; NextPopup(); return; }
         _scene = _scenes.Dequeue();
         _scene.PlaySound = PlaySound;
         _state_ = State.Scene;
@@ -171,6 +173,7 @@ public sealed class BattleController
         // skipping (modern): cancel / right click, or fast-forward when that option is on
         if (i.Cancel || i.RightClick || (i.FastForward && FastForwardSkipsScenes)) _scene!.Skip();
         _scene!.Update(i.FastForward, i.Confirm || i.Click);
+        if (!_scene.OverMap) _action = null;   // the overlays go when the scene begins (FUN_00410388 → FUN_00411050)
         // the steps set the palette's brightness (FUN_00419574); the tick is 33 ms, slowed by GAME.DAT [4] while an
         // animation plays, and the map stays at 33 ms afterwards (FUN_00408530): only a new map or camp brings back 30 ms
         if (_scene.Brightness is int b) _fx.SetBrightness(b);
@@ -581,6 +584,7 @@ public sealed class BattleController
     /// </summary>
     void AfterFight()
     {
+        _action = null;
         if (_after is { } a)
             foreach (var t in a.Others)
                 if (AttackTrigger(a.Attacker, t, 11)) { _resume = AfterFight; return; }
@@ -624,8 +628,10 @@ public sealed class BattleController
     void UpdateState(BattleInput input, EventInput ev)
     {
         if (input.MouseTile is { } mt && input.MouseMoved) _cursor = mt;
-        // where the map is read, a click on the frame (outside the view) picks no tile (FUN_0040dee0 leaves +0x74 clear)
-        if (input.Click && input.MouseTile is null && _state_ is State.Idle or State.Selected or State.Targeting or State.Aiming or State.MedicineTarget)
+        // where the map is read, a click on the frame (outside the view) picks no tile (FUN_0040dee0 leaves +0x74 clear) —
+        // but a spell that covers the whole map is cast by any click (FUN_00410050 doesn't look at +0x74)
+        if (input.Click && input.MouseTile is null && _state_ is State.Idle or State.Selected or State.Targeting or State.Aiming or State.MedicineTarget
+            && !(_state_ == State.Aiming && _aimSpell is { EffectWholeMap: true }))
             input = input with { Click = false, Confirm = false };
         // the action menu and the targets wait for the view to stop (FUN_00413100 / FUN_004144f4 idle while +0x79 is set)
         if (_s.Panning && _state_ is State.ActionMenu or State.Targeting) return;
@@ -663,6 +669,7 @@ public sealed class BattleController
             case State.UseConfirm: UpdateUseConfirm(input); break;
             case State.Aiming: UpdateAiming(input); break;
             case State.MedicineTarget: UpdateMedicineTarget(input); break;
+            case State.Acting: UpdateActing(); break;
             case State.Scene: UpdateScene(input); break;
             case State.Files: UpdateFiles(input); break;
             case State.QuitConfirm: UpdateQuit(input); break;
@@ -798,6 +805,7 @@ public sealed class BattleController
     Item? _aimItem;
     HashSet<(int X, int Y)> _aimRange = new();
     List<BattleUnit> _medTargets = new();
+    HashSet<(int X, int Y)> _medRange = new();
 
     /// <summary>The inventory's items in its own order, the order the original's lists show them in.</summary>
     IEnumerable<Item> Inventory() =>
@@ -1001,6 +1009,7 @@ public sealed class BattleController
         if (it.Type is ItemType.StatUp or ItemType.ClassChange) { OpenUseConfirm(it); return; }
         if (_s.Field.ItemSpell(it) is { } m) { BeginAim(m, it); return; }
         _aimItem = it;
+        _medRange = _s.Field.MedicineRange(_sel!, it).ToHashSet();
         _medTargets = _s.Field.MedicineTargets(_sel!, it).ToList();
         PointAt(_sel!);
         _state_ = State.MedicineTarget;
@@ -1066,15 +1075,16 @@ public sealed class BattleController
         MoveCursor(i);
         if (!Pick(i) || _aimSpell is null) return;
         var a = (_cursor.X, _cursor.Y);
-        if (!_aimRange.Contains(a) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) return;   // nothing (FUN_00410050)
+        // nothing unless the aim is in range (any aim for a spell covering the whole map) and meets someone (FUN_00410050)
+        if ((!_aimSpell.EffectWholeMap && !_aimRange.Contains(a)) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) return;
         Sfx.Click();
-        DoCast(_sel!, _aimSpell, a, _aimItem);
+        Cast(_sel!, _aimSpell, a, _aimItem);
     }
 
     void UpdateMedicineTarget(BattleInput i)
     {
         if (i.Cancel || i.RightClick) { ReopenItemList(); return; }   // back to its row (FUN_0040fda8)
-        if (i.Left || i.Up || i.Right || i.Down)
+        if ((i.Left || i.Up || i.Right || i.Down) && _medTargets.Count > 0)
         {
             int k = _medTargets.FindIndex(t => t.X == _cursor.X && t.Y == _cursor.Y);
             k = (k + ((i.Right || i.Down) ? 1 : _medTargets.Count - 1) + _medTargets.Count) % _medTargets.Count;
@@ -1085,13 +1095,57 @@ public sealed class BattleController
         if (target is not null && _aimItem is not null) { Sfx.Click(); DoMedicine(_sel!, _aimItem, target); }
     }
 
+    // ---------------- an action under way (state 0x12) ----------------
+
+    /// <summary>
+    /// What an attack or a spell leaves on the map until its scene begins (FUN_00410190, FUN_00410050 and FUN_0040fda8 for
+    /// the player's click, FUN_00416e04 and FUN_00416e98 for the computer's): the range cleared, the actor's tile cyan, the
+    /// tiles it reaches in its colour and the units it meets solid.
+    /// </summary>
+    sealed record ActionOverlay((int X, int Y) Actor, int Colour, IReadOnlySet<(int X, int Y)> Area, IReadOnlyList<(int X, int Y)> Met);
+    ActionOverlay? _action;
+    Action? _acting;
+    int _actingFrames;
+
+    /// <summary>
+    /// State 0x12 (FUN_00410388): its counter starts at 5 on the player's click and at 0 on the computer's decision and
+    /// goes up a tick at a time; at 5 the "before" events get their turn — a tick after the click, 6 after the decision —
+    /// and the fight follows, its scene's lead-in counting on (<see cref="BattleScene"/>).
+    /// </summary>
+    void BeginAction(ActionOverlay overlay, Action fight)
+    {
+        _action = overlay;
+        if (Quiet) { fight(); return; }
+        _acting = fight;
+        _actingFrames = (_s.Field.AllyPhase ? 1 : 6) * 2;
+        _state_ = State.Acting;
+    }
+
+    void UpdateActing()
+    {
+        if (--_actingFrames > 0) return;
+        var fight = _acting!;
+        _acting = null;
+        fight();
+    }
+
+    void Attack(BattleUnit atk, BattleUnit def) =>
+        BeginAction(new((atk.X, atk.Y), 2, new HashSet<(int X, int Y)> { (def.X, def.Y) }, new[] { (def.X, def.Y) }), () => DoAttack(atk, def));
+
+    void Cast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
+    {
+        if (item is not null) _state.AddItem(item.Index, -1);   // FUN_0040ae68: one less, at the click
+        var met = _s.Field.SpellTargets(caster, m, aim.X, aim.Y).Select(t => (t.X, t.Y)).ToList();
+        BeginAction(new((caster.X, caster.Y), m.Type is 0 or 1 ? 2 : 3, _s.Field.SpellArea(m, aim.X, aim.Y).ToHashSet(), met),
+            () => DoCast(caster, m, aim, item));
+    }
+
     void DoCast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
     {
         // the units the spell meets on the other side get their first-attack slots (FUN_00410388)
         var met = OpposingOf(caster, _s.Field.SpellTargets(caster, m, aim.X, aim.Y));
         if (BeforeFight(caster, met, () => DoCast(caster, m, aim, item))) return;
         if (caster.Dead || caster.Hidden) { AfterFight(); return; }
-        if (item is not null) _state.AddItem(item.Index, -1);   // FUN_0040ae68: one less, before the scene
         var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
         int mpBefore = caster.Mp;
         var r = _s.Field.Cast(caster, m, aim.X, aim.Y, fromItem: item is not null);
@@ -1221,8 +1275,7 @@ public sealed class BattleController
                 _ => step,
             });
         }
-        _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before));
-        BattleMusic(caster, r.Effects[0].Target);
+        _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before) { StepStarted = st => BattleMusic(caster, st.Target) });
     }
 
     /// <summary>
@@ -1392,7 +1445,7 @@ public sealed class BattleController
         if (i.Click && !i.Confirm && _forecastArmed != target) { _forecastArmed = target; Sfx.Click(); return; }
         _forecastArmed = null;
         Sfx.Click();
-        DoAttack(_sel!, target);
+        Attack(_sel!, target);
     }
 
     BattleUnit? _forecastArmed;
@@ -1509,8 +1562,7 @@ public sealed class BattleController
                     DeathMessage = from - moved == 0 && HasDeathMessage(st.Target),
                 });
             }
-            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before));
-            BattleMusic(atk, def);
+            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before) { StepStarted = st => BattleMusic(st.Actor!, st.Target) });
         }
         else
             foreach (var st in r.Strikes)
@@ -1687,10 +1739,10 @@ public sealed class BattleController
             if (p.Spell is { } sp && Battlefield.CanCast(p.Unit, sp) && _s.Field.SpellTargets(p.Unit, sp, p.Aim.X, p.Aim.Y).Count > 0)
             {
                 _cursor = new Point(p.Aim.X, p.Aim.Y);
-                DoCast(p.Unit, sp, p.Aim, null);
+                Cast(p.Unit, sp, p.Aim, null);
                 return;
             }
-            if (p.Target is { Dead: false } t && _s.Field.InRange(p.Unit, p.Unit.X, p.Unit.Y, t)) { DoAttack(p.Unit, t); return; }
+            if (p.Target is { Dead: false } t && _s.Field.InRange(p.Unit, p.Unit.X, p.Unit.Y, t)) { Attack(p.Unit, t); return; }
             if (CheckPoint()) return;
             _wait = Quiet ? 0 : 8;
             return;
@@ -1723,44 +1775,65 @@ public sealed class BattleController
 
     // ---------------- drawing ----------------
 
+    /// <summary>
+    /// The map's overlays (FUN_004132a8): a tile with an area value (+0x848) shows that, else its range value (+0x208), as
+    /// SYSTEM.BMP's range block of that number less one, in stripes — 1 cyan: a move, or the actor of an action under
+    /// way; 2 salmon: the reach of an attack, a spell or a medicine; 3 orange: the area of an attack or a harmful spell;
+    /// 4 blue: a support spell's or a medicine's — and solid (the value + 4) where a unit the action reaches stands. The
+    /// area follows the cursor over the reach: its tile for an attack (FUN_00410190) or a medicine (FUN_00411c90), the
+    /// spell's effect grid around it (FUN_00411a48), the whole map for a spell that covers it.
+    /// </summary>
     public void DrawOverlays(SpriteBatch sb, Rectangle viewport, int frame)
     {
-        if (_state_ == State.Selected && _reach is not null) _s.DrawRange(sb, viewport, _reach.Keys, 0, frame);
-        if (_state_ == State.Targeting && _sel is not null)
+        var at = (_cursor.X, _cursor.Y);
+        void Draw(IEnumerable<(int X, int Y)> reach, int reachColour, int colour, IReadOnlySet<(int X, int Y)> area, IEnumerable<(int X, int Y)> met)
         {
-            var st = _s.Field.Stats(_sel);
-            var tiles = new List<(int, int)>();
-            for (int y = _sel.Y - st.RangeMax; y <= _sel.Y + st.RangeMax; y++)
-                for (int x = _sel.X - st.RangeMax; x <= _sel.X + st.RangeMax; x++)
-                {
-                    int d = Math.Abs(x - _sel.X) + Math.Abs(y - _sel.Y);
-                    if (d >= st.RangeMin && d <= st.RangeMax && _s.Field.InBounds(x, y)) tiles.Add((x, y));
-                }
-            _s.DrawRange(sb, viewport, tiles, 1, frame);
+            _s.DrawRange(sb, viewport, reach.Where(t => !area.Contains(t)), reachColour, frame);
+            _s.DrawRange(sb, viewport, area, colour, frame);
+            _s.DrawRange(sb, viewport, met, colour, frame, solid: true);
         }
-        // spell range and the area around the aim in stripes, the tiles of affected units solid: blue (tile 3) for
-        // own-side spells (T21), orange/yellow (tile 2) for attack spells (T22 recording); medicine range salmon (tile 1)
-        if (_state_ == State.Aiming && _aimSpell is not null && _sel is not null)
+        IReadOnlySet<(int X, int Y)> Cursor(bool on) => on ? new HashSet<(int X, int Y)> { at } : new HashSet<(int X, int Y)>();
+        switch (_state_)
         {
-            int colour = _aimSpell.Type is 0 or 1 ? 2 : 3;
-            var tiles = new HashSet<(int X, int Y)>(_aimRange);
-            if (_aimRange.Contains((_cursor.X, _cursor.Y)))
+            case State.Selected when _reach is not null:
+                _s.DrawRange(sb, viewport, _reach.Keys, 0, frame);
+                break;
+            case State.Targeting when _sel is not null:
             {
-                tiles.UnionWith(_s.Field.SpellArea(_aimSpell, _cursor.X, _cursor.Y));
-                _s.DrawRange(sb, viewport, tiles, colour, frame);
-                _s.DrawRange(sb, viewport, _s.Field.SpellTargets(_sel, _aimSpell, _cursor.X, _cursor.Y).Select(u => (u.X, u.Y)), colour, frame, solid: true);
+                var reach = AttackReach(_sel);
+                bool on = reach.Contains(at);
+                Draw(reach, 1, 2, Cursor(on), _targets.Where(t => on && (t.X, t.Y) == at).Select(t => (t.X, t.Y)));
+                break;
             }
-            else _s.DrawRange(sb, viewport, tiles, colour, frame);
+            case State.Aiming when _aimSpell is { } m && _sel is not null:
+            {
+                (int X, int Y)? aim = m.EffectWholeMap ? (0, 0) : _aimRange.Contains(at) ? at : null;
+                var area = aim is { } a ? _s.Field.SpellArea(m, a.X, a.Y).ToHashSet() : new HashSet<(int X, int Y)>();
+                var met = aim is { } b ? _s.Field.SpellTargets(_sel, m, b.X, b.Y).Select(u => (u.X, u.Y)) : Enumerable.Empty<(int X, int Y)>();
+                Draw(_aimRange, 1, m.Type is 0 or 1 ? 2 : 3, area, met);
+                break;
+            }
+            case State.MedicineTarget when _sel is not null:
+            {
+                bool on = _medRange.Contains(at);
+                Draw(_medRange, 1, 3, Cursor(on), _medTargets.Where(t => on && (t.X, t.Y) == at).Select(t => (t.X, t.Y)));
+                break;
+            }
+            case State.Acting or State.Events or State.Scene when _action is { } o && _scene?.OverMap != false:
+                Draw(new[] { o.Actor }, 0, o.Colour, o.Area, o.Met);
+                break;
         }
-        if (_state_ == State.MedicineTarget && _sel is not null && _aimItem is not null)
-        {
-            int r = _aimItem.S.MedRange;
-            var tiles = new List<(int, int)>();
-            for (int y = _sel.Y - r; y <= _sel.Y + r; y++)
-                for (int x = _sel.X - r; x <= _sel.X + r; x++)
-                    if (Math.Abs(x - _sel.X) + Math.Abs(y - _sel.Y) <= r && _s.Field.InBounds(x, y)) tiles.Add((x, y));
-            _s.DrawRange(sb, viewport, tiles, 1, frame);
-        }
+    }
+
+    /// <summary>The tiles a unit's weapon reaches from where it stands (its range's distances).</summary>
+    List<(int X, int Y)> AttackReach(BattleUnit u)
+    {
+        var st = _s.Field.Stats(u);
+        var tiles = new List<(int X, int Y)>();
+        for (int y = u.Y - st.RangeMax; y <= u.Y + st.RangeMax; y++)
+            for (int x = u.X - st.RangeMax; x <= u.X + st.RangeMax; x++)
+                if (Math.Abs(x - u.X) + Math.Abs(y - u.Y) is var d && d >= st.RangeMin && d <= st.RangeMax && _s.Field.InBounds(x, y)) tiles.Add((x, y));
+        return tiles;
     }
 
     public void DrawUi(SpriteBatch sb, Rectangle viewport, int frame)
@@ -1807,8 +1880,7 @@ public sealed class BattleController
             State.Targeting => _sel is not null && _s.Field.Stats(_sel) is var st
                 && Math.Abs(_cursor.X - _sel.X) + Math.Abs(_cursor.Y - _sel.Y) is var d && d >= st.RangeMin && d <= st.RangeMax,
             State.Aiming => _aimRange.Contains(c),
-            State.MedicineTarget => _sel is not null && _aimItem is not null
-                && Math.Abs(_cursor.X - _sel.X) + Math.Abs(_cursor.Y - _sel.Y) <= _aimItem.S.MedRange,
+            State.MedicineTarget => _medRange.Contains(c),
             _ => false,
         };
     }

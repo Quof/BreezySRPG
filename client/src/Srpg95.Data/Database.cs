@@ -31,6 +31,8 @@ public enum ItemType { Event, Weapon, Armor, Accessory, Medicine, StatUp, ClassC
 public sealed record Item(int Index, string Name, ItemType Type, int Price, string Desc, byte[] ClassUsable, ItemStats S)
 {
     public static readonly (int Min, int Max)[] WeaponRanges = { (1, 1), (1, 2), (1, 3), (2, 2), (2, 3), (2, 4), (2, 5), (3, 10) };
+    /// <summary>A medicine's reach by its range type (FUN_00411ba0's tables at 0x43323c / 0x43325c): 0 the user alone.</summary>
+    public static readonly (int Min, int Max)[] MedicineRanges = { (0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (1, 3), (1, 4), (2, 9) };
 
     public static Item Parse(int i, ReadOnlySpan<byte> r) => new(
         i, Bin.Str(r, 0, 32), (ItemType)Bin.I32(r, 0x20), Bin.I32(r, 0x24), Bin.Str(r, 0x28, 0x50),

@@ -43,7 +43,8 @@ public static class ItemInfo
                 Add("TP", s.MedMp, true);
                 Add("防御", s.MedDefUp, true);
                 Add("特防", s.MedMdefUp, true);
-                parts.Add(s.MedRange <= 0 ? "自分のみ" : $"範囲{s.MedRange}");
+                var (min, max) = s.MedRange >= 0 && s.MedRange < Item.MedicineRanges.Length ? Item.MedicineRanges[s.MedRange] : (0, 0);
+                parts.Add(max == 0 ? "自分のみ" : min == 0 ? $"範囲{max}" : $"範囲{min}～{max}");
                 break;
             case ItemType.StatUp:
                 string[] names = { "最大HP", "最大TP", "攻撃", "特殊", "命中回避", "耐久" };

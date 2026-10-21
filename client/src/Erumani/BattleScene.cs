@@ -90,6 +90,8 @@ public sealed class BattleScene
     Phase _phase = Phase.DimMap;
 
     public Action<string>? PlaySound { get; set; }
+    /// <summary>A step begins (its counter at 0): the exe picks the battle music here.</summary>
+    public Action<Step>? StepStarted { get; init; }
     public bool Done => _phase == Phase.Done;
     public string DebugPhase => $"{_phase}/{_phaseTicks} step={_stepIndex} c={_c} len={Current?.Length} frames={Current?.Anim.FrameCount} hit={Current?.Anim.HitFrame} drain={Current?.Drain}";
     /// <summary>The scene runs on its own (FUN_00419574 reads no click).</summary>
@@ -145,9 +147,11 @@ public sealed class BattleScene
         _phaseTicks++;
         switch (_phase)
         {
-            // the map darkens (FUN_00410388, matched to the recordings): 5 ticks, 4 steps of 20 %, a hold
+            // the lead-in (FUN_00410388), from the tick its "before" events had their turn (+0x1a0 at 5): 4 more ticks at
+            // full brightness, the palette down 20 % a tick for 4 (FUN_0040dee0, +0x91), and the tick that switches to
+            // the scene shows that last frame again
             case Phase.DimMap:
-                if (_phaseTicks >= 15) { _phase = Phase.Steps; _stepIndex = 0; _c = 0; }
+                if (_phaseTicks >= 10) { _phase = Phase.Steps; _stepIndex = 0; _c = 0; StepStarted?.Invoke(_steps[0]); }
                 break;
             case Phase.Steps:
                 if (Current is not { } st) { _phase = Phase.Done; break; }
@@ -167,6 +171,7 @@ public sealed class BattleScene
         _stepIndex++;
         _c = 0;
         if (_stepIndex >= _steps.Count) _phase = Phase.Done;
+        else StepStarted?.Invoke(_steps[_stepIndex]);
     }
 
     /// <summary>A step's end: the HP and TP it left.</summary>

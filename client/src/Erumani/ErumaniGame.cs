@@ -623,11 +623,19 @@ public sealed class ErumaniGame : Game
             _shotAdvance = 0;
             bi = bi with { Confirm = false };
         }
+        // "state:Name+N": the shot N frames after the battle map first enters that state (e.g. "state:Acting+2")
+        if (_battle is not null && _script.FirstOrDefault(s => s.StartsWith("state:")) is { } stateTok
+            && _battle.DebugState.StartsWith(stateTok[6..stateTok.LastIndexOf('+')] + " ", StringComparison.OrdinalIgnoreCase))
+        {
+            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, stateTok)));
+            _shotAt = _frame + int.Parse(stateTok[(stateTok.LastIndexOf('+') + 1)..]);
+            _shotAdvance = 0;
+        }
         bool idle = (_camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null })
             && !_fx.Holding && _afterFade is null;   // a loaded save's black hold and a choice's fade-out take no input
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
-            || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice+") || _script.Peek().StartsWith("click+")
+            || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice+") || _script.Peek().StartsWith("click+") || _script.Peek().StartsWith("state:")
             || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
