@@ -27,6 +27,8 @@ public static class Program
 /// <summary>
 /// Command line: --game DIR  --rtp DIR  --map N (1-based, like SMAP_nnn)
 ///               --screenshot FILE.png  (render one frame at 640x480, save it, exit)
+///               --scale N              (with --screenshot: render and save the frame at N × 640x480, as a window N times
+///                                       the size draws it)
 ///               --advance N            (with --screenshot: auto-confirm N messages/choices first)
 ///               --event NAME           (run this script on load instead of OPENING, e.g. EV000202)
 ///               --advance -1           (confirm every message/choice)
@@ -45,14 +47,14 @@ public static class Program
 ///                                       state:Name+N shoots N frames after the battle map enters state Name (e.g. Acting);
 ///                                       otherwise the shot is taken once the queue is done and the map is idle)
 /// </summary>
-public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null, int? Level = null, string? Give = null, string? Place = null, int? LoadSlot = null, int? CampBefore = null, string? SaveDir = null, string? Choose = null)
+public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null, int? Level = null, string? Give = null, string? Place = null, int? LoadSlot = null, int? CampBefore = null, string? SaveDir = null, string? Choose = null, int Scale = 1)
 {
     public static Options Parse(string[] args)
     {
         string? game = null, rtp = null, shot = null, ev = null, keys = null, give = null, place = null, saves = null, choose = null;
         int? level = null, loadSlot = null, campBefore = null;
         int? map = null;
-        int advance = 0;
+        int advance = 0, scale = 1;
         for (int i = 0; i + 1 < args.Length; i += 2)
         {
             switch (args[i])
@@ -71,12 +73,13 @@ public sealed record Options(string GameDir, string? RtpDir, int? StartMap, stri
                 case "--saves": saves = args[i + 1]; break;
                 case "--camp": campBefore = int.Parse(args[i + 1]) - 1; break;
                 case "--choose": choose = args[i + 1]; break;
+                case "--scale": scale = int.Parse(args[i + 1]); break;
             }
         }
         game ??= FindGameFolder() ?? throw new DirectoryNotFoundException(
             "Game folder not found. Pass --game <folder containing SRPGEXEC.EXE>.");
         rtp ??= FindUp(AppContext.BaseDirectory, Path.Combine("srpg maker 95", "RTP"));
-        return new Options(game, rtp, map, shot, advance, ev, keys, level, give, place, loadSlot, campBefore, saves, choose);
+        return new Options(game, rtp, map, shot, advance, ev, keys, level, give, place, loadSlot, campBefore, saves, choose, scale);
     }
 
     /// <summary>Next to the exe, or in a parent directory (development layout: ./えるまに).</summary>

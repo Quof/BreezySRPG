@@ -8,8 +8,8 @@ using Srpg95.Data;
 namespace Erumani;
 
 /// <summary>
-/// The client. Loads the original data, renders at the original 640x480 and scales to the
-/// window. Each map's OPENING event runs when the map loads.
+/// The client. Loads the original data, draws in the original's 640x480 coordinates at the window's resolution
+/// (see <see cref="_scale"/>). Each map's OPENING event runs when the map loads.
 /// Controls: see client/README.md (rebindable under Options, F1).
 /// </summary>
 public sealed class ErumaniGame : Game
@@ -29,11 +29,25 @@ public sealed class ErumaniGame : Game
     RenderTarget2D _screen = null!;
     /// <summary>The frame before a wipe started: what the wipe takes away (ScreenEffects.Transition).</summary>
     RenderTarget2D _snapshot = null!;
-    /// <summary>The frame after the palette's brightness and tone (see <see cref="Grade"/>).</summary>
-    Texture2D _graded = null!;
     /// <summary>What is shown: the graded frame where the shake puts it, the client's own windows over it.</summary>
     RenderTarget2D _final = null!;
-    readonly Color[] _gradePixels = new Color[VirtualWidth * VirtualHeight];
+    /// <summary>
+    /// The render scale: the frames above are 640·k × 480·k, drawn in 640 × 480 coordinates through <see cref="_view"/>,
+    /// k the smallest whole scale that fills the window — pixel art scaled up whole, the restyled skins' text rendered at
+    /// that size (<see cref="Ui.Ui.RenderScale"/>), so a large window gets crisp text, not a stretched 640 × 480 picture.
+    /// </summary>
+    int _scale;
+    Matrix _view = Matrix.Identity;
+    const int MaxScale = 6;
+    /// <summary>The palette's brightness and tone on the GPU (Shaders/Grade.fx); null where it won't run, and the CPU grades.</summary>
+    Effect? _gradeFx;
+    /// <summary>The grade's channel tables (red, green, blue in a 256 × 1 texture's channels) and what they were made for.</summary>
+    Texture2D _gradeTable = null!;
+    readonly Color[] _gradeTableData = new Color[256];
+    (int R, int G, int B, int Bright)? _gradeTableFor;
+    /// <summary>The CPU grade's frame and its pixels (only when the shader can't be used).</summary>
+    Texture2D? _graded;
+    Color[] _gradePixels = Array.Empty<Color>();
     readonly GameState _state = new();
     /// <summary>The screen's effects for the whole run: brightness and tone carry over from screen to screen as the palette does.</summary>
     readonly ScreenEffects _fx = new();
@@ -49,6 +63,8 @@ public sealed class ErumaniGame : Game
     Ui.OptionsScreen? _options;
     Ui.Backlog _backlog = null!;
     bool _ffToggle;
+    /// <summary>The enemy ranges key's toggle, kept from map to map.</summary>
+    bool _showThreat;
     bool _gaveItems;
     Queue<string> _script = new();
     readonly List<string> _trace = new();
@@ -101,10 +117,9 @@ public sealed class ErumaniGame : Game
         Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "soundfonts"));
         ApplySettings();
         _sb = new SpriteBatch(GraphicsDevice);
-        _screen = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-        _snapshot = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-        _graded = new Texture2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color);
-        _final = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+        _gradeTable = new Texture2D(GraphicsDevice, 256, 1, false, SurfaceFormat.Color);
+        _gradeFx = LoadGradeShader();
+        SetScale(1);
 
         _mapIndices = Directory.GetFiles(Path.Combine(_folder.Root, "MAP"), "SMAP_*.DAT")
             .Select(p => int.Parse(Path.GetFileNameWithoutExtension(p)[5..]) - 1).Order().ToArray();
@@ -276,7 +291,7 @@ public sealed class ErumaniGame : Game
         _session = new MapSession(map, _db, _state, _tex, _folder.Chipset(map.Tileset));
         _runner = new EventRunner(_state, _session, _audio, _fx) { Shown = _backlog.Add };
         if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
-        _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex, _fx) { MusicLooped = () => _audio.BgmLooped };
+        _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex, _fx) { MusicLooped = () => _audio.BgmLooped, ShowThreat = _showThreat };
         // the exe stops the music when a map loads (FUN_0041d5e4 plays ""), except that a camp's music carries on into
         // the opening; the player-turn music comes with PLAYER TURN. A battle save's music comes after its hold (ApplySave).
         if (resume is null && !fromCamp) _audio.PlayBgm("");
@@ -348,7 +363,7 @@ public sealed class ErumaniGame : Game
             _battle.FastForwardSkipsScenes = _settings.FastForwardSkipsScenes;
             _battle.SkipEnemyTurn = _settings.SkipEnemyTurn;
         }
-        Ui.Ui.Modern = _settings.ModernUi;
+        Ui.Ui.Skin = _settings.Skin;
     }
 
     void ApplyDisplay()
@@ -380,8 +395,9 @@ public sealed class ErumaniGame : Game
 
     protected override void Update(GameTime gameTime)
     {
-        var k = Keyboard.GetState();
-        var m = Mouse.GetState();
+        // a scripted run (--screenshot) takes its input from its script alone, never from the real keyboard and mouse
+        var k = _opts.Screenshot is null ? Keyboard.GetState() : default;
+        var m = _opts.Screenshot is null ? Mouse.GetState() : default;
         _controls.Update(IsActive ? k : default);
         _mouseVirtual = ToVirtual(m.Position);
         bool Pressed(Keys key) => k.IsKeyDown(key) && !_prevKeys.IsKeyDown(key);
@@ -504,6 +520,9 @@ public sealed class ErumaniGame : Game
             EndUpdate(gameTime, k, m);
             return;
         }
+
+        // the enemy ranges key (modern aid): on a map, toggles the enemies' combined reach
+        if (_session is not null && _opts.Screenshot is null && _controls.Pressed(GameAction.EnemyRanges)) ToggleThreat();
 
         // text backlog: mouse wheel (or its key) on a map, outside battle scenes
         if (_session is not null && _battle?.SceneShowing != true)
@@ -651,6 +670,8 @@ public sealed class ErumaniGame : Game
             "esc" => bi with { Cancel = true },
             "info" => bi with { Info = true },
             "backlog" => Do(() => _backlog.Scroll(1), bi),
+            "threat" => Do(ToggleThreat, bi),
+            "options" => Do(OpenOptions, bi),
             _ when tok.StartsWith("at:") && tok[3..].Split('.') is [var x, var y] =>
                 bi with { MouseTile = new Point(int.Parse(x), int.Parse(y)), MouseMoved = true },
             _ => bi,
@@ -658,6 +679,13 @@ public sealed class ErumaniGame : Game
     }
 
     static BattleInput Do(Action a, BattleInput bi) { a(); return bi; }
+
+    void ToggleThreat()
+    {
+        _showThreat = !_showThreat;
+        if (_battle is not null) _battle.ShowThreat = _showThreat;
+        Sfx.Click();
+    }
 
     int _shotAt = int.MaxValue;
     bool ShotReady => _frame > 30000 || _frame >= _shotAt ||
@@ -817,6 +845,7 @@ public sealed class ErumaniGame : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        SetScale(_opts.Screenshot is not null ? Math.Clamp(_opts.Scale, 1, MaxScale) : ScaleFor(Destination()));
         // a wipe just started: keep the last frame, which the wipe will take away bit by bit
         if (_fx.SnapshotRequested)
         {
@@ -830,7 +859,7 @@ public sealed class ErumaniGame : Game
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
         bool overlay = _options is not null || _skipPrompt is not null || _backlog.Open;
-        _sb.Begin(samplerState: SamplerState.PointClamp);
+        _sb.Begin(samplerState: SamplerState.PointClamp, transformMatrix: _view);
         if (_logo >= 0 && _logo < _logos.Count) _sb.Draw(_logos[_logo], Vector2.Zero, Color.White);
         else if (_gameOver >= 0)
         {
@@ -845,11 +874,10 @@ public sealed class ErumaniGame : Game
         _sb.End();
 
         // 2. the palette's brightness and tone, the shake, then the client's own windows (options, skip prompt, backlog)
-        var shown = Grade(_screen);
         GraphicsDevice.SetRenderTarget(_final);
         GraphicsDevice.Clear(Color.Black);
-        _sb.Begin(samplerState: SamplerState.PointClamp);
-        _sb.Draw(shown, _fx.ShakeOffset.ToVector2(), Color.White);   // the uncovered strip stays black (FUN_00423e70)
+        DrawGraded(new Rectangle(_fx.ShakeOffset, new Point(VirtualWidth, VirtualHeight)));   // the uncovered strip stays black (FUN_00423e70)
+        _sb.Begin(samplerState: SamplerState.PointClamp, transformMatrix: _view);
         if (_debug && _session is not null) DrawDebug();
         if (overlay)
         {
@@ -870,6 +898,7 @@ public sealed class ErumaniGame : Game
         if (_session is not null)
         {
             _session.DrawTiles(_sb, view);
+            _battle?.DrawThreat(_sb, view);
             _battle?.DrawOverlays(_sb, view, _frame);
             _session.DrawUnits(_sb, view, _frame, _battle?.FacingUnit);
         }
@@ -892,24 +921,58 @@ public sealed class ErumaniGame : Game
     }
 
     /// <summary>
-    /// The palette's brightness and tone on the finished frame, as FUN_00405a18 rewrites palette entries 10–245: the
-    /// vividness mixes each colour with its grey (3R + 6G + B) / 10, the tone scales each channel (above 100 % towards
-    /// white), the brightness scales the result (above 100 towards white). Black — palette entry 0 and the other fixed
-    /// entries, which no game picture uses for anything else — stays black.
+    /// The game's screen onto the final frame at <paramref name="at"/> (640 × 480 coordinates) through the palette's
+    /// brightness and tone, as FUN_00405a18 rewrites palette entries 10–245: the vividness mixes each colour with its grey
+    /// (3R + 6G + B) / 10, the tone scales each channel (above 100 % towards white), the brightness scales the result (above
+    /// 100 towards white). Black — palette entry 0 and the other fixed entries, which no game picture uses for anything
+    /// else — stays black. On the GPU (Shaders/Grade.fx), or pixel by pixel on the CPU where the shader can't run.
     /// </summary>
-    Texture2D Grade(RenderTarget2D src)
+    void DrawGraded(Rectangle at)
     {
         var tone = _fx.FlashTone ?? _fx.Tone;
         int bright = Math.Clamp(_fx.Brightness, 0, 200), tr = (int)tone.X, tg = (int)tone.Y, tb = (int)tone.Z, v = (int)tone.W;
-        if (bright == 100 && tr == 100 && tg == 100 && tb == 100 && v >= 100) return src;
-        src.GetData(_gradePixels);
-        Span<byte> lr = stackalloc byte[256], lg = stackalloc byte[256], lb = stackalloc byte[256];
-        Lut(lr, tr, bright);
-        Lut(lg, tg, bright);
-        Lut(lb, tb, bright);
-        for (int i = 0; i < _gradePixels.Length; i++)
+        Texture2D shown = _screen;
+        Effect? effect = null;
+        if (bright != 100 || tr != 100 || tg != 100 || tb != 100 || v < 100)
         {
-            var c = _gradePixels[i];
+            if (_gradeTableFor != (tr, tg, tb, bright))
+            {
+                FillGradeTable(_gradeTableData, tr, tg, tb, bright);
+                _gradeTable.SetData(_gradeTableData);
+                _gradeTableFor = (tr, tg, tb, bright);
+            }
+            if (_gradeFx is not null)
+            {
+                _gradeFx.Parameters["Table"].SetValue(_gradeTable);
+                _gradeFx.Parameters["Vivid"].SetValue((float)v);
+                effect = _gradeFx;
+            }
+            else shown = GradeOnCpu(v);
+        }
+        _sb.Begin(samplerState: SamplerState.PointClamp, effect: effect, transformMatrix: _view);
+        _sb.Draw(shown, at, Color.White);
+        _sb.End();
+    }
+
+    /// <summary>The grade's channel tables, one per channel of FUN_00405a18: the tone (≤ 100 % scales, above moves towards 255), then the brightness.</summary>
+    static void FillGradeTable(Color[] table, int tr, int tg, int tb, int bright)
+    {
+        static int Channel(int c, int tone, int bright)
+        {
+            int x = tone <= 100 ? c * tone / 100 : (255 - c) * (tone - 100) / 100 + c;
+            if (bright < 100) x = x * bright / 100;
+            else if (bright > 100) x = (255 - x) * (bright - 100) / 100 + x;
+            return Math.Clamp(x, 0, 255);
+        }
+        for (int c = 0; c < 256; c++) table[c] = new Color(Channel(c, tr, bright), Channel(c, tg, bright), Channel(c, tb, bright), 255);
+    }
+
+    /// <summary>The grade of each pixel (the shader's sums): black stays, the vividness greys, the tables map each channel.</summary>
+    static void GradePixels(Span<Color> px, Color[] table, int v)
+    {
+        for (int i = 0; i < px.Length; i++)
+        {
+            var c = px[i];
             int r = c.R, g = c.G, b = c.B;
             if ((r | g | b) == 0) continue;
             if (v < 100)
@@ -918,31 +981,119 @@ public sealed class ErumaniGame : Game
                 if (v <= 0) r = g = b = grey;
                 else { r = ((100 - v) * grey + r * v) / 100; g = ((100 - v) * grey + g * v) / 100; b = ((100 - v) * grey + b * v) / 100; }
             }
-            _gradePixels[i] = new Color(lr[r], lg[g], lb[b], c.A);
+            px[i] = new Color(table[r].R, table[g].G, table[b].B, c.A);
         }
+    }
+
+    Texture2D GradeOnCpu(int v)
+    {
+        if (_gradePixels.Length != _screen.Width * _screen.Height) _gradePixels = new Color[_screen.Width * _screen.Height];
+        _graded ??= new Texture2D(GraphicsDevice, _screen.Width, _screen.Height, false, SurfaceFormat.Color);
+        _screen.GetData(_gradePixels);
+        GradePixels(_gradePixels, _gradeTableData, v);
         _graded.SetData(_gradePixels);
         return _graded;
     }
 
-    /// <summary>One channel of FUN_00405a18: the tone (≤ 100 % scales, above moves towards 255), then the brightness.</summary>
-    static void Lut(Span<byte> lut, int tone, int bright)
+    /// <summary>
+    /// The grade shader (Shaders/Grade.fx, compiled for OpenGL and embedded), once a test frame of every kind of colour has
+    /// come out of it exactly as <see cref="GradePixels"/> grades it; otherwise null, and the CPU grades.
+    /// </summary>
+    Effect? LoadGradeShader()
     {
-        for (int c = 0; c < 256; c++)
+        Effect? fx = null;
+        try
         {
-            int x = tone <= 100 ? c * tone / 100 : (255 - c) * (tone - 100) / 100 + c;
-            if (bright < 100) x = x * bright / 100;
-            else if (bright > 100) x = (255 - x) * (bright - 100) / 100 + x;
-            lut[c] = (byte)Math.Clamp(x, 0, 255);
+            using (var s = typeof(ErumaniGame).Assembly.GetManifestResourceStream("Grade.ogl.mgfx"))
+            {
+                if (s is null) return null;
+                using var ms = new MemoryStream();
+                s.CopyTo(ms);
+                fx = new Effect(GraphicsDevice, ms.ToArray());
+            }
+            var rng = new Random(95);
+            var input = new Color[256 * 4];
+            for (int i = 0; i < input.Length; i++)
+                input[i] = i < 8 ? new Color(i * 36, 255 - i * 36, i % 2 * 255, 255) : i < 16 ? new Color(0, 0, 0, (i - 8) * 32) : new Color(rng.Next(256), rng.Next(256), rng.Next(256), 255);
+            var table = new Color[256];
+            using var src = new Texture2D(GraphicsDevice, 256, 4);
+            using var rt = new RenderTarget2D(GraphicsDevice, 256, 4);
+            using var sb = new SpriteBatch(GraphicsDevice);
+            src.SetData(input);
+            foreach (var (r, g, b, bright, v) in new[] { (60, 100, 140, 80, 100), (100, 100, 100, 150, 40), (130, 70, 100, 100, 0), (100, 100, 100, 37, 73) })
+            {
+                FillGradeTable(table, r, g, b, bright);
+                _gradeTable.SetData(table);
+                fx.Parameters["Table"].SetValue(_gradeTable);
+                fx.Parameters["Vivid"].SetValue((float)v);
+                GraphicsDevice.SetRenderTarget(rt);
+                GraphicsDevice.Clear(Color.Transparent);
+                sb.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp, effect: fx);
+                sb.Draw(src, Vector2.Zero, Color.White);
+                sb.End();
+                GraphicsDevice.SetRenderTarget(null);
+                var got = new Color[input.Length];
+                rt.GetData(got);
+                var want = (Color[])input.Clone();
+                GradePixels(want, table, v);
+                if (!got.AsSpan().SequenceEqual(want))
+                {
+                    _trace.Add("grade: the shader's colours differ from the CPU's; grading on the CPU");
+                    fx.Dispose();
+                    return null;
+                }
+            }
+            return fx;
+        }
+        catch (Exception e)
+        {
+            GraphicsDevice.SetRenderTarget(null);
+            _trace.Add($"grade: no shader ({e.GetType().Name}); grading on the CPU");
+            fx?.Dispose();
+            return null;
         }
     }
 
-    /// <summary>Screenshot (in screenshot mode) or scale the 640x480 screen to the window.</summary>
+    /// <summary>Draws from now on at <paramref name="k"/> render pixels per 640 × 480 pixel, remaking the frames at that size.</summary>
+    void SetScale(int k)
+    {
+        if (k == _scale) return;
+        _scale = k;
+        _view = Matrix.CreateScale(k);
+        Ui.Ui.RenderScale = k;
+        _screen?.Dispose();
+        _snapshot?.Dispose();
+        _final?.Dispose();
+        _graded?.Dispose();
+        _graded = null;
+        RenderTarget2D Frame() => new(GraphicsDevice, VirtualWidth * k, VirtualHeight * k, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+        _screen = Frame();
+        _snapshot = Frame();
+        _final = Frame();
+    }
+
+    /// <summary>The render scale for a frame shown at <paramref name="dest"/>: the smallest whole scale at least as large, so the frame is only ever scaled down to the window, or not at all.</summary>
+    static int ScaleFor(Rectangle dest) =>
+        Math.Clamp((int)MathF.Ceiling(Math.Max(dest.Width / (float)VirtualWidth, dest.Height / (float)VirtualHeight) - 0.05f), 1, MaxScale);
+
+    /// <summary>Where the frame goes in the window: scaled as the Scaling setting says, centred.</summary>
+    Rectangle Destination()
+    {
+        var bb = GraphicsDevice.PresentationParameters.Bounds;
+        float scale = Math.Min((float)bb.Width / VirtualWidth, (float)bb.Height / VirtualHeight);
+        if (_settings.Scaling == Scaling.Integer && scale >= 1) scale = MathF.Floor(scale);
+        int w = (int)(VirtualWidth * scale), h = (int)(VirtualHeight * scale);
+        if (_settings.Scaling == Scaling.Stretch) (w, h) = (bb.Width, bb.Height);
+        return new Rectangle((bb.Width - w) / 2, (bb.Height - h) / 2, w, h);
+    }
+
+    /// <summary>Screenshot (in screenshot mode, at the render scale) or the frame to the window: one to one when the window is a whole multiple of 640 × 480, else scaled down from the next whole multiple (smoothly with the Smooth filter).</summary>
     void Present(GameTime gameTime)
     {
         if (_opts.Screenshot is { } shot && ShotReady)
         {
             GraphicsDevice.SetRenderTarget(null);
-            using (var f = File.Create(shot)) _final.SaveAsPng(f, VirtualWidth, VirtualHeight);
+            using (var f = File.Create(shot)) _final.SaveAsPng(f, _final.Width, _final.Height);
             File.WriteAllText(Path.ChangeExtension(shot, ".txt"), $"frame={_frame} script-left={_script.Count} {(_title is not null ? "Title" : _camp is not null ? $"Camp gold={_state.Gold} items={string.Join(",", _state.Items.Select(kv => $"{kv.Key}x{kv.Value}"))} roster={string.Join(",", _state.Roster.Select(kv => $"{kv.Key}:c{kv.Value.ClassId}/w{kv.Value.Weapon}/a{kv.Value.Armor}/x{kv.Value.Accessory}"))}" : _battle?.DebugState)}\n" + string.Join("\n", _trace) + "\n");
             Exit();
             return;
@@ -950,13 +1101,9 @@ public sealed class ErumaniGame : Game
 
         GraphicsDevice.SetRenderTarget(null);
         GraphicsDevice.Clear(Color.Black);
-        var bb = GraphicsDevice.PresentationParameters.Bounds;
-        float scale = Math.Min((float)bb.Width / VirtualWidth, (float)bb.Height / VirtualHeight);
-        if (_settings.Scaling == Scaling.Integer && scale >= 1) scale = MathF.Floor(scale);
-        int w = (int)(VirtualWidth * scale), h = (int)(VirtualHeight * scale);
-        if (_settings.Scaling == Scaling.Stretch) (w, h) = (bb.Width, bb.Height);
-        _dest = new Rectangle((bb.Width - w) / 2, (bb.Height - h) / 2, w, h);
-        _sb.Begin(samplerState: _settings.Smooth ? SamplerState.LinearClamp : SamplerState.PointClamp);
+        _dest = Destination();
+        bool exact = _dest.Width == _final.Width && _dest.Height == _final.Height;
+        _sb.Begin(samplerState: _settings.Smooth && !exact ? SamplerState.LinearClamp : SamplerState.PointClamp);
         _sb.Draw(_final, _dest, Color.White);
         _sb.End();
         base.Draw(gameTime);
@@ -1005,7 +1152,7 @@ public sealed class ErumaniGame : Game
         void Old(Rectangle r)
         {
             if (from is { } c) _ui.Fill(_sb, r, c);
-            else _sb.Draw(_snapshot, r, r, Color.White);
+            else _sb.Draw(_snapshot, r, new Rectangle(r.X * _scale, r.Y * _scale, r.Width * _scale, r.Height * _scale), Color.White);
         }
         static bool BandShown(int band, int tick, int half) => band % 4 is 0 or 2 ? tick >= band / 4 : tick >= 2 * half - 1 - band / 4;
         switch (_fx.Transition)
@@ -1062,24 +1209,9 @@ public sealed class ErumaniGame : Game
         DrawMessage(_sb, _ui, _tex, msg.Window, msg.Face, msg.FaceRight, msg.FaceFlip, msg.Lines);
     }
 
-    /// <summary>
-    /// A message (FUN_004148a4): the window 608 × 160 at (16, 16 + 144 × window) — top, centre, bottom (FUN_0040d18c).
-    /// The face, 128 × 128, 16 px in from its left (or, on the right, at x 480) and 16 px down; the balloon 16 px down at x
-    /// 112 without a face, 192 with one on the left, 32 with one on the right, its tail towards the face; the text, 18 px
-    /// MS Gothic, 18 px into the balloon and from 28 px below the window's top, 22-px lines.
-    /// </summary>
-    public static void DrawMessage(SpriteBatch sb, Ui.Ui ui, Textures tex, int window, int faceId, bool faceRight, bool faceFlip, IReadOnlyList<string> lines)
-    {
-        int y = 16 + 144 * Math.Clamp(window, 0, 2);
-        var face = faceId > 0 ? tex.Get($"FACE_{faceId:000}.BMP") : null;
-        int bx = face is null ? 112 : faceRight ? 32 : 192;
-        if (face is not null)
-            sb.Draw(face, new Rectangle(faceRight ? 480 : 32, y + 16, 128, 128), null, Color.White, 0, Vector2.Zero,
-                faceFlip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
-        ui.MessageBalloon(sb, new Point(bx, y + 16), face is null ? 0 : faceRight ? 1 : -1);
-        for (int i = 0; i < lines.Count; i++)
-            ui.DrawText(sb, lines[i], new Vector2(bx + 18, y + 28 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
-    }
+    /// <summary>A message (FUN_004148a4) in its window — top, centre, bottom (FUN_0040d18c): the window 608 × 160 at (16, 16 + 144 × window), laid out by <see cref="Ui.Ui.Message"/>.</summary>
+    public static void DrawMessage(SpriteBatch sb, Ui.Ui ui, Textures tex, int window, int faceId, bool faceRight, bool faceFlip, IReadOnlyList<string> lines) =>
+        ui.Message(sb, faceId > 0 ? tex.Get($"FACE_{faceId:000}.BMP") : null, 16 + 144 * Math.Clamp(window, 0, 2), faceRight, faceFlip, lines);
 
     /// <summary>The bar shows on the choice's row: the pointer is on it (it starts on the first), or keys moved it.</summary>
     bool _choiceActive;
@@ -1142,6 +1274,11 @@ public sealed class ErumaniGame : Game
         _ui?.Dispose();
         _audio?.Dispose();
         _screen?.Dispose();
+        _snapshot?.Dispose();
+        _final?.Dispose();
+        _graded?.Dispose();
+        _gradeTable?.Dispose();
+        _gradeFx?.Dispose();
         base.UnloadContent();
     }
 }

@@ -105,7 +105,7 @@ public sealed class MenuList
             if (Columns is null) continue;
             for (int col = 0; col < Columns.Length && col < ColumnX.Length; col++)
                 if (k < Columns[col].Length && Columns[col][k] is { Length: > 0 } s && ui.SmallText.Get(s) is { } ct)
-                    sb.Draw(ct, new Vector2(Rect.X + ColumnX[col] - ct.Width, r.Y + 2), c);
+                    ct.Draw(sb, new Vector2(Rect.X + ColumnX[col] - ct.Width, r.Y + 2), c);
         }
         if (PageRows > 0 && Pages > 1) PageFooter(sb, ui, Rect, RowY(PageRows), Page, Pages, _pressedFrames > 0 ? _pressed : -1);
     }
@@ -113,6 +113,7 @@ public sealed class MenuList
     /// <summary>A header rule (FUN_00414344): dark at the row's y + 7, light at y + 8, 12 px in from the panel's sides.</summary>
     public static void EtchedRule(SpriteBatch sb, Ui.Ui ui, Rectangle panel, int rowY)
     {
+        if (Ui.Ui.Gilded) { ui.GoldRule(sb, panel.X + 12, rowY + 8, panel.Width - 24); return; }
         var (light, dark) = Ui.Ui.EdgeColors(Ui.Ui.PanelColor.Green);
         ui.Fill(sb, new Rectangle(panel.X + 12, rowY + 7, panel.Width - 24, 1), dark);
         ui.Fill(sb, new Rectangle(panel.X + 12, rowY + 8, panel.Width - 24, 1), light);
@@ -712,7 +713,7 @@ public sealed class CampScreen
         if (name is null) return;
         T(sb, $"{name}：", 92, 40, Ui.Ui.PanelText);
         if (item is not null && _ui.SmallText.Get(Ui.ItemInfo.Summary(item, _db)) is { } st)   // modern addition
-            sb.Draw(st, new Vector2(d.Right - 16 - st.Width, d.Y + 10), Ui.Ui.StatText);
+            st.Draw(sb, new Vector2(d.Right - 16 - st.Width, d.Y + 10), Ui.Ui.StatText);
         T(sb, desc!, 92, 56, Ui.Ui.PanelText);
     }
 }

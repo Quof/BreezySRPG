@@ -30,6 +30,35 @@ public static class EnemyAi
         return mp[0];
     }
 
+    /// <summary>
+    /// Every tile a computer unit could hit in its coming phase, as its AI would go about it (a modern aid; the original
+    /// shows nothing like it): its weapon's reach from every tile it can stop on this turn — only its own for the None
+    /// pattern — and the area of every harmful spell it has the TP for, aimed from those tiles. Nothing for a unit that
+    /// sleeps through that phase or follows a Specific pattern, which never attacks.
+    /// </summary>
+    public static HashSet<(int X, int Y)> Threat(Battlefield f, BattleUnit u, bool[] switches)
+    {
+        var tiles = new HashSet<(int X, int Y)>();
+        var p = ActivePattern(u, switches);
+        if (u.SleepTurns > 1 || p.Action == 2) return tiles;   // asleep still once its phase's upkeep has counted down
+        var st = f.Stats(u);
+        var stops = f.Flood(u, p.Action < 3 ? st.Movement : 0).Keys
+            .Where(t => f.UnitAt(t.X, t.Y) is not { } o || o == u).ToList();
+        foreach (var (sx, sy) in stops)
+            for (int y = sy - st.RangeMax; y <= sy + st.RangeMax; y++)
+                for (int x = sx - st.RangeMax; x <= sx + st.RangeMax; x++)
+                    if (Math.Abs(x - sx) + Math.Abs(y - sy) is var d && d >= st.RangeMin && d <= st.RangeMax && f.InBounds(x, y))
+                        tiles.Add((x, y));
+        if (u.Side == Side.Neutral) return tiles;   // neutral units cast nothing (FUN_0041589c)
+        foreach (var m in f.KnownSpells(u).Where(m => m.Type is 0 or 1 && Battlefield.CanCast(u, m)))
+        {
+            var aims = new HashSet<(int X, int Y)>();
+            foreach (var (sx, sy) in m.RangeWholeMap || m.EffectWholeMap ? stops.Take(1) : stops) aims.UnionWith(f.SpellRange(m, sx, sy));
+            foreach (var (ax, ay) in m.EffectWholeMap ? aims.Take(1) : aims) tiles.UnionWith(f.SpellArea(m, ax, ay));
+        }
+        return tiles;
+    }
+
     /// <summary>Path costs for one unit's turn: every tile it could ever walk to, and which of them it can stop on this turn.</summary>
     sealed class Walk
     {

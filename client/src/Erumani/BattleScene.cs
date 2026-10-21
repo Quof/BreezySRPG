@@ -353,12 +353,16 @@ public sealed class BattleScene
             var color = u.Side switch { Side.Neutral => Ui.Ui.PanelColor.Yellow, Side.Enemy => Ui.Ui.PanelColor.Red, _ => Ui.Ui.PanelColor.Blue };
             _ui.Panel(sb, r, color);
             var (light, dark) = Ui.Ui.EdgeColors(color);
-            var text = Ui.Ui.Modern ? Ui.Ui.PanelText : light;
+            var text = Ui.Ui.Restyled ? Ui.Ui.PanelText : light;
             void T(string s, int x, int y) => _ui.Text12(sb, s, r.X + x, r.Y + y, text);
             // the name through GDI's DrawText (FUN_00407954), its corner at the rectangle's
-            if (_ui.NameText.Get(u.Name) is { } name) sb.Draw(name, new Vector2(r.X + 12, r.Y + 8), text);
-            _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 28, 296, 1), dark);
-            _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 29, 296, 1), light);
+            _ui.NameText.Get(u.Name)?.Draw(sb, new Vector2(r.X + 12, r.Y + 8), text);
+            if (Ui.Ui.Gilded) _ui.GoldRule(sb, r.X + 12, r.Y + 29, 296);
+            else
+            {
+                _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 28, 296, 1), dark);
+                _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 29, 296, 1), light);
+            }
             int hp = Math.Max(0, ShownHp(u)), mp = ShownMp(u);
             T(_db.Words[2], 12, 32);
             T($"{hp,2}／{u.MaxHp,2}", 272, 32);
@@ -399,6 +403,7 @@ public sealed class BattleScene
                 if (full > 0) sb.Draw(sys, new Vector2(x + px, y), new Rectangle(48, row, full, 16), Color.White);
                 if (full < 8) sb.Draw(sys, new Vector2(x + px + full, y), new Rectangle(56 + full, row, 8 - full, 16), Color.White);
             }
+        if (Ui.Ui.Gilded) return;   // no etched lines in the gilded skin
         _ui.Fill(sb, new Rectangle(x - 1, y - 1, w + 2, 1), dark);
         _ui.Fill(sb, new Rectangle(x - 1, y + 16, w + 2, 1), light);
         _ui.Fill(sb, new Rectangle(x - 1, y - 1, 1, 18), dark);
@@ -414,10 +419,8 @@ public sealed class BattleScene
     void DrawDeathMessage(SpriteBatch sb, BattleUnit u)
     {
         var unit = _db.Units[Math.Clamp(u.Unit, 0, _db.Units.Length - 1)];
-        if (unit.Face > 0 && _tex.Get($"FACE_{unit.Face:000}.BMP") is { } face) sb.Draw(face, new Rectangle(32, 336, 128, 128), Color.White);
-        _ui.MessageBalloon(sb, new Point(192, 336), -1);
-        var lines = unit.DeathMessage.Replace("\r", "").Split('\n');
-        for (int i = 0; i < Math.Min(5, lines.Length); i++)
-            _ui.DrawText(sb, lines[i], new Vector2(210, 348 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
+        var face = unit.Face > 0 ? _tex.Get($"FACE_{unit.Face:000}.BMP") : null;
+        var lines = unit.DeathMessage.Replace("\r", "").Split('\n').Take(5).ToList();
+        _ui.Message(sb, face, 320, false, false, lines, tailLeft: true);
     }
 }

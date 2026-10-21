@@ -9,10 +9,12 @@ public enum GameAction
 {
     Confirm, Cancel, Info, Up, Down, Left, Right,
     CameraUp, CameraDown, CameraLeft, CameraRight,
-    FastForward, Backlog, Options, Fullscreen, SkipCutscene,
+    FastForward, Backlog, Options, Fullscreen, SkipCutscene, EnemyRanges,
 }
 
 public enum Scaling { Integer, Fit, Stretch }
+/// <summary>The interface's look: the original's, the modern dark one, or the gilded one (gold-framed dark boxes).</summary>
+public enum UiSkin { Original, Modern, Gilded }
 public enum MusicEngine { Windows, SoundFont }
 public enum FastForwardMode { Hold, Toggle }
 
@@ -43,7 +45,9 @@ public sealed class Settings
     public bool FastForwardAdvancesText { get; set; } = true;
     public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button fast-forwards
     public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
-    public bool ModernUi { get; set; }                    // the restyled windows, menus and text box instead of the original look
+    public UiSkin Skin { get; set; }                      // the windows, menus and text box: the original look or a restyled one
+    /// <summary>The on/off setting earlier versions saved (on = <see cref="UiSkin.Modern"/>); read, never written.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool ModernUi { get; set; }
 
     public Dictionary<GameAction, List<Keys>> Keys { get; set; } = DefaultKeys();
 
@@ -67,6 +71,7 @@ public sealed class Settings
         [GameAction.Options] = new() { Microsoft.Xna.Framework.Input.Keys.F1 },
         [GameAction.Fullscreen] = new() { Microsoft.Xna.Framework.Input.Keys.F4 },
         [GameAction.SkipCutscene] = new() { Microsoft.Xna.Framework.Input.Keys.Space },
+        [GameAction.EnemyRanges] = new() { Microsoft.Xna.Framework.Input.Keys.R },
     };
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
@@ -75,7 +80,12 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent) return new Settings { ModernUi = Environment.GetEnvironmentVariable("ERUMANI_MODERN") == "1" };   // scripted runs
+        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1)
+            return new Settings
+            {
+                Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("ERUMANI_SKIN"), true, out var skin) ? skin
+                    : Environment.GetEnvironmentVariable("ERUMANI_MODERN") == "1" ? UiSkin.Modern : UiSkin.Original,
+            };
         foreach (var path in Candidates())
         {
             if (!File.Exists(path)) continue;
@@ -86,6 +96,7 @@ public sealed class Settings
                 if (!s.Keys.ContainsKey(GameAction.SkipCutscene) && s.Keys.TryGetValue(GameAction.Confirm, out var ok))
                     ok.Remove(Microsoft.Xna.Framework.Input.Keys.Space);
                 foreach (var (a, keys) in DefaultKeys()) s.Keys.TryAdd(a, keys);   // actions added later
+                if (s.ModernUi) { s.Skin = UiSkin.Modern; s.ModernUi = false; }   // the old on/off look setting
                 s.Path = path;
                 return s;
             }

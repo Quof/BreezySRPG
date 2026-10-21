@@ -1,3 +1,4 @@
+using Erumani.Config;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Srpg95.Data;
@@ -7,16 +8,30 @@ namespace Erumani.Ui;
 /// <summary>
 /// Drawing primitives for the 640x480 screen as the original runtime draws them: panels in SYSTEM.BMP's swatches
 /// (FUN_0041203c), message balloons (FUN_004121ac), menu bars, the screen frame, the mouse cursor, the exe's own
-/// 12-px font (KANJIFONT) and GDI text.
+/// 12-px font (KANJIFONT) and GDI text — and the same pieces in the restyled skins of the options.
 /// </summary>
 public sealed class Ui : IDisposable
 {
     public const int LineHeight = 22;
-    /// <summary>Message / window text: dark on the original's light green windows, light on the modern dark ones.</summary>
-    public static Color TextColor => Modern ? new Color(236, 240, 248) : new Color(16, 16, 0);
+    /// <summary>Message / window text: dark on the original's light green windows, light on the restyled dark ones.</summary>
+    public static Color TextColor => Skin switch
+    {
+        UiSkin.Original => new Color(16, 16, 0), UiSkin.Gilded => new Color(250, 250, 250), _ => new Color(236, 240, 248),
+    };
 
-    /// <summary>The modern interface (options): dark translucent rounded windows, smooth fonts, accent highlights.</summary>
-    public static bool Modern { get; set; }
+    /// <summary>The interface's look (options): the original's, or a restyled one with smooth fonts and dark windows.</summary>
+    public static UiSkin Skin { get; set; }
+    /// <summary>The modern skin: dark translucent rounded windows, accent highlights.</summary>
+    public static bool Modern => Skin == UiSkin.Modern;
+    /// <summary>The gilded skin: dark translucent rectangles in fine gold frames, the speaker's name in its own box.</summary>
+    public static bool Gilded => Skin == UiSkin.Gilded;
+    /// <summary>Any restyled skin: smooth fonts and light text on dark windows.</summary>
+    public static bool Restyled => Skin != UiSkin.Original;
+    /// <summary>
+    /// How many render pixels the frame has to a 640 × 480 pixel (the client draws at the window's size): the restyled
+    /// skins' text is rendered at that size (<see cref="TextImage"/>), everything else is scaled up whole.
+    /// </summary>
+    public static int RenderScale { get; set; } = 1;
     public static readonly Color ModernBase = new(22, 26, 38), Accent = new(104, 168, 255);
     public static Color ModernBorder => new Color(255, 255, 255) * 0.16f;
     public static readonly Color WindowFill = new(184, 200, 160);
@@ -80,17 +95,17 @@ public sealed class Ui : IDisposable
     public ExeFont? MenuFont { get; set; }
 
     /// <summary>
-    /// The original's 12-px text (FUN_00407744) at GDI position (x, y): the exe's own font; with the modern skin or no exe,
-    /// MS Gothic 12 px a pixel right and two down (where its glyphs then fall closest to the exe's).
+    /// The original's 12-px text (FUN_00407744) at GDI position (x, y): the exe's own font; with a restyled skin or no exe,
+    /// a 12-px Windows font a pixel right and two down (where its glyphs then fall closest to the exe's).
     /// </summary>
     public void Text12(SpriteBatch sb, string s, int x, int y, Color c)
     {
-        if (!Modern && MenuFont?.Get(s) is { } t) sb.Draw(t, new Vector2(x, y), c);
-        else if (SmallText.Get(s) is { } g) sb.Draw(g, new Vector2(x + 1, y + 2), c);
+        if (!Restyled && MenuFont?.Get(s) is { } t) sb.Draw(t, new Vector2(x, y), c);
+        else SmallText.Get(s)?.Draw(sb, new Vector2(x + 1, y + 2), c);
     }
 
     /// <summary>The width <see cref="Text12"/> gives a string.</summary>
-    public int Measure12(string s) => !Modern && MenuFont is not null ? ExeFont.Measure(s) : SmallText.Measure(s);
+    public int Measure12(string s) => !Restyled && MenuFont is not null ? ExeFont.Measure(s) : SmallText.Measure(s);
 
     /// <summary>SYSTEM.BMP with palette index 0 transparent (arrows, cursors, balloon pieces).</summary>
     public Texture2D? SystemBmp => _tex.Get("SYSTEM.BMP");
@@ -116,6 +131,11 @@ public sealed class Ui : IDisposable
             ModernBox(sb, new Rectangle(topLeft.X + 1, topLeft.Y + 1, BalloonWidth - 2, BalloonHeight - 2), ModernBase, 12, 0.92f);
             return;
         }
+        if (Gilded)
+        {
+            GildedBox(sb, new Rectangle(topLeft.X, topLeft.Y + 6, BalloonWidth, BalloonHeight - 6), GildedNavy, 0.84f, tail, 58);
+            return;
+        }
         var sys = _tex.Get("SYSTEM.BMP");
         if (sys is null) return;
         for (int y = 0; y < BalloonHeight; y += 16)
@@ -135,6 +155,7 @@ public sealed class Ui : IDisposable
     public void Window(SpriteBatch sb, Rectangle r)
     {
         if (Modern) { ModernBox(sb, r, ModernBase, 10, 0.92f); return; }
+        if (Gilded) { GildedBox(sb, r, GildedNavy, 0.86f); return; }
         // Built on demand per size; menus are few.
         if (!_windows.TryGetValue((r.Width, r.Height), out var t))
             _windows[(r.Width, r.Height)] = t = BuildWindow(r.Width, r.Height);
@@ -193,10 +214,165 @@ public sealed class Ui : IDisposable
 
     static readonly Color[] ModernTints = { new(36, 64, 128), new(122, 36, 44), new(120, 96, 32), ModernBase };
 
-    public void DrawText(SpriteBatch sb, string s, Vector2 pos, Color c)
+    // ---------------- gilded interface ----------------
+
+    public static readonly Color GoldLight = new(240, 214, 150), Gold = new(200, 164, 96), GoldDeep = new(128, 96, 50);
+    public static readonly Color GildedNavy = new(12, 18, 40), NameNavy = new(22, 32, 66);
+    /// <summary>Panel tints by <see cref="PanelColor"/>: the side colours of battle and status panels, navy for menus.</summary>
+    static readonly Color[] GildedTints = { new(14, 28, 66), new(56, 14, 22), new(48, 38, 12), GildedNavy };
+
+    // the gold's pictures (Gilding), made at the render scale they were made for, by what they show
+    readonly Dictionary<(int W, int H, Color Fill, float A, int Pointer, int PointerY, float F, int Corners), Texture2D> _gilded = new();
+    readonly Dictionary<(int W, int H), Texture2D> _highlights = new();
+    readonly Dictionary<int, Texture2D> _rules = new();
+    readonly Dictionary<Rectangle, Texture2D> _frames = new();
+    readonly Dictionary<int, Texture2D> _arrows = new();
+    int _giltScale;
+
+    /// <summary>A gold picture from a cache, made (at the render scale) if it isn't there; every cache is emptied when the scale changes.</summary>
+    Texture2D Gilt<TKey>(Dictionary<TKey, Texture2D> cache, TKey key, int w, int h, Func<int, Color[]> make) where TKey : notnull
     {
-        if (Text.Get(s) is { } t) sb.Draw(t, pos, c);
+        int k = Math.Max(1, RenderScale);
+        if (k != _giltScale)
+        {
+            DisposeGilt();
+            _giltScale = k;
+        }
+        if (cache.TryGetValue(key, out var t)) return t;
+        if (cache.Count >= 96) Empty(cache);
+        t = new Texture2D(_device, w * k, h * k);
+        t.SetData(make(k));
+        return cache[key] = t;
     }
+
+    static void Empty<TKey>(Dictionary<TKey, Texture2D> cache) where TKey : notnull
+    {
+        foreach (var t in cache.Values) t.Dispose();
+        cache.Clear();
+    }
+
+    void DisposeGilt()
+    {
+        Empty(_gilded);
+        Empty(_highlights);
+        Empty(_rules);
+        Empty(_frames);
+        Empty(_arrows);
+    }
+
+    /// <summary>Draws a gold picture with its corner at (x, y), each of its pixels one of the render's.</summary>
+    void DrawGilt(SpriteBatch sb, Texture2D t, float x, float y, Color c) =>
+        sb.Draw(t, new Vector2(x, y), null, c, 0, Vector2.Zero, 1f / _giltScale, SpriteEffects.None, 0);
+
+    /// <summary>
+    /// The gilded box (<see cref="Gilding.Box"/>): a dark translucent rectangle with perfectly straight edges, a thin gold
+    /// border along them and a small gold curl inside each of its <paramref name="corners"/>. <paramref name="pointer"/>
+    /// −1 / +1 grows a small pointer out of the left / right side, its tip <paramref name="pointerY"/> px below the top,
+    /// toward a speaking face; the border runs round it. <paramref name="flourish"/> sizes the curls (by default by the
+    /// box's size).
+    /// </summary>
+    public void GildedBox(SpriteBatch sb, Rectangle r, Color fill, float alpha = 0.86f, int pointer = 0, int pointerY = 0,
+        float flourish = 0, int corners = Gilding.AllCorners)
+    {
+        if (r.Width < 8 || r.Height < 8) return;
+        float f = flourish > 0 ? flourish : Math.Clamp((Math.Min(r.Width, r.Height) - 20) / 90f, 0.5f, 1f);
+        int w = r.Width, h = r.Height, py = pointer == 0 ? 0 : pointerY;
+        const int m = Gilding.Margin;
+        var t = Gilt(_gilded, (w, h, fill, alpha, pointer, py, f, corners), w + 2 * m, h + 2 * m,
+            k => Gilding.Box(w, h, fill, alpha, pointer, py, f, corners, k));
+        DrawGilt(sb, t, r.X - m, r.Y - m, Color.White);
+    }
+
+    /// <summary>A gilded frame round a picture: the box's border and corner curls, nothing filled in but the border's faint shadow.</summary>
+    public void GildedFrame(SpriteBatch sb, Rectangle r) => GildedBox(sb, r, Color.Black, 0, flourish: 0.6f, corners: Gilding.TopLeft | Gilding.BottomRight);
+
+    /// <summary>The gilded selection bar: a soft gold glow fading to the right, gently pulsing.</summary>
+    public void GildedHighlight(SpriteBatch sb, Rectangle r, int frame)
+    {
+        var t = Gilt(_highlights, (r.Width, r.Height), r.Width, r.Height, k => Gilding.Highlight(r.Width, r.Height, k));
+        DrawGilt(sb, t, r.X, r.Y, Color.White * (0.86f + 0.14f * MathF.Sin(frame * 0.1f)));
+    }
+
+    /// <summary>A gilded divider <paramref name="w"/> wide with its middle on row <paramref name="y"/> (the original skin's etched rules).</summary>
+    public void GoldRule(SpriteBatch sb, int x, int y, int w)
+    {
+        if (w < 8) return;
+        var t = Gilt(_rules, w, w, Gilding.DividerHeight, k => Gilding.Divider(w, k));
+        DrawGilt(sb, t, x, y - Gilding.DividerHeight / 2, Color.White);
+    }
+
+    /// <summary>A small gold arrowhead centred on (cx, cy), pointing (dx, dy).</summary>
+    public void Arrow(SpriteBatch sb, int cx, int cy, int dx, int dy)
+    {
+        const int n = Gilding.ArrowSize;
+        var t = Gilt(_arrows, 0, n, n, Gilding.Arrow);
+        float turn = dy < 0 ? 0 : dy > 0 ? MathF.PI : dx < 0 ? -MathF.PI / 2 : MathF.PI / 2;
+        sb.Draw(t, new Vector2(cx, cy), null, Color.White, turn, new Vector2(t.Width / 2f, t.Height / 2f), 1f / _giltScale, SpriteEffects.None, 0);
+    }
+
+    /// <summary>Text with a soft shadow a pixel down and right, to read on the translucent gilded boxes.</summary>
+    public void ShadowText(SpriteBatch sb, GdiText font, string s, Vector2 pos, Color c)
+    {
+        if (font.Get(s) is not { } t) return;
+        t.Draw(sb, pos + new Vector2(1, 1), Color.Black * 0.7f);
+        t.Draw(sb, pos, c);
+    }
+
+    /// <summary>The speaker's name in its own small gilded box, at least <paramref name="minWidth"/> wide, the name centred.</summary>
+    public Rectangle NameBox(SpriteBatch sb, string name, int x, int y, int minWidth = 96)
+    {
+        int w = Math.Max(minWidth, NameText.Measure(name) + 32);
+        var r = new Rectangle(x, y, w, 26);
+        GildedBox(sb, r, NameNavy, 0.95f, corners: Gilding.TopLeft | Gilding.BottomRight);
+        if (NameText.Get(name) is { } t)
+        {
+            var p = new Vector2(r.X + (w - t.Width) / 2, r.Y + (r.Height - t.Height) / 2);
+            t.Draw(sb, p + new Vector2(1, 1), Color.Black * 0.7f);
+            t.Draw(sb, p, Color.White);
+        }
+        return r;
+    }
+
+    /// <summary>A message's speaker — its first line when that is just 「name：」, as nearly every message in the game starts — and the rest.</summary>
+    public static (string? Name, IReadOnlyList<string> Text) SplitSpeaker(IReadOnlyList<string> lines)
+    {
+        if (lines.Count > 0 && lines[0].TrimEnd() is { Length: > 1 } first && (first.EndsWith('：') || first.EndsWith(':')))
+            return (first[..^1].Trim(), lines.Skip(1).ToList());
+        return (null, lines);
+    }
+
+    /// <summary>
+    /// A message, its window area 608 × 160 from (16, <paramref name="windowY"/>): the top, centre or bottom window
+    /// (FUN_004148a4), or the battle scene's lower strip. The face 16 px in and down from the area's corner (x 480 on the
+    /// right). The original and modern skins: the balloon 16 px down at x 112 without a face, 192 with one on the left, 32
+    /// with one on the right, its tail toward the face, the text 18 px into it from 28 px below the area's top, 22-px lines.
+    /// The gilded skin: a text box beside the face with a small pointer toward it (across the area without a face), and a
+    /// first line that is just 「name：」 in a name box over the text box's top-left corner.
+    /// </summary>
+    public void Message(SpriteBatch sb, Texture2D? face, int windowY, bool faceRight, bool faceFlip, IReadOnlyList<string> lines,
+        bool tailLeft = false)
+    {
+        if (face is not null)
+            sb.Draw(face, new Rectangle(faceRight ? 480 : 32, windowY + 16, 128, 128), null, Color.White, 0, Vector2.Zero,
+                faceFlip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
+        bool left = face is not null && !faceRight || tailLeft, right = face is not null && faceRight;
+        if (!Gilded)
+        {
+            int bx = left ? 192 : right ? 32 : 112;
+            MessageBalloon(sb, new Point(bx, windowY + 16), left ? -1 : right ? 1 : 0);
+            for (int i = 0; i < lines.Count; i++) DrawText(sb, lines[i], new Vector2(bx + 18, windowY + 28 + i * LineHeight), TextColor);
+            return;
+        }
+        var (name, text) = SplitSpeaker(lines);
+        int x0 = left ? 172 : 24, x1 = right ? 468 : 616;
+        var box = new Rectangle(x0, windowY + 22, x1 - x0, 128);
+        GildedBox(sb, box, GildedNavy, 0.84f, left ? -1 : right ? 1 : 0, windowY + 80 - box.Y);
+        if (name is not null) NameBox(sb, name, box.X + 14, box.Y - 13);
+        int ty = box.Y + (name is null ? 14 : 20);
+        for (int i = 0; i < text.Count; i++) ShadowText(sb, Text, text[i], new Vector2(box.X + 20, ty + i * LineHeight), TextColor);
+    }
+
+    public void DrawText(SpriteBatch sb, string s, Vector2 pos, Color c) => Text.Get(s)?.Draw(sb, pos, c);
 
     /// <summary>
     /// Screen frame from SFRAME_H/V.BMP: 16-px strips around the 608x448 map viewport, copied opaque over whatever is
@@ -229,6 +405,18 @@ public sealed class Ui : IDisposable
             if (right) Chevron(633, 240, 1, 0);
             return;
         }
+        if (Gilded)
+        {
+            // dark strips with a gold bar along the view, rosettes in the corners, running scrolls along the strips
+            // (Gilding.ScreenFrame), and gold arrows in the scrolls' gaps where the view can scroll
+            foreach (var part in FrameParts)
+                DrawGilt(sb, Gilt(_frames, part, part.Width, part.Height, k => Gilding.ScreenFrame(part, k)), part.X, part.Y, Color.White);
+            if (up) Arrow(sb, 320, 6, 0, -1);
+            if (down) Arrow(sb, 320, 474, 0, 1);
+            if (left) Arrow(sb, 6, 240, -1, 0);
+            if (right) Arrow(sb, 634, 240, 1, 0);
+            return;
+        }
         var h = _tex.Get("SFRAME_H.BMP", transparent: false);
         var v = _tex.Get("SFRAME_V.BMP", transparent: false);
         if (h is null || v is null) return;
@@ -237,6 +425,8 @@ public sealed class Ui : IDisposable
         sb.Draw(v, new Vector2(0, 16), new Rectangle(left ? 0 : 32, 0, 16, 448), Color.White);
         sb.Draw(v, new Vector2(624, 16), new Rectangle(right ? 16 : 48, 0, 16, 448), Color.White);
     }
+
+    static readonly Rectangle[] FrameParts = { new(0, 0, 640, 16), new(0, 464, 640, 16), new(0, 16, 16, 448), new(624, 16, 16, 448) };
 
     /// <summary>
     /// The mouse pointer from SYSTEM.BMP (FUN_00409db8): the arrow (y 0) or the hourglass (y 32), 32×32 cells from x 128
@@ -264,8 +454,12 @@ public sealed class Ui : IDisposable
         (new(248, 248, 224), new(40, 40, 8)), (new(248, 248, 224), new(0, 32, 0)),
     };
 
-    public static (Color Light, Color Dark) EdgeColors(PanelColor c) =>
-        Modern ? (new Color(255, 255, 255) * 0.22f, new Color(0, 0, 0) * 0.5f) : Edges[(int)c];
+    public static (Color Light, Color Dark) EdgeColors(PanelColor c) => Skin switch
+    {
+        UiSkin.Original => Edges[(int)c],
+        UiSkin.Gilded => (Gold * 0.75f, new Color(0, 0, 0) * 0.55f),
+        _ => (new Color(255, 255, 255) * 0.22f, new Color(0, 0, 0) * 0.5f),
+    };
 
     /// <summary>
     /// Textured panel (menus, choices, EXP messages, battle info): SYSTEM.BMP tile tiled from the
@@ -274,6 +468,7 @@ public sealed class Ui : IDisposable
     public void Panel(SpriteBatch sb, Rectangle r, PanelColor color = PanelColor.Green)
     {
         if (Modern) { ModernBox(sb, r, ModernTints[(int)color], 8, 0.9f); return; }
+        if (Gilded) { GildedBox(sb, r, GildedTints[(int)color], 0.86f); return; }
         var sys = _tex.Get("SYSTEM.BMP", transparent: false);
         if (sys is null) { Fill(sb, r, new Color(0, 72, 0)); return; }
         int tx = (int)color * 64;
@@ -307,6 +502,11 @@ public sealed class Ui : IDisposable
             if (chosen) ModernHighlight(sb, bar, frame);
             return chosen ? (enabled ? Color.White : new Color(196, 204, 222)) : enabled ? PanelText : new Color(110, 116, 132);
         }
+        if (Gilded)
+        {
+            if (chosen) GildedHighlight(sb, bar, frame);
+            return chosen ? (enabled ? Color.White : new Color(196, 190, 172)) : enabled ? PanelText : new Color(122, 124, 138);
+        }
         if (!chosen) return enabled ? PanelText : DisabledText;
         bool green = frame / 12 % 2 == 0;
         Fill(sb, bar, !enabled ? new Color(122, 122, 122) : green ? new Color(160, 248, 96) : new Color(248, 248, 248));
@@ -325,5 +525,6 @@ public sealed class Ui : IDisposable
         _pixel.Dispose();
         foreach (var t in _windows.Values) t.Dispose();
         foreach (var t in _modern.Values) t.Dispose();
+        DisposeGilt();
     }
 }

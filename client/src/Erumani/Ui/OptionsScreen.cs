@@ -69,7 +69,8 @@ public sealed class OptionsScreen
 
     List<Row> DisplayRows() => new()
     {
-        new("Modern interface", () => OnOff(_s.ModernUi), _ => _s.ModernUi = !_s.ModernUi),
+        new("Interface style", () => _s.Skin switch { UiSkin.Modern => "Modern", UiSkin.Gilded => "Gilded", _ => "Original" },
+            d => _s.Skin = Cycle(Enum.GetValues<UiSkin>(), _s.Skin, d)),
         new("Window size", () => $"{640 * _s.WindowScale}×{480 * _s.WindowScale}", d => _s.WindowScale = Math.Clamp(_s.WindowScale + d, 1, 4)),
         new("Fullscreen", () => OnOff(_s.Fullscreen), _ => _s.Fullscreen = !_s.Fullscreen),
         new("Scaling", () => _s.Scaling switch { Scaling.Integer => "Pixel-perfect (whole multiples)", Scaling.Fit => "Fit (keep 4:3)", _ => "Stretch" },
@@ -116,7 +117,7 @@ public sealed class OptionsScreen
         [GameAction.CameraUp] = "Camera up (menu up)", [GameAction.CameraDown] = "Camera down (menu down)",
         [GameAction.CameraLeft] = "Camera left", [GameAction.CameraRight] = "Camera right",
         [GameAction.FastForward] = "Fast-forward", [GameAction.Backlog] = "Text backlog", [GameAction.Options] = "Options", [GameAction.Fullscreen] = "Fullscreen",
-        [GameAction.SkipCutscene] = "Skip cutscene",
+        [GameAction.SkipCutscene] = "Skip cutscene", [GameAction.EnemyRanges] = "Enemy ranges (all at once)",
     };
 
     List<Row> ControlRows()
@@ -175,6 +176,6 @@ public sealed class OptionsScreen
         _ui.Fill(sb, new Rectangle(0, 0, 640, 480), Color.Black * 0.6f);
         _list.Draw(sb, _ui, true, frame);
         var title = _page == Page.Main ? "Options" : _page.ToString();
-        if (_ui.SmallText.Get(title) is { } t) sb.Draw(t, new Vector2(_list.Rect.X + 8, _list.Rect.Y - 16), Ui.PanelText);
+        _ui.SmallText.Get(title)?.Draw(sb, new Vector2(_list.Rect.X + 8, _list.Rect.Y - 16), Ui.Gilded ? Ui.GoldLight : Ui.PanelText);
     }
 }

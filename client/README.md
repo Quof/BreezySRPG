@@ -46,6 +46,7 @@ Options:
 - `--rtp DIR`: the RTP folder used as a fallback for graphics and audio. Default `srpg maker 95/RTP`.
 - `--map N`: the map to open (1-based, as in `SMAP_nnn`).
 - `--screenshot FILE.png`: render one frame at 640×480, save it and exit. It also writes `FILE.txt` with the battle state (units, HP, EXP) and a trace of the scripted input. In this mode the real keyboard and mouse are ignored and the battle RNG is seeded, so runs are reproducible.
+- `--scale N`: used with `--screenshot`, renders and saves the frame at N × 640×480, as a window N times the size draws it.
 - `--advance N`: used with `--screenshot`, auto-confirms N event messages or choices before capturing. `-1` confirms all of them.
 - `--keys "a,b,..."`: used with `--screenshot`, scripted input fed one token every 10 frames while the map is idle:
   - `up`, `down`, `left`, `right`, `enter`, `esc`;
@@ -90,6 +91,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | C / Left Shift, right click on a unit | unit status |
 | Tab / Left Ctrl | fast-forward (hold, or toggle; see Options) |
 | Mouse wheel up / L | text backlog (wheel down or click to close) |
+| R | enemy ranges: every enemy's reach (moves and attacks, spells included) as one red area; press again to hide |
 | F1 | options (anywhere) |
 | F4 or Alt+Enter | fullscreen |
 | F5 | switch pixel-perfect / fit scaling |
@@ -100,7 +102,9 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 | Section | Settings |
 |---|---|
-| Display | window size (1×–4×), fullscreen (borderless), scaling (pixel-perfect whole multiples / fit 4:3 / stretch), filter (sharp / smooth) |
+| Display | interface style (original / modern / gilded), window size (1×–4×), fullscreen (borderless), scaling (pixel-perfect whole multiples / fit 4:3 / stretch), filter (sharp / smooth) |
+
+The frame is drawn at the window's resolution: the pixel art is scaled up whole, and the modern and gilded styles' text and gold are drawn at the window's own pixels, so they stay crisp at any size. The filter only matters when the window isn't a whole multiple of 640×480.
 | Audio | music and sound volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, text advance sound (the CLICK "thunk" when advancing text) |
 | Gameplay | battle animations on/off, fast-forward key (hold / toggle), speed (×2–×8), fast-forward skips battle scenes, fast-forward advances text |
 | Controls | rebind every action; reset to defaults |
@@ -155,6 +159,9 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
    - battle animation skip;
    - fast-forward options;
    - mouse-wheel text backlog;
+   - interface styles: the original's, a modern dark one, and a gilded one (thin gold borders, name boxes over the text box, a backlog laid out by speaker);
+   - enemy ranges at a key press;
+   - drawing at the window's resolution, with crisp text;
    - self-contained build.
 
 Faithfulness rule: replicate the original's behaviour, including its bugs (see FORMAT_NOTES §11.4), by default. Any fixes are opt-in.

@@ -37,6 +37,11 @@
     <Error Condition="'$(_SoundFontHash)' != '$(SoundFontSha256)'" Text="GeneralUser-GS.sf2 download didn't match the expected SHA-256." />
   </Target>
 
+  <!-- The grade shader, compiled from Shaders\Grade.fx (see its header for the command). -->
+  <ItemGroup>
+    <EmbeddedResource Include="Shaders\Grade.ogl.mgfx" LogicalName="Grade.ogl.mgfx" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="soundfont\GeneralUser-GS.sf2" LogicalName="GeneralUser-GS.sf2" />
     <None Include="soundfont\GeneralUser-GS-LICENSE.txt" Link="GeneralUser-GS-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

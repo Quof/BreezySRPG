@@ -28,7 +28,7 @@ public static class StatusWindow
         var colour = u.Side switch { Side.Neutral => Ui.PanelColor.Yellow, Side.Enemy => Ui.PanelColor.Red, _ => Ui.PanelColor.Blue };
         ui.Panel(sb, r, colour);
         var (light, dark) = Ui.EdgeColors(colour);
-        var text = Ui.Modern ? Ui.PanelText : light;
+        var text = Ui.Restyled ? Ui.PanelText : light;
         var st = field.Stats(u);
         string Word(int i) => i >= 0 && i < db.Words.Length ? db.Words[i] : "";
         void T(string s, int x, int y) => ui.Text12(sb, s, r.X + x, r.Y + y, text);
@@ -36,17 +36,26 @@ public static class StatusWindow
 
         int face = db.Units[Math.Clamp(u.Unit, 0, db.Units.Length - 1)].Face;
         if (face > 0 && tex.Get($"FACE_{face:000}.BMP") is { } f) sb.Draw(f, new Vector2(r.X + 124, r.Y + 92), Color.White);
-        Line(123, 91, 130, 1, dark);
-        Line(123, 220, 130, 1, light);
-        Line(123, 91, 1, 130, dark);
-        Line(252, 91, 1, 130, light);
+        if (Ui.Gilded)
+        {
+            // a gilded frame round the face and a divider under the name, in place of the etched lines
+            ui.GildedFrame(sb, new Rectangle(r.X + 120, r.Y + 88, 136, 136));
+            ui.GoldRule(sb, r.X + 8, r.Y + 36, 248);
+        }
+        else
+        {
+            Line(123, 91, 130, 1, dark);
+            Line(123, 220, 130, 1, light);
+            Line(123, 91, 1, 130, dark);
+            Line(252, 91, 1, 130, light);
 
-        Line(8, 7, 246, 1, light);
-        Line(8, 36, 246, 1, dark);
-        Line(8, 7, 1, 28, light);
-        Line(255, 7, 1, 28, dark);
+            Line(8, 7, 246, 1, light);
+            Line(8, 36, 246, 1, dark);
+            Line(8, 7, 1, 28, light);
+            Line(255, 7, 1, 28, dark);
+        }
         // the name through GDI's DrawText (FUN_00407954), its corner at the rectangle's
-        if (ui.NameText.Get(u.Name) is { } name) sb.Draw(name, new Vector2(r.X + 12, r.Y + 14), text);
+        ui.NameText.Get(u.Name)?.Draw(sb, new Vector2(r.X + 12, r.Y + 14), text);
 
         string cls = field.Class(u).Name;
         T(cls, 12, 40);

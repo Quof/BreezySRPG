@@ -1519,10 +1519,11 @@ public sealed class BattleController
         void T(string s, int x, int y, Color c, bool alignRight = false)
         {
             if (_ui.SmallText.Get(s) is not { } t) return;
-            sb.Draw(t, new Vector2(alignRight ? x - t.Width : x, y), c);
+            t.Draw(sb, new Vector2(alignRight ? x - t.Width : x, y), c);
         }
         T(ter.Name, r.X + 10, r.Y + 8, Ui.Ui.PanelText);
-        _ui.Fill(sb, new Rectangle(r.X + 8, r.Y + 25, w - 16, 1), Ui.Ui.Modern ? Ui.Ui.ModernBorder : Ui.Ui.PanelText * 0.6f);
+        if (Ui.Ui.Gilded) _ui.GoldRule(sb, r.X + 8, r.Y + 25, w - 16);
+        else _ui.Fill(sb, new Rectangle(r.X + 8, r.Y + 25, w - 16, 1), Ui.Ui.Modern ? Ui.Ui.ModernBorder : Ui.Ui.PanelText * 0.6f);
         for (int k = 0; k < lines.Count; k++)
         {
             T(lines[k].Label, r.X + 10, r.Y + 30 + k * 16, Ui.Ui.PanelText);
@@ -1556,7 +1557,7 @@ public sealed class BattleController
         {
             if (_ui.SmallText.Get(s) is not { } t) return;
             float px = align < 0 ? cx : align > 0 ? cx - t.Width : cx - t.Width / 2f;
-            sb.Draw(t, new Vector2(r.X + px, r.Y + y), c);
+            t.Draw(sb, new Vector2(r.X + px, r.Y + y), c);
         }
         Color SideColor(BattleUnit u) => u.Side == Side.Ally ? new Color(64, 120, 248) : u.Side == Side.Enemy ? new Color(232, 56, 56) : new Color(232, 192, 48);
         // names over coloured strips
@@ -1870,6 +1871,49 @@ public sealed class BattleController
         }
     }
 
+    /// <summary>The enemy ranges key (a modern aid): every enemy's reach for its coming phase, shown as one red area.</summary>
+    public bool ShowThreat { get; set; }
+    HashSet<(int X, int Y)> _threat = new();
+    int? _threatKey;
+
+    /// <summary>The union of the enemies' threats (<see cref="EnemyAi.Threat"/>), worked out again only when something it depends on changes.</summary>
+    HashSet<(int X, int Y)> Threat()
+    {
+        var key = new HashCode();
+        foreach (var u in _s.Field.Units)
+        {
+            key.Add(u.X); key.Add(u.Y); key.Add(u.Dead); key.Add(u.Hidden); key.Add(u.SleepTurns);
+            key.Add(u.Mp); key.Add(u.Weapon); key.Add(u.ClassId); key.Add(u.Level); key.Add(u.Accessory);
+        }
+        foreach (bool sw in _state.Switches) key.Add(sw);
+        int k = key.ToHashCode();
+        if (k == _threatKey) return _threat;
+        _threatKey = k;
+        _threat = new HashSet<(int X, int Y)>();
+        foreach (var e in _s.Field.Alive.Where(u => u.Side == Side.Enemy)) _threat.UnionWith(EnemyAi.Threat(_s.Field, e, _state.Switches));
+        return _threat;
+    }
+
+    /// <summary>The enemies' threat as one block: a translucent red fill with a bright line only along its outer edge.</summary>
+    public void DrawThreat(SpriteBatch sb, Rectangle viewport)
+    {
+        if (!ShowThreat) return;
+        var tiles = Threat();
+        var fill = new Color(208, 24, 32) * 0.36f;
+        var edge = new Color(255, 84, 84) * 0.95f;
+        const int T = MapSession.Tile;
+        foreach (var (x, y) in tiles)
+        {
+            var p = _s.ScreenPos(x, y, viewport).ToPoint();
+            if (p.X + T <= viewport.X || p.Y + T <= viewport.Y || p.X >= viewport.Right || p.Y >= viewport.Bottom) continue;
+            _ui.Fill(sb, new Rectangle(p.X, p.Y, T, T), fill);
+            if (!tiles.Contains((x, y - 1))) _ui.Fill(sb, new Rectangle(p.X, p.Y, T, 2), edge);
+            if (!tiles.Contains((x, y + 1))) _ui.Fill(sb, new Rectangle(p.X, p.Y + T - 2, T, 2), edge);
+            if (!tiles.Contains((x - 1, y))) _ui.Fill(sb, new Rectangle(p.X, p.Y, 2, T), edge);
+            if (!tiles.Contains((x + 1, y))) _ui.Fill(sb, new Rectangle(p.X + T - 2, p.Y, 2, T), edge);
+        }
+    }
+
     /// <summary>The tiles a unit's weapon reaches from where it stands (its range's distances).</summary>
     List<(int X, int Y)> AttackReach(BattleUnit u)
     {
@@ -1937,7 +1981,7 @@ public sealed class BattleController
     /// </summary>
     void DrawHoverLabel(SpriteBatch sb, BattleUnit u, Point tile)
     {
-        var (light, dark) = Ui.Ui.Modern ? (Color.White, Color.Black)
+        var (light, dark) = Ui.Ui.Restyled ? (Color.White, Color.Black)
             : Ui.Ui.EdgeColors(u.Side switch { Side.Enemy => Ui.Ui.PanelColor.Red, Side.Neutral => Ui.Ui.PanelColor.Yellow, _ => Ui.Ui.PanelColor.Blue });
         void Outlined(string s, int x, int y)
         {
@@ -2007,7 +2051,7 @@ public sealed class BattleController
         {
             _ui.Text12(sb, $"{sub.Name}：", d.X + 12, d.Y + 8, Ui.Ui.PanelText);
             if (sub.Item is { } it && _ui.SmallText.Get(Ui.ItemInfo.Summary(it, _db)) is { } st)   // modern addition
-                sb.Draw(st, new Vector2(d.Right - 16 - st.Width, d.Y + 10), Ui.Ui.StatText);
+                st.Draw(sb, new Vector2(d.Right - 16 - st.Width, d.Y + 10), Ui.Ui.StatText);
             _ui.Text12(sb, sub.Desc, d.X + 12, d.Y + 24, Ui.Ui.PanelText);
         }
     }
