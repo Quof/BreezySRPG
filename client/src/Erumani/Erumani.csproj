@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Srpg95.Data\Srpg95.Data.csproj" />
@@ -39,7 +39,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="soundfont\GeneralUser-GS.sf2" LogicalName="GeneralUser-GS.sf2" />
-    <None Include="soundfont\GeneralUser-GS-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="soundfont\GeneralUser-GS-LICENSE.txt" Link="GeneralUser-GS-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
