@@ -359,7 +359,8 @@ public sealed class Ui : IDisposable
         bool left = face is not null && !faceRight || tailLeft, right = face is not null && faceRight;
         if (Modern)
         {
-            // the speaker in a box of its own above the text box, the two apart
+            // the speaker in a box of its own above the text box, the two apart; the text box stays where it is without one,
+            // so the text is level either way
             var (who, said) = SplitSpeaker(lines);
             int mx = left ? 192 : right ? 32 : 112, top = windowY + 16;
             if (who is not null)
@@ -368,8 +369,8 @@ public sealed class Ui : IDisposable
                 var nr = new Rectangle(mx + 1, top, w, 24);
                 ModernBox(sb, nr, ModernBase, 8, 0.92f);
                 if (NameText.Get(who) is { } t) ShadowText(sb, NameText, who, new Vector2(nr.X + (w - t.Width) / 2, nr.Y + (nr.Height - t.LayoutHeight) / 2), Color.White);
-                top += 28;
             }
+            if (who is not null || said.Count <= 4) top += 28;   // five lines without a name need the room
             ModernBox(sb, new Rectangle(mx + 1, top, BalloonWidth - 2, windowY + 143 - top), ModernBase, 12, 0.92f);
             for (int i = 0; i < said.Count; i++) DrawText(sb, said[i], new Vector2(mx + 18, top + 11 + i * LineHeight), TextColor);
             return;
@@ -386,7 +387,7 @@ public sealed class Ui : IDisposable
         var box = new Rectangle(x0, windowY + 22, x1 - x0, 128);
         GildedBox(sb, box, GildedNavy, 0.84f, left ? -1 : right ? 1 : 0, windowY + 80 - box.Y);
         if (name is not null) NameBox(sb, name, box.X + 14, box.Y - 13);
-        int ty = box.Y + (name is null ? 14 : 20);
+        int ty = box.Y + (name is null && text.Count > 4 ? 14 : 20);   // level with or without a name box (five lines need the room)
         for (int i = 0; i < text.Count; i++) ShadowText(sb, Text, text[i], new Vector2(box.X + 20, ty + i * LineHeight), TextColor);
     }
 
