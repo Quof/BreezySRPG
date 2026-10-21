@@ -391,17 +391,19 @@ SMAP_HEADER_SPEC = [
     (0x3ec, 'character_list', 'i32[]', 20),  # UNIT.DAT ids
     (0x43c, 'character_list_count', 'i32', None),
     (0x440, 'camp_background', 'i32', None),  # CAMP_%03d.BMP
+    (0x444, 'whole_tile_grid', 'i32', None),  # 1 (every shipped map): tiles stored as the whole 40x40 grid; 0: h rows of w
     (0x450, 'disable_party_changes', 'i32', None),  # 1 = ticked
 ]
 SMAP_HEADER_SIZE = 0x4b0
 SMAP_TILES_OFF = 0x4b0
-SMAP_EVENTS_OFF = SMAP_TILES_OFF + 40 * 40 * 2   # 0x1130
+SMAP_EVENTS_OFF = SMAP_TILES_OFF + 40 * 40 * 2   # 0x1130 with the whole tile grid
 
-# Event area layout (all fixed offsets, every map):
+# Event area layout, read in this order by the runtime's map loader (SRPGEXEC FUN_004048ac: header, tiles, objects,
+# then the container through FUN_0040289c). Offsets are those of a map with the whole tile grid:
 SMAP_OBJ_OFF, SMAP_OBJ_SIZE, SMAP_OBJ_COUNT = 0x1130, 164, 100   # map objects
 SMAP_FAT_OFF, SMAP_FAT_COUNT = 0x5140, 5000                       # block chain table
 SMAP_DIR_OFF, SMAP_DIR_COUNT = 0x9f60, 5000                       # 16-byte file entries
-SMAP_BLOCK_OFF, SMAP_BLOCK_SIZE = 0x9f60 + 5000 * 16, 100         # 0x1d7e0
+SMAP_BLOCK_OFF, SMAP_BLOCK_SIZE = 0x9f60 + 5000 * 16, 100         # 0x1d7e0: the blocks in use, packed
 FAT_FREE, FAT_END = -1, -2
 
 MAP_OBJECT_SPEC = [
@@ -603,54 +605,74 @@ def parse_event_file(data):
     return out
 
 
-def _read_map_files(data):
-    """Directory + FAT + 100-byte blocks -> {name: info}. Flags chains that
-    run past the end of the file (the editor sizes the file by block count
-    without compacting, so trailing blocks can be cut off)."""
-    fat = struct.unpack_from(f'<{SMAP_FAT_COUNT}i', data, SMAP_FAT_OFF)
-    nblocks = max(0, (len(data) - SMAP_BLOCK_OFF) // SMAP_BLOCK_SIZE)
+def _read_map_files(data, at=SMAP_FAT_OFF):
+    """The map's script container -> {name: info}, read as the runtime reads it
+    (SRPGEXEC FUN_0040289c): a FAT of 5000 block links (-1 free, -2 end of
+    chain), 5000 16-byte directory entries, then only the blocks in use (FAT
+    entry != -1), 100 bytes each, packed in block order. A file is its chain
+    from first_block cut to size (FUN_0040262c). A block the file lacks reads
+    as zeros and is listed in missing_blocks (none in the shipped games)."""
+    fat = struct.unpack_from(f'<{SMAP_FAT_COUNT}i', data, at)
+    dir_off = at + SMAP_FAT_COUNT * 4
+    packed, o = {}, dir_off + SMAP_DIR_COUNT * 16
+    for k, link in enumerate(fat):
+        if link != FAT_FREE:
+            packed[k] = o
+            o += SMAP_BLOCK_SIZE
+
+    def block(k):
+        o = packed.get(k)
+        return (data[o:o + SMAP_BLOCK_SIZE] if o is not None else b'').ljust(SMAP_BLOCK_SIZE, b'\0')
+
     files = {}
     for i in range(SMAP_DIR_COUNT):
-        e = data[SMAP_DIR_OFF + i * 16:SMAP_DIR_OFF + i * 16 + 16]
+        e = data[dir_off + i * 16:dir_off + i * 16 + 16]
         if not any(e):
             continue
         name = e[:8].split(b'\0')[0].decode('ascii', errors='replace')
         first, size = struct.unpack_from('<2i', e, 8)
         chain, k = [], first
-        while k >= 0 and len(chain) <= SMAP_FAT_COUNT:
+        while 0 <= k < SMAP_FAT_COUNT and len(chain) <= SMAP_FAT_COUNT:
             chain.append(k)
             k = fat[k]
-        body = b''.join(data[SMAP_BLOCK_OFF + c * SMAP_BLOCK_SIZE:SMAP_BLOCK_OFF + (c + 1) * SMAP_BLOCK_SIZE]
-                        for c in chain)[:size]
+        body = b''.join(block(c) for c in chain)[:size]
         files[name] = {
             'dir_index': i, 'first_block': first, 'size': size, 'blocks': chain,
             'chain_end_ok': k == FAT_END,
-            'missing_blocks': [c for c in chain if c >= nblocks],
+            'missing_blocks': [c for c in chain if packed.get(c, len(data)) + SMAP_BLOCK_SIZE > len(data)],
             'data': body,
         }
     return files
 
 
 def parse_smap(data):
-    """SMAP_xxx.DAT: map header, 40x40 tile grid, 100 map objects, and the
-    internal file system holding the event scripts.
+    """SMAP_xxx.DAT: map header, tile grid, 100 map objects, and the internal
+    file system holding the event scripts, read in that order (FUN_004048ac).
+    The tiles are the whole 40x40 grid when whole_tile_grid is set (every
+    shipped map), else h rows of w chips.
     Returns (json_dict, raw_event_area_bytes)."""
     hdr = _parse_record(data[:SMAP_HEADER_SIZE], SMAP_HEADER_SPEC)
     w, h = hdr['width'], hdr['height']
-    grid = struct.unpack_from('<1600H', data, SMAP_TILES_OFF)
-    hdr['tiles'] = [list(grid[y * 40:y * 40 + w]) for y in range(h)]
-    outside = {f'{x},{y}': grid[y * 40 + x] for y in range(40) for x in range(40)
-               if (x >= w or y >= h) and grid[y * 40 + x]}
-    if outside:
-        hdr['tiles_outside_map'] = outside
+    if hdr['whole_tile_grid']:
+        grid = struct.unpack_from('<1600H', data, SMAP_TILES_OFF)
+        hdr['tiles'] = [list(grid[y * 40:y * 40 + w]) for y in range(h)]
+        outside = {f'{x},{y}': grid[y * 40 + x] for y in range(40) for x in range(40)
+                   if (x >= w or y >= h) and grid[y * 40 + x]}
+        if outside:
+            hdr['tiles_outside_map'] = outside
+        obj_off = SMAP_OBJ_OFF
+    else:
+        grid = struct.unpack_from(f'<{w * h}H', data, SMAP_TILES_OFF)
+        hdr['tiles'] = [list(grid[y * w:y * w + w]) for y in range(h)]
+        obj_off = SMAP_TILES_OFF + w * h * 2
     objs = []
     for i in range(SMAP_OBJ_COUNT):
-        rec = data[SMAP_OBJ_OFF + i * SMAP_OBJ_SIZE:SMAP_OBJ_OFF + (i + 1) * SMAP_OBJ_SIZE]
+        rec = data[obj_off + i * SMAP_OBJ_SIZE:obj_off + (i + 1) * SMAP_OBJ_SIZE]
         if any(rec):
             objs.append(dict(index=i, **parse_map_object(rec)))
     hdr['objects'] = objs
     events = {}
-    for name, f in _read_map_files(data).items():
+    for name, f in _read_map_files(data, obj_off + SMAP_OBJ_COUNT * SMAP_OBJ_SIZE).items():
         ev = parse_event_file(f.pop('data'))
         f.pop('blocks')
         if not f['missing_blocks']:
@@ -658,7 +680,7 @@ def parse_smap(data):
         ev['storage'] = f
         events[name] = ev
     hdr['events'] = events
-    blob = data[SMAP_EVENTS_OFF:]
+    blob = data[obj_off:]
     hdr['event_area_sha1'] = hashlib.sha1(blob).hexdigest()
     return hdr, blob
 

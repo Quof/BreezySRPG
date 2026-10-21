@@ -43,7 +43,7 @@ public sealed record MapObject(
 public sealed class MapData
 {
     public const int MaxSize = 40;
-    const int TilesOff = 0x4b0, ObjOff = 0x1130, FatOff = 0x5140, DirOff = 0x9f60, BlockOff = 0x9f60 + 5000 * 16;
+    const int TilesOff = 0x4b0, ObjectSize = 164, ObjectCount = 100, FileCount = 5000, BlockSize = 100;
 
     public required string Name { get; init; }
     public required int Width { get; init; }
@@ -65,18 +65,25 @@ public sealed class MapData
 
     public static MapData Load(string path) => Parse(File.ReadAllBytes(path));
 
+    /// <summary>
+    /// Reads the parts in the order the runtime's map loader does (FUN_004048ac): the 0x4b0-byte header, the tiles —
+    /// the whole 40 × 40 grid when header +0x444 is set (every shipped map), else h rows of w chips — the 100 objects,
+    /// then the script container (FUN_0040289c).
+    /// </summary>
     public static MapData Parse(byte[] d)
     {
         int w = Bin.I32(d, 0x20), h = Bin.I32(d, 0x24);
+        int stride = Bin.I32(d, 0x444) != 0 ? MaxSize : w;
         var tiles = new ushort[h, w];
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++)
-                tiles[y, x] = Bin.U16(d, TilesOff + (y * MaxSize + x) * 2);
+                tiles[y, x] = Bin.U16(d, TilesOff + (y * stride + x) * 2);
 
+        int objOff = TilesOff + (stride == MaxSize ? MaxSize * MaxSize : w * h) * 2;
         var objects = new List<MapObject>();
-        for (int i = 0; i < 100; i++)
+        for (int i = 0; i < ObjectCount; i++)
         {
-            var rec = d.AsSpan(ObjOff + i * 164, 164);
+            var rec = d.AsSpan(objOff + i * ObjectSize, ObjectSize);
             if (rec.ContainsAnyExcept((byte)0)) objects.Add(MapObject.Parse(i, rec));
         }
 
@@ -100,32 +107,39 @@ public sealed class MapData
             DisablePartyChanges = Bin.I32(d, 0x450) != 0,
             Tiles = tiles,
             Objects = objects.ToArray(),
-            Scripts = ReadScripts(d),
+            Scripts = ReadScripts(d, objOff + ObjectCount * ObjectSize),
         };
     }
 
-    /// <summary>The map's internal file system: FAT of block chains + 5000-entry directory + 100-byte blocks.</summary>
-    static Dictionary<string, EventScript> ReadScripts(byte[] d)
+    /// <summary>
+    /// The map's script container as FUN_0040289c loads it: a FAT of 5000 block links (−1 free, −2 end of chain), a
+    /// 5000-entry directory (name, first block, size), then only the blocks in use, 100 bytes each, packed in block
+    /// order — a map whose FAT has free holes (SMAP_056) keeps its later blocks earlier in the file. A file is its chain
+    /// from the first block, cut to its size (FUN_0040262c); a block the file lacks reads as zeros.
+    /// </summary>
+    static Dictionary<string, EventScript> ReadScripts(byte[] d, int at)
     {
-        var result = new Dictionary<string, EventScript>();
-        int nBlocks = Math.Max(0, (d.Length - BlockOff) / 100);
-        for (int i = 0; i < 5000; i++)
+        int dirOff = at + FileCount * 4;
+        var stored = new int[FileCount];
+        for (int k = 0, o = dirOff + FileCount * 16; k < FileCount; k++)
         {
-            var e = d.AsSpan(DirOff + i * 16, 16);
+            stored[k] = Bin.I32(d, at + k * 4) != -1 ? o : -1;
+            if (stored[k] >= 0) o += BlockSize;
+        }
+
+        var result = new Dictionary<string, EventScript>();
+        for (int i = 0; i < FileCount; i++)
+        {
+            var e = d.AsSpan(dirOff + i * 16, 16);
             if (!e.ContainsAnyExcept((byte)0)) continue;
             string name = Bin.Str(e, 0, 8);
-            int first = Bin.I32(e, 8), size = Bin.I32(e, 12);
-            var buf = new List<byte>(Math.Max(0, size));
-            int k = first, guard = 0;
-            bool missing = false;
-            while (k >= 0 && guard++ < 5000)
+            var file = new byte[Math.Max(0, Bin.I32(e, 12))];
+            for (int k = Bin.I32(e, 8), o = 0; k is >= 0 and < FileCount && o < file.Length; k = Bin.I32(d, at + k * 4), o += BlockSize)
             {
-                if (k < nBlocks) buf.AddRange(d.AsSpan(BlockOff + k * 100, 100).ToArray());
-                else { missing = true; buf.AddRange(new byte[100]); }
-                k = Bin.I32(d, FatOff + k * 4);
+                int src = stored[k], n = Math.Min(BlockSize, file.Length - o);
+                if (src >= 0 && src < d.Length) d.AsSpan(src, Math.Min(n, d.Length - src)).CopyTo(file.AsSpan(o));
             }
-            var file = buf.Take(Math.Max(0, size)).ToArray();
-            result[name] = EventScript.Parse(name, file, missing);
+            result[name] = EventScript.Parse(name, file);
         }
         return result;
     }

@@ -41,19 +41,19 @@ public sealed class EventScript
     public required string Comment { get; init; }
     public required List<Command> Commands { get; init; }
     public required List<ScriptNode> Tree { get; init; }
-    /// <summary>Non-null if the file is damaged (see SMAP_056) or structurally invalid.</summary>
+    /// <summary>Non-null if the file is structurally invalid (no shipped script is).</summary>
     public string? Error { get; init; }
     /// <summary>True if re-encoding Commands reproduces the original stream byte-for-byte.</summary>
     public required bool RoundTrips { get; init; }
 
-    public static EventScript Parse(string name, byte[] file, bool missingBlocks)
+    public static EventScript Parse(string name, byte[] file)
     {
         string comment = file.Length >= 100 ? Bin.Str(file, 0, 100) : "";
         if (file.Length < 104)
             return Broken(name, comment, "file shorter than header");
         int n = Bin.I32(file, 100);
         if (n < 0 || n > file.Length - 104)
-            return Broken(name, comment, $"bad stream length {n}" + (missingBlocks ? " (blocks missing from file)" : ""));
+            return Broken(name, comment, $"bad stream length {n}");
         var s = file.AsSpan(104, n);
         var cmds = new List<Command>();
         int o = 0;

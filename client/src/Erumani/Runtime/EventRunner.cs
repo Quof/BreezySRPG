@@ -69,7 +69,7 @@ public sealed class EventRunner
         Choice = null;
         if (script.Error is not null)
         {
-            Trace($"{script.Name}: damaged script not run ({script.Error})");   // T13: provisional
+            Trace($"{script.Name}: malformed script not run ({script.Error})");
             return;
         }
         _stack.Push((script.Tree, 0));

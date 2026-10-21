@@ -136,7 +136,19 @@ public class CrossCheckTests
             }
         }
         Assert.Equal(446, scripts);
-        Assert.Equal(443, roundTrips);
+        Assert.Equal(446, roundTrips);
+    }
+
+    [Fact]
+    public void Map_56_scripts_come_from_the_packed_blocks()
+    {
+        if (!Available) { Assert.True(Environment.GetEnvironmentVariable("SRPG95_REQUIRE_DATA") != "1", "game data / re/json not found"); return; }
+        // SMAP_056's FAT has free entries 84–89 and 117; the file holds its 162 blocks in use, packed (FUN_0040289c)
+        var m = MapData.Load(Path.Combine(GameDir, "MAP", "SMAP_056.DAT"));
+        foreach (var name in new[] { "EV001701", "EV003601", "EV003602" })
+            Assert.True(m.Scripts[name] is { Error: null, RoundTrips: true }, name);
+        Assert.StartsWith("ルシフィール", m.Scripts["EV001701"].Tree.OfType<MessageNode>().First().Lines[0]);
+        Assert.Equal(Op.MapComplete, m.Scripts["EV003602"].Commands[^2].Op);
     }
 
     [Fact]
