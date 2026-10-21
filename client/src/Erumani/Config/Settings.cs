@@ -61,6 +61,7 @@ public sealed class Settings
 
     // gameplay
     public bool BattleScenes { get; set; } = true;
+    public bool CombatBgm { get; set; } = true;           // the map's battle BGM during battle scenes (off: the phase music goes on)
     public FastForwardMode FastForwardMode { get; set; } = FastForwardMode.Hold;
     public int FastForwardSpeed { get; set; } = 4;
     public bool FastForwardSkipsScenes { get; set; } = true;

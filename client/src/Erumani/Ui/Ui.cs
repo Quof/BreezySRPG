@@ -47,6 +47,8 @@ public sealed class Ui : IDisposable
     public GdiText SmallText { get; }
     /// <summary>16 px bold (FUN_00407888): unit names on the battle scene's info panels and the status window.</summary>
     public GdiText NameText { get; }
+    /// <summary>The restyled skins' 14-px bold (the status window's class, which the original draws twice a pixel apart).</summary>
+    public GdiText BoldText { get; }
 
     public Ui(GraphicsDevice device, Textures tex)
     {
@@ -55,6 +57,7 @@ public sealed class Ui : IDisposable
         Text = new GdiText(device);
         SmallText = new GdiText(device, 12, 400, "ERUMANI_SMALLFONT");
         NameText = new GdiText(device, 16, 700, "ERUMANI_FONT");
+        BoldText = new GdiText(device, 14, 700, "ERUMANI_BOLDFONT");
         _pixel = new Texture2D(device, 1, 1);
         _pixel.SetData(new[] { Color.White });
     }

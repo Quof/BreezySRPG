@@ -665,7 +665,7 @@ public sealed class CampScreen
                 DrawArmy(sb, frame);
                 _commands.Draw(sb, _ui, _commandKeys || _commands.Hover(MousePoint) >= 0, frame);
                 DrawSortieCount(sb);
-                if (Unit >= 0) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _field, UnitOf(Unit), StatusRect);
+                if (Unit >= 0) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _field, UnitOf(Unit), StatusRect, mouse: MousePoint);
                 break;
             case Mode.Equip or Mode.UseItem or Mode.Skills:
                 _list.Draw(sb, _ui, true, frame);

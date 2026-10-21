@@ -101,7 +101,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | Esc / X / Backspace, right click | cancel or back (at the command menu: undo the move). During a battle scene: skip it. A right click on an empty tile opens the turn menu, which also has 環境設定 (Options) |
 | Arrows | move the map cursor (hold to repeat); move in menus |
 | W A S D | scroll the map camera; W/S also move in menus |
-| C / Left Shift, right click on a unit | unit status |
+| C / Left Shift, right click on a unit | unit status; C / Left Shift again shows the weapon's, armour's, accessory's stats in turn (pointing at an item's name does too) |
 | Tab / Left Ctrl | fast-forward (hold, or toggle; see Options) |
 | Mouse wheel up / L | text backlog (wheel down or click to close) |
 | Space | during an event: skip the rest of it (asks first) |
@@ -120,7 +120,7 @@ F1 opens them anywhere; during an event (a cutscene), a right click's menu has t
 | Section | Settings |
 |---|---|
 | Display | interface style (original / gilded / modern); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI, MS Gothic — the face the original draws its messages in); language of EasySRPG95's own menus and messages (English / 日本語 — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
-| Audio | BGM and SE volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, confirm sound (the CLICK "thunk": on, gameplay only — everywhere but clicking a message away — or off; saving and loading play it even when it's off) |
+| Audio | BGM and SE volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, combat BGM (off: battle scenes keep the music playing), confirm sound (the CLICK "thunk": on, gameplay only — everywhere but clicking a message away — or off; saving and loading play it even when it's off) |
 | Gameplay | battle animations on/off, skip enemy turn, fast-forward key (hold / toggle), hold left click to fast-forward, scroll with the pointer at the edge (on the screen frame; only when the original lets a held click scroll there), speed (×2–×8), fast-forward skips battle scenes, fast-forward advances text |
 | Controls | rebind every action; reset to defaults |
 

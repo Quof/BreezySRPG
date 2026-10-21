@@ -95,6 +95,8 @@ public sealed class BattleController
     int _panelFrames, _wait;
     AiPlan? _plan;
     BattleUnit? _statusUnit;
+    /// <summary>The status window's equipment box the status key picked (−1 none).</summary>
+    int _statusItem = -1;
 
     public MapOutcome Outcome { get; private set; }
     /// <summary>One-line state summary (screenshot mode writes it next to the PNG).</summary>
@@ -162,6 +164,7 @@ public sealed class BattleController
     /// </summary>
     void BattleMusic(BattleUnit actor, BattleUnit? other)
     {
+        if (!CombatMusic) return;
         static bool Boss(BattleUnit? u) => u is { Leader: true, Side: Side.Enemy };
         PlayMapBgm?.Invoke(Boss(actor) || Boss(other) ? 5 : _s.Field.AllyPhase ? 3 : 4);
     }
@@ -209,7 +212,7 @@ public sealed class BattleController
         _scene = null;
         _fx.FadeIn(0, 20);   // the scene leaves the palette black with the fade-in flag: the map comes back 20 % a tick
         if (_scenes.Count > 0) { RunScenes(); return; }
-        PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);   // back to the phase music
+        if (CombatMusic) PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);   // back to the phase music
         AfterScenes();
     }
 
@@ -851,7 +854,11 @@ public sealed class BattleController
             case State.Showing: UpdateShowing(input); break;
             case State.TurnMenu: UpdateTurnMenu(input); break;
             case State.EnemyPhase: UpdateEnemyPhase(input); break;
-            case State.Status: if (input.Confirm || input.Cancel || input.Click || input.RightClick) _state_ = State.Idle; break;
+            case State.Status:
+                // the status key again steps through the equipment's boxes (modern); cancel, a click or confirm closes it all
+                if (input.Info && !input.Cancel) { _statusItem = Ui.StatusWindow.NextShown(_statusUnit!, _statusItem); Sfx.Click(); }
+                else if (input.Confirm || input.Cancel || input.Click || input.RightClick) _state_ = State.Idle;
+                break;
             case State.SpellList: UpdateSpellList(input); break;
             case State.ItemList: UpdateItemList(input); break;
             case State.EquipList: UpdateEquipList(input); break;
@@ -919,7 +926,7 @@ public sealed class BattleController
     {
         MoveCursor(i);
         var u = _s.Field.UnitAt(_cursor.X, _cursor.Y);
-        if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; _state_ = State.Status; return; }
+        if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; _statusItem = -1; _state_ = State.Status; return; }
         // a right click on an empty tile opens the turn menu too (modern; the original does nothing there)
         if (i.RightClick && i.MouseTile is not null) { Sfx.Click(); OpenTurnMenu(); return; }
         if (!Pick(i)) return;
@@ -1926,6 +1933,8 @@ public sealed class BattleController
 
     /// <summary>Option: the enemy phase resolves without walking, panning, battle scenes or result popups (events still play).</summary>
     public bool SkipEnemyTurn { get; set; }
+    /// <summary>Option (modern): off, the battle scenes keep whatever music is playing instead of the map's battle BGM.</summary>
+    public bool CombatMusic { get; set; } = true;
     bool Quiet => SkipEnemyTurn && !_s.Field.AllyPhase;
 
     /// <summary>
@@ -2127,7 +2136,7 @@ public sealed class BattleController
         if (_state_ is State.SpellList or State.ItemList or State.EquipList or State.EquipSlots) DrawList(sb, frame);
         if (_state_ == State.UseConfirm) _useMenu.Draw(sb, _ui, true, frame);
         if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel);
-        if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit);
+        if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit, shown: _statusItem, mouse: MouseVirtual);
         if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel); }
         // the caption over everything, the screen frame included (FUN_0041421c draws it at y 192 on the whole screen)
         if (_telop is not null && _tex.Get(_telop) is { } t) sb.Draw(t, new Vector2(TelopX(_telopTick), 192), Color.White);
