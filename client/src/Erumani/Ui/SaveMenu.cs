@@ -110,7 +110,9 @@ public sealed class SaveMenu : IDisposable
             int answer = c.Navigate(i, mouse);
             if (answer < 0) return (Result.None, 0);
             _confirm = null;
-            return answer == 0 ? (Result.Picked, _index + 1) : (Result.None, 0);
+            if (answer != 0) return (Result.None, 0);
+            Sfx.SaveLoad();   // now, with はい's own click (none twice), not when the load comes after the fade
+            return (Result.Picked, _index + 1);
         }
         if (i.Cancel || i.RightClick) { Sfx.Cancel(); return (Result.Cancelled, 0); }
         // the wheel scrolls the list a file a notch, not the choice: the file that comes under the pointer is the one
@@ -137,7 +139,7 @@ public sealed class SaveMenu : IDisposable
         string name = SlotName(_index + 1);
         if (_saving)
         {
-            if (_slots[_index] is null) { Sfx.Click(); return (Result.Picked, _index + 1); }
+            if (_slots[_index] is null) { Sfx.Click(); Sfx.SaveLoad(); return (Result.Picked, _index + 1); }
             Ask(T($"Save over {name}?", $"{name}に上書きしますか？"));
         }
         else if (_slots[_index] is null) Sfx.Buzzer();

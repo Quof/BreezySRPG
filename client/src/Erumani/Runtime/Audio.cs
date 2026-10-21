@@ -264,11 +264,12 @@ public sealed class Audio(GameFolder game) : IDisposable
 
     /// <summary>
     /// CLICK.WAV when a game is saved or loaded (modern: the original plays only the pick's click), whatever the confirm
-    /// sound option says — once, when the pick's own click has just played.
+    /// sound option says — once: not again when the pick's own click played within the last second (a load comes after
+    /// the screen has faded out, a third of a second or more after はい).
     /// </summary>
     public void SaveLoadSound()
     {
-        if (Environment.TickCount64 - _clickAt < 100) return;
+        if (Environment.TickCount64 - _clickAt < 1000) return;
         PlaySe("CLICK.WAV");
         _clickAt = Environment.TickCount64;
     }
