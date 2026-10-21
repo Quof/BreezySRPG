@@ -9,7 +9,7 @@ namespace Erumani;
 /// <summary>Per-unit animation state (the rules state lives in <see cref="BattleUnit"/>).</summary>
 public sealed class UnitVisual
 {
-    /// <summary>Sprite-sheet row: 0 down (facing viewer), 1 up, 2 left, 4 right (inferred).</summary>
+    /// <summary>The way it last stepped or turned, as its sprite-sheet row (FUN_00413918): 1 up, 2 right, 3 down, 4 left; 0 none yet.</summary>
     public int Facing;
     public Queue<byte> Pending { get; } = new();
     public Queue<byte> Running { get; } = new();
@@ -396,7 +396,7 @@ public sealed class MapSession : IMapContext
         }
     }
 
-    static readonly int[] FacingRow = { 1, 4, 0, 2 };          // step dir up/right/down/left -> sheet row
+    static readonly int[] FacingRow = { 1, 2, 3, 4 };          // step dir up/right/down/left (+0xd0 8/6/2/4) -> sheet row
     static readonly Point[] StepDelta = { new(0, -1), new(1, 0), new(0, 1), new(-1, 0) };
 
     /// <summary>One step: turn, then move unless an event's step is blocked (out of the map, a living unit there, or no way through).</summary>
@@ -510,20 +510,35 @@ public sealed class MapSession : IMapContext
         }
     }
 
-    public void DrawUnits(SpriteBatch sb, Rectangle viewport, int frame)
+    /// <summary>A sheet's frame cycle (DAT_0043328c, DAT_004332a4): the column of each of 6 phases.</summary>
+    static readonly int[] FrameCycle = { 0, 0, 1, 2, 2, 1 };
+
+    /// <summary>
+    /// The units (FUN_00413918): the standing ones by their row on the screen, then the ones stepping (a sort key of
+    /// y + 1000), each a 64 × 64 cell of its sheet centred on its tile. One stepping (walking, or an event's turn) shows its
+    /// way's row and a new phase of the cycle every 2 ticks; <paramref name="facing"/>, the chosen unit, its way's row
+    /// every 3 ticks; any other row 0 every 4 — or, once it has acted, frame 0 with SYSTEM.BMP's END on its tile — and a
+    /// poisoned or (instead) sleeping one SYSTEM.BMP's PSN / SLP, a new frame every 4 ticks.
+    /// </summary>
+    public void DrawUnits(SpriteBatch sb, Rectangle viewport, int frame, BattleUnit? facing = null)
     {
         var sys = _tex.Get("SYSTEM.BMP");
-        foreach (var u in Field.Alive.Concat(Ghosts).OrderBy(u => u.Y))
+        int tick = frame / 2;
+        static bool Stepping(UnitVisual v) => v.StepFrames > 0 || v.Running.Count > 0;   // +0xd4 holds through a whole move
+        foreach (var u in Field.Alive.Concat(Ghosts).OrderBy(u => (Stepping(Visuals[u]) ? 1000 : 0) + u.Y * Tile + Visuals[u].Offset.Y))
         {
             var v = Visuals[u];
             var pos = ScreenPos(u.X, u.Y, viewport) + v.Offset;
             var sheet = UnitSheet(u);
             if (sheet is null) continue;
-            // 3 frames x 5 poses of 64x64 cells, character centred; idle cycles frames 0-1-2-1.
-            int col = u.Acted ? 1 : (frame / 15 % 4) switch { 0 => 0, 1 => 1, 2 => 2, _ => 1 };
-            sb.Draw(sheet, pos - new Vector2(16, 16), new Rectangle(col * 64, v.Facing * 64, 64, 64), Color.White);
-            if (u.Acted && u.Side == Side.Ally && sys is not null)
-                sb.Draw(sys, pos + new Vector2(6, 19), new Rectangle(70, 19, 22, 10), Color.White);   // "END"
+            bool stepping = Stepping(v), chosen = !stepping && u == facing && v.Facing > 0;
+            int row = stepping || chosen ? v.Facing : 0;
+            int col = stepping ? FrameCycle[tick / 2 % 6] : chosen ? FrameCycle[tick / 3 % 6] : u.Acted ? 0 : FrameCycle[tick / 4 % 6];
+            sb.Draw(sheet, pos - new Vector2(16, 16), new Rectangle(col * 64, row * 64, 64, 64), Color.White);
+            if (stepping || chosen || sys is null) continue;
+            if (u.Acted) sb.Draw(sys, pos + new Vector2(6, 19), new Rectangle(70, 19, 22, 10), Color.White);   // END
+            if (u.SleepTurns > 0 || u.PoisonTurns > 0)
+                sb.Draw(sys, pos, new Rectangle(tick / 4 % 4 * 32 + (u.SleepTurns > 0 ? 128 : 0), 192, 32, 32), Color.White);
         }
     }
 }

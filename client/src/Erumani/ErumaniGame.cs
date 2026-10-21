@@ -871,7 +871,7 @@ public sealed class ErumaniGame : Game
         {
             _session.DrawTiles(_sb, view);
             _battle?.DrawOverlays(_sb, view, _frame);
-            _session.DrawUnits(_sb, view, _frame);
+            _session.DrawUnits(_sb, view, _frame, _battle?.FacingUnit);
         }
         DrawPicture();
         // the frame on top of the picture (as in the original); its red arrows point where the view can scroll, only in

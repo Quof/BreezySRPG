@@ -124,6 +124,11 @@ public sealed class BattleController
         : _state_ == State.Events && _runner.Running ? (_runner.Message is not null ? 1 : _runner.Choice is not null ? 0 : 2)
         : _state_ is State.Showing or State.WholeMap ? 1
         : _s.Field.AllyPhase ? 0 : 2;
+    /// <summary>
+    /// The unit that shows its way on the map while chosen (FUN_00413918): the one selected or walking (states 6, 7) — in
+    /// the player's phase only one of the player's.
+    /// </summary>
+    public BattleUnit? FacingUnit => _state_ is State.Selected or State.Moving && _sel is { } u && !(_s.Field.AllyPhase && u.Side != Side.Ally) ? u : null;
     /// <summary>Asks the game to play a sound effect (EFS wav).</summary>
     public Action<string>? PlaySound { get; set; }
 
