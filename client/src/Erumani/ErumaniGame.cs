@@ -27,6 +27,8 @@ public sealed class ErumaniGame : Game
     Audio _audio = null!;
     SpriteBatch _sb = null!;
     RenderTarget2D _screen = null!;
+    /// <summary>The frame before a wipe started: what the wipe takes away (ScreenEffects.Transition).</summary>
+    RenderTarget2D _snapshot = null!;
     readonly GameState _state = new();
     ScreenEffects _fx = new();
     MapSession? _session;
@@ -51,6 +53,7 @@ public sealed class ErumaniGame : Game
     KeyboardState _prevKeys;
     MouseState _prevMouse;
     int _activeFrames, _leftHeld;
+    readonly Queue<string> _choose = new();
 
     static readonly BlendState Multiply = new()
     {
@@ -74,6 +77,7 @@ public sealed class ErumaniGame : Game
         TargetElapsedTime = TimeSpan.FromSeconds(1.0 / 60);
         _shotAdvance = opts.Advance;
         foreach (var tok in (opts.Keys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _script.Enqueue(tok.ToLowerInvariant());
+        foreach (var c in (opts.Choose ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _choose.Enqueue(c.ToLowerInvariant());
     }
 
     protected override void LoadContent()
@@ -89,7 +93,8 @@ public sealed class ErumaniGame : Game
         Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "soundfonts"));
         ApplySettings();
         _sb = new SpriteBatch(GraphicsDevice);
-        _screen = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight);
+        _screen = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+        _snapshot = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
 
         _mapIndices = Directory.GetFiles(Path.Combine(_folder.Root, "MAP"), "SMAP_*.DAT")
             .Select(p => int.Parse(Path.GetFileNameWithoutExtension(p)[5..]) - 1).Order().ToArray();
@@ -123,19 +128,20 @@ public sealed class ErumaniGame : Game
     }
 
     /// <summary>The camp before map <paramref name="pos"/> (index into the map list).</summary>
-    void OpenCamp(int pos, bool countIt = true)
+    void OpenCamp(int pos)
     {
         _mapPos = pos;
         int idx = _mapIndices[pos];
         var map = MapData.Load(_folder.MapPath(idx));
-        if (countIt) _state.CampCount++;
+        _state.MapIndex = idx;
+        _state.NextMap = (idx + 1) % 100;
         _session = null;
         _runner = null;
         _battle = null;
         _pendingMap = null;
         _camp = new Camp.CampScreen(_db, _folder, _tex, _ui, _state, map, idx)
         {
-            StartNext = () => LoadMap(pos),
+            StartNext = () => LoadMap(pos, fromCamp: true),
             Loaded = ApplySave,
             Quit = Exit,
         };
@@ -149,24 +155,29 @@ public sealed class ErumaniGame : Game
     void ApplySave(SaveFile save)
     {
         save.ApplyTo(_state);
-        int pos = Math.Max(0, Array.IndexOf(_mapIndices, save.MapNumber - 1));
-        if (save.AtCamp) OpenCamp(pos, countIt: false);
+        int pos = Math.Max(0, Array.IndexOf(_mapIndices, save.MapIndex));
+        if (save.AtCamp) OpenCamp(pos);
         else LoadMap(pos, save);
     }
 
-    void LoadMap(int pos, SaveFile? resume = null)
+    void LoadMap(int pos, SaveFile? resume = null, bool fromCamp = false)
     {
         _camp = null;
         _title = null;
         _mapPos = pos;
         int idx = _mapIndices[_mapPos];
         var map = MapData.Load(_folder.MapPath(idx));
+        _state.MapIndex = idx;
+        if (resume is null) _state.NextMap = (idx + 1) % 100;   // FUN_0041d5e4: the following map unless a "Next Map" says otherwise
         _fx = new ScreenEffects();
         _session = new MapSession(map, _db, _state, _tex, _folder.Chipset(map.Tileset));
         _runner = new EventRunner(_state, _session, _audio, _fx) { Shown = _backlog.Add };
         if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
         _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex);
-        _audio.PlayBgm(map.Bgm[1]);   // player-turn BGM; the opening usually sets its own
+        // the exe stops the music when a map loads (FUN_0041d5e4 plays ""), except that a camp's music carries on into
+        // the opening; the player-turn music comes with PLAYER TURN. A battle save brings back the music it saved.
+        if (resume is not null) _audio.PlayBgm(resume.Bgm is { Length: > 0 } b ? b : map.Bgm[1]);
+        else if (!fromCamp) _audio.PlayBgm("");
         // developer options (--level, --give): set up situations for testing
         if (_opts.Level is int lv)
             foreach (var u in _session.Field.Units.Where(u => u.Side == Srpg95.Rules.Side.Ally && u.Level < lv)) u.Level = lv;
@@ -191,7 +202,7 @@ public sealed class ErumaniGame : Game
         _battle.SaveRequested = n =>
         {
             string path = SaveFile.PathFor(_folder, n);
-            SaveFile.ForBattle(_state, _db, idx, map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
+            SaveFile.ForBattle(_state, _db, idx, _audio.CurrentBgm ?? map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
                 _session.Field.Units, _battle.FiredSlots, SaveFile.Load(path)?.Raw ?? _state.LastSave).Write(path);
         };
         _battle.LoadRequested = n => { if (SaveFile.Load(SaveFile.PathFor(_folder, n)) is not { } f) return false; ApplySave(f); return true; };
@@ -316,8 +327,10 @@ public sealed class ErumaniGame : Game
 
         var input = new EventInput(confirm, cancel, up, down, ff);
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
-        if (_opts.Screenshot is not null && _shotAdvance != 0 && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null }))
+        if (_opts.Screenshot is not null && _shotAdvance != 0 && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null } or { WaitingForButton: true }))
         {
+            if (_runner is { Choice: { } options } && _choose.TryDequeue(out var pick))
+                _runner.HoverChoice(pick == "last" ? options.Length - 1 : int.TryParse(pick, out var n) ? Math.Clamp(n, 0, options.Length - 1) : 0);
             input = input with { Confirm = true };
             _shotAdvance--;
         }
@@ -402,14 +415,14 @@ public sealed class ErumaniGame : Game
             return;
         }
 
-        if (_pendingCamp is int pc && (battleInput.Confirm || _autoAdvance))
+        if (_pendingCamp is int pc && (battleInput.Confirm || _autoAdvance && !_fx.Busy))
         {
             _pendingCamp = null;
             _autoAdvance = false;
             OpenCamp(pc);
             return;
         }
-        if (_pendingMap is int pm && (battleInput.Confirm || _autoAdvance))
+        if (_pendingMap is int pm && (battleInput.Confirm || _autoAdvance && !_fx.Busy))
         {
             _pendingMap = null;
             _autoAdvance = false;
@@ -518,19 +531,25 @@ public sealed class ErumaniGame : Game
         switch (_battle!.Outcome)
         {
             case MapOutcome.Won:
-                int next = _battle.NextMap ?? idx + 1;   // provisional: no "Next Map" means the following map
-                // the original goes straight on to the next camp / map once the victory events are over
+            case MapOutcome.Lost:
+                // FUN_0041083c → FUN_0041d5e4: won (after COMPLETE!!) or "lost" through an event, the game goes straight
+                // on to header 0x010's map — a "Next Map" command's, else the following one — with its camp first if it
+                // has one and the army isn't empty; the army was saved into the roster (BattleController.End)
+                int next = _state.NextMap;
                 _status = "";
                 _autoAdvance = true;
+                _fx.StartFade(true, 0, 6);   // the screen fades out first (brightness −5 a tick)
                 if (Array.IndexOf(_mapIndices, next) is var p and >= 0)
                 {
-                    if (MapData.Load(_folder.MapPath(next)).CampBeforeBattle) _pendingCamp = p;
+                    var nextMap = MapData.Load(_folder.MapPath(next));
+                    if (nextMap.CampBeforeBattle && _state.Roster.Count > 0)
+                    {
+                        Party.PrepareSortie(_state, nextMap);
+                        _pendingCamp = p;
+                    }
                     else _pendingMap = p;
                 }
-                break;
-            case MapOutcome.Lost:
-                _status = "Map lost" + (_battle.NextMap is int n ? $" → SMAP_{n + 1:000}  [Enter]" : "  [Enter: retry]");
-                _pendingMap = _battle.NextMap is int n2 && Array.IndexOf(_mapIndices, n2) is var p2 and >= 0 ? p2 : _mapPos;
+                else _status = $"SMAP_{next + 1:000} doesn't exist";
                 break;
             case MapOutcome.GameOver:
                 _audio.PlayBgm(_session!.Map.Bgm[7]);    // game over
@@ -573,6 +592,15 @@ public sealed class ErumaniGame : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        // a wipe just started: keep the last frame, which the wipe will take away bit by bit
+        if (_fx.SnapshotRequested)
+        {
+            GraphicsDevice.SetRenderTarget(_snapshot);
+            _sb.Begin(samplerState: SamplerState.PointClamp);
+            _sb.Draw(_screen, Vector2.Zero, Color.White);
+            _sb.End();
+            _fx.SnapshotTaken();
+        }
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
         if (_title is not null)
@@ -610,7 +638,6 @@ public sealed class ErumaniGame : Game
         _sb.End();
         DrawTone(viewClip);
         _sb.Begin(samplerState: SamplerState.PointClamp);
-        if (_fx.FlashAlpha > 0) _ui.Fill(_sb, viewClip, _fx.FlashColor * _fx.FlashAlpha);
         if (_fx.Fade > 0) _ui.Fill(_sb, viewClip, _fx.FadeColor * _fx.Fade);
         // frame on top of the picture (as in the original), then windows and cursor
         if (_session is { } s)
@@ -622,6 +649,7 @@ public sealed class ErumaniGame : Game
         DrawStatus();
         if (_debug) DrawDebug();
         _backlog.Draw(_sb);
+        DrawWipe();
         DrawSkipPrompt();
         _options?.Draw(_sb, _frame);
         if (_opts.Screenshot is null && IsActive)
@@ -666,21 +694,76 @@ public sealed class ErumaniGame : Game
 
     void DrawPicture()
     {
-        if (_fx.Picture is null || _fx.PictureAlpha <= 0) return;
-        var t = _tex.Get(_fx.Picture, _fx.PictureTransparent);
+        foreach (var (file, position, transparent) in _fx.Pictures) DrawPicture(file, position, transparent);
+    }
+
+    /// <summary>
+    /// A wipe (FUN_00422a00) in progress: the parts of the old screen (the snapshot, or a solid colour when a screen
+    /// display starts from one) not yet replaced are drawn over the new one. 1 random 8×8 blocks (240 more a tick),
+    /// 2 / 3 one-pixel lines every 20 px, 4 / 5 8-px bands, top-down (left-right) and back.
+    /// </summary>
+    void DrawWipe()
+    {
+        if (_fx.Transition == 0) return;
+        int tick = _fx.TransitionTick;
+        var from = _fx.TransitionFrom;
+        void Old(Rectangle r)
+        {
+            if (from is { } c) _ui.Fill(_sb, r, c);
+            else _sb.Draw(_snapshot, r, r, Color.White);
+        }
+        static bool BandShown(int band, int tick, int half) => band % 4 is 0 or 2 ? tick >= band / 4 : tick >= 2 * half - 1 - band / 4;
+        switch (_fx.Transition)
+        {
+            case 1:
+                for (int k = Math.Min(4800, 240 * (tick + 1)); k < 4800; k++)
+                {
+                    int b = _fx.WipeOrder[k];
+                    Old(new Rectangle(b % 80 * 8, b / 80 * 8, 8, 8));
+                }
+                break;
+            case 2:
+                for (int y = 0; y < VirtualHeight; y++) if (y % 20 > tick) Old(new Rectangle(0, y, VirtualWidth, 1));
+                break;
+            case 3:
+                for (int x = 0; x < VirtualWidth; x++) if (x % 20 > tick) Old(new Rectangle(x, 0, 1, VirtualHeight));
+                break;
+            case 4:
+                for (int band = 0; band < 60; band++) if (!BandShown(band, tick, 15)) Old(new Rectangle(0, band * 8, VirtualWidth, 8));
+                break;
+            case 5:
+                for (int band = 0; band < 80; band++) if (!BandShown(band, tick, 20)) Old(new Rectangle(band * 8, 0, 8, VirtualHeight));
+                break;
+        }
+    }
+
+    void DrawPicture(string file, int position, bool transparent)
+    {
+        var t = _tex.Get(file, transparent);
         if (t is null) return;
-        // Numeric-keypad positions on the full 640x480 screen: 7 8 9 / 4 5 6 / 1 2 3.
-        int p = Math.Clamp(_fx.PicturePosition, 1, 9) - 1;
-        int col = p % 3, row = 2 - p / 3;
-        int x = col switch { 0 => 0, 1 => (VirtualWidth - t.Width) / 2, _ => VirtualWidth - t.Width };
-        int y = row switch { 0 => 0, 1 => (VirtualHeight - t.Height) / 2, _ => VirtualHeight - t.Height };
-        _sb.Draw(t, new Vector2(x, y), Color.White * _fx.PictureAlpha);
+        // Numeric-keypad positions (7 8 9 / 4 5 6 / 1 2 3) inside the 16-px screen frame (FUN_004233f0): a picture as
+        // wide or tall as the view itself slides out to the screen's edge instead.
+        int p = Math.Clamp(position, 1, 9) - 1;
+        int col = p % 3, row = 2 - p / 3, w = t.Width, h = t.Height;
+        int x = col switch
+        {
+            0 => w >= 624 ? Math.Max(0, 640 - w) : 16,
+            1 => 320 - w / 2,
+            _ => w >= 624 ? Math.Max(0, 640 - w) : 624 - w,
+        };
+        int y = row switch
+        {
+            0 => h >= 464 ? Math.Max(0, 480 - h) : 16,
+            1 => 240 - h / 2,
+            _ => h >= 464 ? Math.Max(0, 480 - h) : 464 - h,
+        };
+        _sb.Draw(t, new Vector2(x, y), Color.White);
     }
 
     /// <summary>Colour tone: multiply for channels under 100 %, add for channels over (vividness not applied yet).</summary>
     void DrawTone(Rectangle area)
     {
-        var tone = _fx.Tone;
+        var tone = _fx.FlashTone ?? _fx.Tone;   // a flash shows its tone for a moment (FUN_00423914)
         if (tone.X == 100 && tone.Y == 100 && tone.Z == 100) return;
         static int Mul(float v) => (int)(Math.Clamp(v, 0, 100) * 2.55f);
         static int Add(float v) => (int)(Math.Clamp(v - 100, 0, 100) * 2.55f);
@@ -756,7 +839,7 @@ public sealed class ErumaniGame : Game
         var lines = new List<string>
         {
             $"SMAP_{_mapIndices[_mapPos] + 1:000} {_session?.Map.Name}  BGM {_audio.CurrentBgm ?? "-"}  font {_ui.Text.FaceName}",
-            $"gold {_state.Gold}  party {string.Join(",", _state.Party)}  event {_runner?.Name} {(_runner?.Running == true ? "running" : "idle")}",
+            $"gold {_state.Gold}  roster {string.Join(",", _state.Roster.Select(kv => kv.Value.Sortie ? $"{kv.Key}*" : $"{kv.Key}"))}  next {_state.NextMap}  event {_runner?.Name} {(_runner?.Running == true ? "running" : "idle")}",
         };
         lines.AddRange(_runner?.Log.TakeLast(8) ?? Enumerable.Empty<string>());
         _ui.Fill(_sb, new Rectangle(0, 0, VirtualWidth, 8 + lines.Count * 18), Color.Black * 0.75f);

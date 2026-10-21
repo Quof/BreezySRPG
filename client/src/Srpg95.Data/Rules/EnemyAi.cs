@@ -61,7 +61,7 @@ public static class EnemyAi
 
             // FUN_004160f0 / FUN_004162c4: best tile and value for every unit the enemy may attack
             var st = f.Stats(u);
-            foreach (var t in f.Alive.Where(b => b.Side != Side.Enemy && !(b.Side == Side.Neutral && b.Unattackable)))
+            foreach (var t in f.Alive.Where(b => b.Side != Side.Enemy && !(b.Side == Side.Neutral && b.Unattackable)).OrderBy(b => b.Slot))
             {
                 (int X, int Y)? tile = null;
                 int best = int.MaxValue;
@@ -97,7 +97,7 @@ public static class EnemyAi
                 foreach (var t in targets)
                     if (t.Value > top) { top = t.Value; goal = (t.Unit.X, t.Unit.Y); }
             }
-            else if (f.Alive.FirstOrDefault(b => b.Side == Side.Ally) is { } ally) goal = (ally.X, ally.Y);
+            else if (f.Alive.Where(b => b.Side == Side.Ally).OrderBy(b => b.Slot).FirstOrDefault() is { } ally) goal = (ally.X, ally.Y);
         }
         if (p.Action == 2) goal = (p.X, p.Y);
         if (goal is not { } g) return new AiPlan(u, here, new(), null, -1);

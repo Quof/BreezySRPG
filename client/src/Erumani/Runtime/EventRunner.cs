@@ -25,8 +25,8 @@ public sealed class EventRunner
     readonly Random _rng = new();
     readonly Stack<(List<ScriptNode> Nodes, int Pc)> _stack = new();
 
-    int _face, _waitFrames;
-    bool _faceRight, _faceFlip, _waitButton, _waitFx, _waitMoves;
+    int _face, _waitFrames, _titleFrames;
+    bool _faceRight, _faceFlip, _waitButton, _waitFx, _waitMoves, _waitPan;
 
     public string Name { get; private set; } = "";
     public MessageView? Message { get; private set; }
@@ -35,9 +35,12 @@ public sealed class EventRunner
     public string[]? Choice { get; private set; }
     public int ChoiceIndex { get; private set; }
     public EventEnd End { get; private set; }
-    /// <summary>Set by "Next Map" (select_map): 0-based map index to go to on map completion.</summary>
-    public int? NextMap { get; private set; }
-    public bool Running => _stack.Count > 0;
+    public bool Running => _stack.Count > 0 || _titleFrames > 0;
+    /// <summary>Waiting on a "button input" command.</summary>
+    public bool WaitingForButton => _waitButton;
+    /// <summary>What the interpreter is waiting on (screenshot mode writes it next to the PNG).</summary>
+    public string DebugState => $"msg={Message is not null} choice={Choice is not null} wait={_waitFrames} button={_waitButton} fx={_waitFx}/{_fx.Busy} " +
+        $"moves={_waitMoves} pan={_waitPan} title={_titleFrames} stack={_stack.Count} end={End}";
 
     /// <summary>Mouse hover over a choice line.</summary>
     public void HoverChoice(int index)
@@ -96,8 +99,10 @@ public sealed class EventRunner
         Message = null;
         _waitFrames = 0;
         _waitButton = false;
+        _waitPan = false;
         if (_waitFx) { _fx.Complete(); _waitFx = false; }
         if (_waitMoves) { _map.FinishMoves(); _waitMoves = false; }
+        if (_titleFrames > 1) _titleFrames = 1;
     }
 
     public void Update(EventInput input)
@@ -129,7 +134,14 @@ public sealed class EventRunner
         if (_waitFrames > 0) { _waitFrames -= input.FastForward ? 4 : 1; if (_waitFrames > 0) return; }
         if (_waitButton) { if (!input.Confirm) return; _waitButton = false; }
         if (_waitFx) { if (_fx.Busy) return; _waitFx = false; }
-        if (_waitMoves) { if (_map.MovesRunning) return; _waitMoves = false; }
+        if (_waitMoves) { if (_map.MovesRunning || _map.Panning) return; _waitMoves = false; }
+        if (_waitPan) { if (_map.Panning) return; _waitPan = false; }
+        if (_titleFrames > 0)
+        {
+            if (--_titleFrames > 0) return;
+            Finish(EventEnd.ReturnToTitle);
+            return;
+        }
 
         // --- run until something blocks ---
         while (_stack.Count > 0)
@@ -138,11 +150,22 @@ public sealed class EventRunner
             if (pc >= nodes.Count) continue;
             _stack.Push((nodes, pc + 1));
             if (!Execute(nodes[pc])) continue;
+            // a message right before a character choice stays up under it: the choice comes at once (FUN_0040d18c)
+            if (nodes[pc] is MessageNode && pc + 1 < nodes.Count && nodes[pc + 1] is ChoiceNode) { Message = null; continue; }
+            if (_titleFrames > 0) return;
             if (_skipping && Choice is null) { SkipBlocks(); continue; }
             _skipping = false;
             return;
         }
         _skipping = false;
+        if (End == EventEnd.None) Ended();
+    }
+
+    /// <summary>The end of a script (end_of_script / end_event): a picture still shown is taken away at once.</summary>
+    void Ended()
+    {
+        End = EventEnd.EndEvent;
+        _fx.ErasePicture(0);
     }
 
     /// <summary>Executes one node; returns true if the interpreter must wait.</summary>
@@ -171,6 +194,15 @@ public sealed class EventRunner
         return false;
     }
 
+    /// <summary>The commands <see cref="Run"/> carries out (messages, branches and choices are tree nodes).</summary>
+    public static readonly HashSet<Op> Handled = new()
+    {
+        Op.FaceGraphic, Op.SwitchOperation, Op.ItemManagement, Op.GoldManagement, Op.ScreenDisplay, Op.EraseScreen,
+        Op.PictureDisplay, Op.ErasePicture, Op.ScrollScreen, Op.FlashTintScreen, Op.ShakeScreen, Op.ChangeAllyUnit,
+        Op.UnitClassChange, Op.UnitEquipmentChange, Op.MoveUnit, Op.ExecuteMovement, Op.Bgm, Op.SoundEffect,
+        Op.VariableOperation, Op.ButtonInput, Op.Wait, Op.SelectMap, Op.EndEvent, Op.MapComplete, Op.GameOver, Op.ReturnToTitle,
+    };
+
     bool Run(Command c)
     {
         switch (c.Op)
@@ -183,12 +215,13 @@ public sealed class EventRunner
             case Op.SwitchOperation:
                 if (c.U16(2) < GameState.SwitchCount) _state.Switches[c.U16(2)] = c.U16(0) == 1;
                 Trace($"switch {c.U16(2)} = {(c.U16(0) == 1 ? "ON" : "OFF")}");
+                _map.SwitchesChanged();   // units appear and leave at once, mid-cutscene (FUN_00409658)
                 return false;
             case Op.ItemManagement:
                 _state.AddItem(c.U16(2), c.U16(0) == 1 ? c.U16(4) : -c.U16(4));
                 return false;
             case Op.GoldManagement:
-                _state.Gold = Math.Max(0, _state.Gold + (c.U16(0) == 1 ? c.I32(2) : -c.I32(2)));
+                _state.Gold = Math.Clamp(_state.Gold + (c.U16(0) == 1 ? c.I32(2) : -c.I32(2)), 0, 9_999_999);   // FUN_0040aef0 / FUN_0040af20
                 return false;
             case Op.ScreenDisplay:
             case Op.EraseScreen:
@@ -196,30 +229,37 @@ public sealed class EventRunner
                 _waitFx = true;
                 return true;
             case Op.PictureDisplay:
+                // a wipe blocks the script while it runs, as the exe's loop does
                 _fx.ShowPicture(c.Str(6), c.Payload[1], c.Payload[0], c.Payload[2] == 1);
-                return false;
+                _waitFx = _fx.Busy;
+                return _waitFx;
             case Op.ErasePicture:
                 _fx.ErasePicture(c.U16(0));
-                return false;
+                _waitFx = _fx.Busy;
+                return _waitFx;
             case Op.ScrollScreen:
-                _map.ScrollTo(c.U16(0), c.U16(2));   // provisional: instant, centred on the tile
-                return false;
+                // FUN_00423870: scrolls a tile per tick until the tile is in the view's middle box, and waits
+                _map.ShowTile(c.U16(0), c.U16(2));
+                _waitPan = true;
+                return true;
             case Op.FlashTintScreen:
+                // flashes and gradual tone changes hold the script until they're over (FUN_00423914)
                 _fx.FlashTint(c.U16(0), c.I16(2), c.I16(4), c.I16(6), c.I16(8));
-                return false;
+                _waitFx = _fx.Busy;
+                return _waitFx;
             case Op.ShakeScreen:
                 if (_skipping) return false;
                 _fx.Shake(c.U16(0));
                 _waitFx = true;
                 return true;
             case Op.ChangeAllyUnit:
-                if (c.U16(0) == 1) _state.Party.Add(c.U16(2)); else _state.Party.Remove(c.U16(2));
+                if (c.U16(0) == 1) _map.PartyAdd(c.U16(2)); else _map.PartyRemove(c.U16(2));
                 return false;
             case Op.UnitClassChange:
-                _state.ClassOverride[c.U16(0)] = c.U16(2);
+                _map.ChangeClass(c.U16(0), c.U16(2));
                 return false;
             case Op.UnitEquipmentChange:
-                _state.WeaponOverride[c.U16(0)] = c.U16(2);   // provisional: slot implied by item type
+                _map.ChangeEquipment(c.U16(0), c.U16(2));
                 return false;
             case Op.MoveUnit:
                 _map.QueueMove(c.U16(0), c.Payload.Skip(4).Take(c.U16(2)).ToArray());
@@ -244,13 +284,19 @@ public sealed class EventRunner
                 _waitFrames = c.U16(0) * 6;   // tenths of a second at 60 fps
                 return true;
             case Op.SelectMap:
-                NextMap = c.U16(0);
-                Trace($"next map = {NextMap}");
+                _state.NextMap = c.U16(0);   // save header 0x010
+                Trace($"next map = {_state.NextMap}");
                 return false;
             case Op.EndEvent: Finish(EventEnd.EndEvent); return true;
             case Op.MapComplete: Finish(c.U16(0) == 1 ? EventEnd.MapWon : EventEnd.MapLost); return true;
             case Op.GameOver: Finish(EventEnd.GameOver); return true;
-            case Op.ReturnToTitle: Finish(EventEnd.ReturnToTitle); return true;
+            case Op.ReturnToTitle:
+                // the original erases the screen, stops the music and goes back to the title 1.5 s later (2.5 s in all)
+                _stack.Clear();
+                _fx.StartFade(true, 0, 0);
+                _audio.PlayBgm("");
+                _titleFrames = 150;
+                return true;
             default:
                 Trace($"unhandled {c.Op}");
                 return false;
@@ -261,6 +307,8 @@ public sealed class EventRunner
     {
         End = how;
         _stack.Clear();
+        _titleFrames = 0;
+        if (how == EventEnd.EndEvent) _fx.ErasePicture(0);
         Trace($"end: {how}");
     }
 
@@ -271,7 +319,7 @@ public sealed class EventRunner
         int operand = c.U16(2) switch
         {
             1 => c.U16(6) < GameState.VariableCount ? _state.Variables[c.U16(6)] : 0,
-            2 => _rng.Next(0, c.U16(8) + 1),     // provisional: 0..max inclusive
+            2 => _rng.Next(0, c.U16(8) + 1),     // rand() % (max + 1)
             _ => c.I16(4),
         };
         ref int x = ref _state.Variables[v];
@@ -281,8 +329,9 @@ public sealed class EventRunner
             case 1: x += operand; break;
             case 2: x -= operand; break;
             case 3: x *= operand; break;
-            case 4: if (operand != 0) x /= operand; break;   // provisional: divide by 0 leaves the value
+            case 4: x = operand == 0 ? 0 : x / operand; break;   // dividing by 0 gives 0
         }
+        x = Math.Clamp(x, -1000, 1000);   // FUN_0040d18c keeps variables within ±1000
     }
 
     bool Evaluate(Command c)
@@ -292,10 +341,10 @@ public sealed class EventRunner
         {
             case 0: return _state.Switches[Math.Min((int)c.U16(2), GameState.SwitchCount - 1)] == (p[12] == 0);
             case 1:
-                // provisional: After = at or after, Before = before, Exact = equal (phase counter)
+                // FUN_00424ee0: After = at or after, Before = at or before, Exact = equal (phase counter)
                 int t = c.U16(4);
-                return p[13] switch { 0 => _map.Phase >= t, 1 => _map.Phase < t, _ => _map.Phase == t };
-            case 2: return (_state.ItemCount(c.U16(6)) > 0) == (p[14] == 0);
+                return p[13] switch { 0 => _map.Phase >= t, 1 => _map.Phase <= t, _ => _map.Phase == t };
+            case 2: return _map.PartyHas(c.U16(6)) == (p[14] == 0);
             case 3: return _map.UnitState(c.U16(8), p[15]);
             case 4:
                 int val = _state.Variables[Math.Min((int)c.U16(10), GameState.VariableCount - 1)], cmp = c.I16(16);

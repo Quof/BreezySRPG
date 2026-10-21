@@ -53,10 +53,16 @@ public sealed partial class Battlefield
 
     public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < Map.Width && y < Map.Height;
 
+    /// <summary>
+    /// The chip an "Other" object puts over a tile (its graphic, while the object is shown), or null: FUN_0040c1d4
+    /// uses it instead of the map's chip for terrain, so such objects change movement, defense and recovery.
+    /// </summary>
+    public Func<int, int, int?>? ChipOverride { get; set; }
+
     public Terrain TerrainAt(int x, int y)
     {
-        int chip = Map.Tiles[y, x];
-        int t = chip < _chipTerrain.Length ? _chipTerrain[chip] : 0;
+        int chip = ChipOverride?.Invoke(x, y) ?? Map.Tiles[y, x];
+        int t = chip >= 0 && chip < _chipTerrain.Length ? _chipTerrain[chip] : 0;
         return Db.Terrains[Math.Min(t, Db.Terrains.Length - 1)];
     }
 
@@ -183,7 +189,7 @@ public sealed partial class Battlefield
             var w = Item(a.Weapon);
             var arm = Item(d.Armor);
             int terrain = TerrainAt(d.X, d.Y).DefenseBonus;
-            int hit = d.SleepTurns > 0 ? 100 : Combat.HitChance(sa.Skl, w, sd.Skl, arm, terrain);
+            int hit = Combat.HitChance(sa.Skl, w, sd.Skl, arm, terrain);
             int attack = w is null ? sa.Attack : Combat.ApplyAttributes(sa.Attack, w.S.WpnAttackAttr, Class(d).Weakness, arm?.S.ArmDefenseAttr);
             int dmg = Combat.PhysicalDamage(attack, sd.Defense, terrain);
             int crit = dmg == 0 ? 0 : Combat.CritChance(sa.Skl, w, sd.Skl, arm);
@@ -203,7 +209,6 @@ public sealed partial class Battlefield
         int terrain = TerrainAt(def.X, def.Y).DefenseBonus;
         // FUN_0041a9c4: hit roll, crit roll only after a hit, integer damage, crit ×5/2 unless the damage is 0
         int hit = Combat.HitChance(sa.Skl, w, sd.Skl, arm, terrain);
-        if (def.SleepTurns > 0) hit = 100;   // provisional (sleep isn't in the strike routine itself)
         bool hits = Rng.Next(100) < hit;
         if (!hits) return new Strike(atk, def, false, false, 0, false);
         bool crit = Rng.Next(100) < Combat.CritChance(sa.Skl, w, sd.Skl, arm);
@@ -212,7 +217,7 @@ public sealed partial class Battlefield
         if (dmg == 0) crit = false;
         if (crit) dmg = Combat.Critical(dmg);
         def.Hp = Math.Max(0, def.Hp - dmg);
-        if (def.Hp == 0) def.Dead = true;
+        if (def.Hp == 0) { def.Dead = true; def.KilledBy = atk.Unit; }
         return new Strike(atk, def, true, crit, dmg, def.Dead);
     }
 
@@ -301,43 +306,47 @@ public sealed partial class Battlefield
     // ---------------- turns ----------------
 
     /// <summary>
-    /// Ends the current phase and starts the next one: clears "acted", applies terrain HP
-    /// recovery, poison, buff decay and sleep for the side that is about to move.
+    /// FUN_00410b90: ends the current phase and starts the next one. Every unit's "acted" clears; then the side about
+    /// to move (the player's phase: allies and neutral units; the enemy's: enemies) gets its upkeep, in the exe's
+    /// order: poison takes a quarter of the current HP (never below 1), the poison/sleep counters and buffs tick
+    /// down, and the terrain's recovery applies (it can be negative), the HP kept between 1 and the maximum.
+    /// A unit still asleep can't act (the player can't select it; the AI skips it).
     /// </summary>
     public void NextPhase()
     {
+        foreach (var u in Alive) u.Acted = false;
         Phase++;
-        var side = AllyPhase ? Side.Ally : Side.Enemy;
-        foreach (var u in Alive.Where(u => u.Side == side || (side == Side.Enemy && u.Side == Side.Neutral)))
+        bool playerPhase = AllyPhase;
+        foreach (var u in Alive.Where(u => playerPhase ? u.Side != Side.Enemy : u.Side == Side.Enemy).ToList())
         {
-            u.Acted = false;
-            int rec = TerrainAt(u.X, u.Y).HpRecovery;
-            if (rec != 0) u.Hp = Math.Clamp(u.Hp + rec, 1, u.MaxHp);   // provisional: terrain never kills
-            if (u.PoisonTurns > 0)
-            {
-                u.Hp = Math.Max(1, u.Hp - Combat.PoisonDamage(u.Hp));
-                u.PoisonTurns--;
-            }
+            if (u.PoisonTurns > 0) u.Hp = Math.Max(1, u.Hp - Combat.PoisonDamage(u.Hp));
+            if (u.PoisonTurns > 0) u.PoisonTurns--;
             if (u.SleepTurns > 0) u.SleepTurns--;
-            if (u.SleepTurns > 0) u.Acted = true;   // still asleep: loses this turn
             u.PowerUp -= Math.Sign(u.PowerUp);
             u.DefUp -= Math.Sign(u.DefUp);
             u.MdefUp -= Math.Sign(u.MdefUp);
+            u.Hp = Math.Clamp(u.Hp + TerrainAt(u.X, u.Y).HpRecovery, 1, Math.Max(1, u.MaxHp));
         }
     }
 
-    /// <summary>Win condition 0 = defeat all enemies, 1 = defeat every leader, 2 = event only.</summary>
+    /// <summary>
+    /// FUN_0040c24c: win condition 0 = no enemy left on the map, 1 = no enemy leader left on the map (as the exe
+    /// counts them: a map whose leaders haven't appeared yet is already won), 2 = only an event ends the map.
+    /// </summary>
     public bool Won() => Map.WinCondition switch
     {
         0 => !Alive.Any(u => u.Side == Side.Enemy),
-        1 => Units.Any(u => u.Leader && u.Side == Side.Enemy) && !Alive.Any(u => u.Leader && u.Side == Side.Enemy),
+        1 => !Alive.Any(u => u.Leader && u.Side == Side.Enemy),
         _ => false,
     };
 
-    /// <summary>Lost when every ally is down or a unit from the map's character list dies.</summary>
+    /// <summary>
+    /// FUN_0040c24c: lost when a player-side unit (ally or neutral) from the map's character list is dead, or when no
+    /// ally (neutral units don't count) is left alive.
+    /// </summary>
     public bool Lost() =>
         !Alive.Any(u => u.Side == Side.Ally) ||
-        Units.Any(u => u.Dead && u.Side == Side.Ally && Map.CharacterList.Contains(u.Unit));
+        Units.Any(u => u.Dead && !u.Hidden && u.Side != Side.Enemy && Map.CharacterList.Contains(u.Unit));
 
     /// <summary>Restarts the phase counter (used when a map starts).</summary>
     public void SetPhase(int phase) => Phase = phase;

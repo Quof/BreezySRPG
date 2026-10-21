@@ -52,16 +52,17 @@ public sealed partial class Battlefield
     }
 
     /// <summary>
-    /// Whether a spell cast by <paramref name="caster"/> affects <paramref name="t"/>. Target 1 = one side only
-    /// (hostile units for Damage/Degrade, the caster's side for Raise); 0 = everyone in the area
-    /// ("splashes both indiscriminately"). The caster never hits itself with a harmful spell (provisional).
+    /// FUN_00411934: whether a spell cast by <paramref name="caster"/> affects <paramref name="t"/>. An unattackable
+    /// neutral unit is never affected. Target 0 hits everyone in the area (the caster too, if its tile is in it);
+    /// target 1 only the other side for Damage/Degrade and only the caster's side for Raise, sides as the exe counts
+    /// them: enemies against everyone else (allies and neutral units are on the same side).
     /// </summary>
     public bool Affects(BattleUnit caster, Magic m, BattleUnit t)
     {
-        bool harmful = m.Type is 0 or 1;
-        if (harmful && (t == caster || t.Unattackable)) return false;
-        if (m.Target == 0) return true;
-        return harmful ? Hostile(caster, t) : Friendly(caster, t);
+        if (t.Side == Side.Neutral && t.Unattackable) return false;
+        if (m.Target != 1) return true;
+        bool opposing = (caster.Side == Side.Enemy) != (t.Side == Side.Enemy);
+        return m.Type is 0 or 1 ? opposing : !opposing;
     }
 
     public List<BattleUnit> SpellTargets(BattleUnit caster, Magic m, int aimX, int aimY)
@@ -85,7 +86,6 @@ public sealed partial class Battlefield
     int MagicHit(BattleUnit caster, Magic m, BattleUnit t)
     {
         if (m.Type == 1) return m.Accuracy;
-        if (t.SleepTurns > 0) return 100;   // provisional, like physical attacks
         return Combat.MagicHitChance(Stats(caster).Skl, m, Stats(t).Skl, Item(t.Armor), TerrainAt(t.X, t.Y).DefenseBonus);
     }
 
@@ -135,7 +135,7 @@ public sealed partial class Battlefield
                 if (Rng.Next(100) >= MagicHit(caster, m, t)) return new Effect(t, EffectKind.Miss, 0, false);
                 int dmg = PredictSpellDamage(caster, m, t);
                 t.Hp = Math.Max(0, t.Hp - dmg);
-                if (t.Hp == 0) t.Dead = true;
+                if (t.Hp == 0) { t.Dead = true; t.KilledBy = caster.Unit; }
                 return new Effect(t, EffectKind.Damage, dmg, t.Dead);
             }
             case 1:
@@ -182,10 +182,18 @@ public sealed partial class Battlefield
 
     // ---------------- items ----------------
 
-    /// <summary>Medicine and magic items can be used in battle by classes ticked in Class Useage (stat-up/class-change: camp only, provisional).</summary>
-    public bool CanUseInBattle(BattleUnit u, Item it) =>
-        it.Type is ItemType.Medicine or ItemType.Magic && u.ClassId >= 0 && u.ClassId < it.ClassUsable.Length && it.ClassUsable[u.ClassId] != 0
-        && (it.Type != ItemType.Magic || Spell(it.S.MagicSpell) is not null);
+    /// <summary>
+    /// The battle item list (FUN_0040f650's list): medicine, stat-up and magic items the class may use, and class-change
+    /// items whose from → to pairs include the class once the unit has the item's level. Stat-up and class-change
+    /// items work on the user itself (FUN_0040b074).
+    /// </summary>
+    public bool CanUseInBattle(BattleUnit u, Item it) => it.Type switch
+    {
+        ItemType.Medicine or ItemType.StatUp => UnitChanges.Usable(it, u.ClassId),
+        ItemType.Magic => UnitChanges.Usable(it, u.ClassId) && Spell(it.S.MagicSpell) is not null,
+        ItemType.ClassChange => u.Level >= it.S.ClassChangeLevel && UnitChanges.ClassChangeTarget(it, u.ClassId) >= 0,
+        _ => false,
+    };
 
     public Magic? ItemSpell(Item it) => it.Type == ItemType.Magic ? Spell(it.S.MagicSpell) : null;
 

@@ -29,7 +29,7 @@ public class SaveFileTests
             var blank = (byte[])save.Raw.Clone();
             Array.Clear(blank, 0x101D0, 50 * 640);
             var bgm = System.Text.Encoding.GetEncoding(932).GetString(save.Raw, 0x53C, 48).TrimEnd('\0');
-            var fresh = SaveFile.ForCamp(state, db, save.MapNumber - 1, bgm, blank);
+            var fresh = SaveFile.ForCamp(state, db, save.MapIndex, bgm, blank);
             for (int u = 0; u < state.Roster.Count; u++)
                 for (int k = 0; k < 160; k++)
                 {
@@ -56,7 +56,8 @@ public class SaveFileTests
         var db = Database.Load(new GameFolder(game));
         var save = SaveFile.Load(Path.Combine(test, "SAVE6.DAT"))!;   // camp before map 2
         Assert.True(save.AtCamp);
-        Assert.Equal(2, save.MapNumber);
+        Assert.Equal(1, save.MapIndex);   // header 0x004: the camp's map (SMAP_002)
+        Assert.Equal(2, save.NextMap);    // header 0x010: the one after it
 
         var state = new GameState();
         save.ApplyTo(state);
@@ -66,13 +67,13 @@ public class SaveFileTests
 
         // rebuild it from the parsed state on a blank template for the roster part and compare every byte
         var bgm = System.Text.Encoding.GetEncoding(932).GetString(save.Raw, 0x53C, 48).TrimEnd('\0');
-        var again = SaveFile.ForCamp(state, db, save.MapNumber - 1, bgm, save.Raw);
+        var again = SaveFile.ForCamp(state, db, save.MapIndex, bgm, save.Raw);
         Assert.Equal(save.Raw, again.Raw);
 
         // and with the roster records rebuilt from nothing (positions aside, which a camp doesn't know)
         var blankRoster = (byte[])save.Raw.Clone();
         Array.Clear(blankRoster, 0x101D0, 50 * 640);
-        var fresh = SaveFile.ForCamp(state, db, save.MapNumber - 1, bgm, blankRoster);
+        var fresh = SaveFile.ForCamp(state, db, save.MapIndex, bgm, blankRoster);
         int[] skip = { 5, 6, 54, 55 };   // x, y and position before moving
         for (int u = 0; u < 2; u++)
             for (int k = 0; k < 160; k++)
@@ -102,9 +103,10 @@ public class SaveFileTests
             Unit = r.Unit, Side = r.Computer ? Srpg95.Rules.Side.Enemy : Srpg95.Rules.Side.Ally, MapObject = r.Object,
             ClassId = r.ClassId, Level = r.Level, Exp = r.Exp, Base = r.Base, Hp = r.Hp, Mp = r.Mp,
             Weapon = r.Weapon, Armor = r.Armor, Accessory = r.Accessory, X = r.X, Y = r.Y, Acted = r.Acted, Dead = !r.Alive,
+            Cleared = !r.Alive, Slot = r.Record, Guest = r.Guest,
         }).ToList();
         var bgm = System.Text.Encoding.GetEncoding(932).GetString(save.Raw, 0x53C, 48).TrimEnd('\0');
-        var again = SaveFile.ForBattle(state, db, save.MapNumber - 1, bgm, save.Phase, folder.MapPath(save.MapNumber - 1),
+        var again = SaveFile.ForBattle(state, db, save.MapIndex, bgm, save.Phase, folder.MapPath(save.MapIndex),
             units, save.FiredSlots(), save.Raw);
         var differing = new HashSet<string>();
         for (int i = 0; i < SaveFile.Size; i++)

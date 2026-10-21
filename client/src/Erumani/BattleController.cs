@@ -29,11 +29,8 @@ public sealed class BattleController
     readonly Database _db;
     readonly Ui.Ui _ui;
     readonly Textures _tex;
-    readonly Queue<(string Name, EventScript Script)> _events = new();
     readonly HashSet<string> _fired = new();
-    readonly HashSet<string> _switchArmed = new();
     State _state_ = State.Events;
-    State _afterShow = State.Idle;
     Point _cursor;
     BattleUnit? _sel;
     (int X, int Y) _selFrom;
@@ -48,16 +45,13 @@ public sealed class BattleController
     BattleUnit? _popupKill;
     string? _popup;
     int _popupFrames, _wait;
-    Queue<BattleUnit> _enemyQueue = new();
     AiPlan? _plan;
     BattleUnit? _statusUnit;
-    bool _victoryQueued;
 
     public MapOutcome Outcome { get; private set; }
     /// <summary>One-line state summary (screenshot mode writes it next to the PNG).</summary>
-    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} plan={_plan?.Unit.Name}/{_planWalking} queue={_enemyQueue.Count} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} wait={_wait} fired={string.Join(",", _fired)} scene={_scene?.DebugPhase}" +
+    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} events={_eventsRun} last={_runner.Name} [{_runner.DebugState}] plan={_plan?.Unit.Name}/{_planWalking} group={_group} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} wait={_wait} fired={string.Join(",", _fired)} scene={_scene?.DebugPhase}" +
         string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
-    public int? NextMap => _runner.NextMap;
     public bool EventRunning => _state_ == State.Events && _runner.Running;
     public bool Busy => _telop is not null || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene;
     /// <summary>Asks the game to play a sound effect (EFS wav).</summary>
@@ -138,10 +132,11 @@ public sealed class BattleController
     public void Resume(IEnumerable<(int Object, int Slot)> fired)
     {
         foreach (var (o, s) in fired) _fired.Add(MapObject.ScriptName(o, s));
-        _announcePlayer = false;
-        if (_s.Field.Alive.FirstOrDefault(u => u.Side == Side.Ally) is { } first) { _s.ScrollTo(first.X, first.Y); _cursor = new Point(first.X, first.Y); }
-        if (_s.Field.AllyPhase) _state_ = State.Idle;
-        else { _state_ = State.EnemyPhase; BeginEnemyPhase(); }
+        _opening = false;
+        if (_s.FirstPlayerUnit() is { } first) _cursor = new Point(first.X, first.Y);
+        _group = 1;
+        _plan = null;
+        _state_ = _s.Field.AllyPhase ? State.Idle : State.EnemyPhase;
     }
 
     void OpenFiles(bool save)
@@ -159,7 +154,7 @@ public sealed class BattleController
         if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
         int pick = _files.Navigate(i, MouseVirtual);
         if (pick < 0) return;
-        if (_saving) { SaveRequested?.Invoke(pick + 1); _afterShow = State.Idle; Popup(Word(53)); NextPopup(); }
+        if (_saving) { SaveRequested?.Invoke(pick + 1); Popup(Word(53)); NextPopup(); }
         else LoadRequested?.Invoke(pick + 1);
     }
 
@@ -170,7 +165,6 @@ public sealed class BattleController
     }
     int _telopFrames;
     Action? _afterTelop;
-    bool _announcePlayer;
 
     // T20a: captions slide in from the right and pause about a second in the middle.
     // Slide speed and the exit (out to the left) are guesses; COMPLETE!! stays in the middle.
@@ -225,149 +219,259 @@ public sealed class BattleController
 
     string Word(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
 
-    // ---------------- events ----------------
+    // ---------------- events (FORMAT_NOTES §16: FUN_0040c24c and the triggers around it) ----------------
+    //
+    // One event at a time, as the original runs them: when one ends, the checkpoint looks again from the top, so what
+    // an event changes decides what comes next. A fired flag per object slot keeps most kinds to a single run; switch,
+    // pass-by and stop-on slots have none and run again whenever their condition holds again (the colosseum and
+    // bonus-map menus, the 開発室 warp tiles rely on it).
+
+    /// <summary>The unit whose action just ended: the checkpoint looks at its contacts first.</summary>
+    BattleUnit? _actor;
+    /// <summary>Pass-by / stop-on marks on "Other" objects' slots: the unit that went over or stopped on the tile.</summary>
+    readonly Dictionary<(int Obj, int Slot), BattleUnit> _passMarks = new(), _stopMarks = new();
+    /// <summary>What continues once the running event ends (a fight waiting on its "before" events, the "after" ones...).</summary>
+    Action? _resume;
+    bool _opening;
+    /// <summary>The fight whose "after" (cond 11) events are still to be looked at: the attacker and the opposing units it met.</summary>
+    (BattleUnit Attacker, List<BattleUnit> Others)? _after;
 
     public void Start(string? firstEvent)
     {
-        if (_s.Map.Scripts.TryGetValue(firstEvent ?? "OPENING", out var opening)) _events.Enqueue((firstEvent ?? "OPENING", opening));
-        QueuePhaseEvents();
-        _state_ = State.Events;
-        _announcePlayer = true;
-    }
-
-    IEnumerable<(MapObject Obj, int Slot, EventSlot S)> Slots() =>
-        from o in _s.Map.Objects where o.InUse
-        from i in Enumerable.Range(1, 5)
-        let sl = o.Slots[i - 1] where sl.Condition != 0
-        select (o, i, sl);
-
-    BattleUnit? UnitOf(MapObject o) => _s.Field.Units.FirstOrDefault(u => u.MapObject == o.Index);
-
-    bool ObjectPresent(MapObject o) =>
-        o.Type == ObjectType.Other ? _s.OtherVisible(o) : UnitOf(o) is { Dead: false, Hidden: false };
-
-    void Queue(MapObject o, int slot, bool once = true)
-    {
-        string name = MapObject.ScriptName(o.Index, slot);
-        if (!_s.Map.Scripts.TryGetValue(name, out var sc)) return;
-        if (once && !_fired.Add(name)) return;
-        if (_events.Any(e => e.Name == name)) return;
-        _events.Enqueue((name, sc));
-    }
-
-    void QueuePhaseEvents()
-    {
-        foreach (var (o, i, sl) in Slots())
-            if (sl.Condition == 2 && sl.Turn == _s.Field.Phase && ObjectPresent(o)) Queue(o, i);
-        QueueSwitchEvents();
-    }
-
-    /// <summary>Switch-condition slots run when their switch is ON; again only after it went OFF (provisional).</summary>
-    void QueueSwitchEvents()
-    {
-        foreach (var (o, i, sl) in Slots())
-        {
-            if (sl.Condition != 1) continue;
-            string name = MapObject.ScriptName(o.Index, i);
-            bool on = sl.Switch >= 0 && sl.Switch < GameState.SwitchCount && _state.Switches[sl.Switch];
-            if (!on) { _switchArmed.Remove(name); continue; }
-            if (_switchArmed.Add(name) && ObjectPresent(o)) Queue(o, i, once: false);
-        }
-    }
-
-    bool Targets(EventSlot sl, BattleUnit by) => sl.TargetUnit < 0 || sl.TargetUnit == by.Unit;
-
-    void AfterMove(BattleUnit mover, IReadOnlyList<(int X, int Y)> path)
-    {
-        if (mover.Side != Side.Ally) return;
-        foreach (var (o, i, sl) in Slots())
-        {
-            if (!ObjectPresent(o) || !Targets(sl, mover)) continue;
-            if (o.Type == ObjectType.Other)
-            {
-                bool stops = (mover.X, mover.Y) == (o.X, o.Y);
-                bool passes = stops || path.Contains((o.X, o.Y));
-                if ((sl.Condition == 7 && stops) || (sl.Condition == 6 && passes)) Queue(o, i);
-            }
-            else if (sl.Condition == 4 && UnitOf(o) is { } t && Adjacent(mover, t)) Queue(o, i);
-        }
-    }
-
-    void AfterAction(BattleUnit actor)
-    {
-        if (actor.Side != Side.Ally) return;
-        foreach (var (o, i, sl) in Slots())
-            if (sl.Condition == 9 && ObjectPresent(o) && Targets(sl, actor) && UnitOf(o) is { } t && Adjacent(actor, t)) Queue(o, i);
+        _opening = true;
+        if (_s.Map.Scripts.TryGetValue(firstEvent ?? "OPENING", out var sc)) { StartScript(sc); return; }
+        OpeningDone(ran: false);
     }
 
     /// <summary>
-    /// First Attack (Before / After) slots fire for the first fight between the slot's unit and its target unit,
-    /// whichever side swings: most maps put them on the enemy, targeting the ally (e.g. SMAP_005), but map 1 puts
-    /// them on ルーティ and ジュナ, targeting ナス. Target "Nothing" (−1) = any opponent.
+    /// After the opening (FUN_0040d18c's end in state 0): the camera goes to the first player unit, then the PLAYER TURN
+    /// caption, and only then the checkpoint (turn-1 events). Without an opening the caption comes straight away.
     /// </summary>
-    void AttackTriggers(BattleUnit attacker, BattleUnit target, int condition)
+    void OpeningDone(bool ran)
     {
-        void Check(BattleUnit owner, BattleUnit other)
-        {
-            if (owner.MapObject < 0) return;
-            var o = _s.Map.Objects.First(x => x.Index == owner.MapObject);
-            for (int i = 1; i <= 5; i++)
-                if (o.Slots[i - 1].Condition == condition && Targets(o.Slots[i - 1], other)) Queue(o, i);
-        }
-        Check(target, attacker);
-        Check(attacker, target);
+        _opening = false;
+        if (ran && _s.FirstPlayerUnit() is { } u) _s.ShowTile(u.X, u.Y);
+        _state_ = State.Idle;
+        TurnTelop(1, () => { if (!CheckPoint()) _state_ = State.Idle; });
     }
 
-    /// <summary>Runs after the events queued by a "before" trigger (the fight they introduce).</summary>
-    Action? _afterEvents;
+    int _eventsRun;
 
-    /// <summary>Queues the "First Attack (Before)" events; if any, the fight waits until they have played.</summary>
-    bool BeforeFight(IEnumerable<(BattleUnit Attacker, BattleUnit Target)> pairs, Action fight)
+    void StartScript(EventScript sc)
     {
-        int queued = _events.Count;
-        foreach (var (a, d) in pairs) AttackTriggers(a, d, 10);
-        if (_events.Count == queued) return false;
-        _afterEvents = fight;
+        _eventsRun++;
+        _runner.Start(sc);
         _state_ = State.Events;
+    }
+
+    MapObject Obj(BattleUnit u) => _s.Map.Objects.First(x => x.Index == u.MapObject);
+
+    bool Fired(MapObject o, int slot) => _fired.Contains(MapObject.ScriptName(o.Index, slot));
+
+    /// <summary>FUN_0040cfe0: starts a slot's script; a slot without one doesn't count and the search goes on.</summary>
+    bool StartSlot(MapObject o, int slot, bool once)
+    {
+        string name = MapObject.ScriptName(o.Index, slot);
+        if (!_s.Map.Scripts.TryGetValue(name, out var sc)) return false;
+        if (once) _fired.Add(name);
+        StartScript(sc);
         return true;
     }
 
-    void DeathTriggers()
+    bool SwitchOn(int sw) => sw >= 0 && sw < GameState.SwitchCount && _state.Switches[sw];
+
+    /// <summary>
+    /// FUN_0040c24c, the checkpoint: (1) contacts after movement (cond 9), the unit that just acted first, then every
+    /// unit; (2) each shown "Other" object, by index; (3) each unit on the map, by record number, a fallen one being
+    /// taken off once its own slots had their chance; then (4) lost? (5) won? (victory slots, then COMPLETE!!).
+    /// Every object's slots are tried from 5 down to 1. Returns true when something took over.
+    /// </summary>
+    bool CheckPoint()
     {
-        foreach (var (o, i, sl) in Slots())
-            if (sl.Condition == 5 && UnitOf(o) is { Dead: true }) Queue(o, i);
+        if (_actor is { } a && Contact(a, 9)) return true;
+        foreach (var u in _s.InRecordOrder.ToList())
+            if (Contact(u, 9)) return true;
+        foreach (var o in _s.Others.Where(_s.OtherVisible).OrderBy(o => o.Index).ToList())
+            if (SlotEvents(o, null)) return true;
+        foreach (var u in _s.InRecordOrder.Where(u => !u.Cleared).ToList())
+        {
+            if (u.MapObject >= 0 && SlotEvents(Obj(u), u)) return true;
+            if (u.Dead) u.Cleared = true;
+        }
+        if (_s.Field.Lost()) { End(MapOutcome.GameOver); return true; }
+        if (!_s.Field.Won()) return false;
+        foreach (var o in _s.Others.Where(_s.OtherVisible).OrderBy(o => o.Index).ToList())
+            for (int slot = 5; slot >= 1; slot--)
+                if (o.Slots[slot - 1].Condition == 8 && !Fired(o, slot) && StartSlot(o, slot, once: true)) return true;
+        Win();
+        return true;
+    }
+
+    /// <summary>
+    /// FUN_0040c584: one object's slots, 5 down to 1. A unit's object first sets its Specific pattern's switch when the
+    /// unit stands on the pattern's tile. Switch (1) while ON; turn (2) on its phase; contact any time (4) while the
+    /// unit lives; death (5) once it has fallen; pass-by (6) / stop-on (7) on "Other" objects after a unit's move.
+    /// </summary>
+    bool SlotEvents(MapObject o, BattleUnit? u)
+    {
+        if (u is { Dead: false }) ApplySpecificSwitch(u);
+        for (int slot = 5; slot >= 1; slot--)
+        {
+            var sl = o.Slots[slot - 1];
+            if (sl.Condition == 0 || Fired(o, slot)) continue;
+            switch (sl.Condition)
+            {
+                case 1:
+                    if (SwitchOn(sl.Switch) && StartSlot(o, slot, once: false)) return true;
+                    break;
+                case 2:
+                    if (sl.Turn == _s.Field.Phase && StartSlot(o, slot, once: true)) return true;
+                    break;
+                case 4:
+                    if (u is { Dead: false } && InContact(u, sl.TargetUnit) && StartSlot(o, slot, once: true)) return true;
+                    break;
+                case 5:
+                    if (u is { Dead: true } && (sl.TargetUnit < 0 || sl.TargetUnit == u.KilledBy) && StartSlot(o, slot, once: true)) return true;
+                    break;
+                case 6:
+                case 7:
+                    var marks = sl.Condition == 6 ? _passMarks : _stopMarks;
+                    if (u is null && marks.TryGetValue((o.Index, slot), out var by) && MarkMatches(sl, by) && StartSlot(o, slot, once: false))
+                    {
+                        marks.Remove((o.Index, slot));
+                        return true;
+                    }
+                    break;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>A pass-by / stop-on slot fires for its target unit, or (target "Nothing") for any player unit that isn't neutral.</summary>
+    static bool MarkMatches(EventSlot sl, BattleUnit by) => sl.TargetUnit >= 0 ? by.Unit == sl.TargetUnit : by.Side == Side.Ally;
+
+    /// <summary>A Specific move pattern's "switch to apply" turns ON while the unit stands on the pattern's tile.</summary>
+    void ApplySpecificSwitch(BattleUnit u)
+    {
+        if (u.MovePatterns.Length == 0) return;
+        var p = EnemyAi.ActivePattern(u, _state.Switches);
+        if (p.Action != 2 || (u.X, u.Y) != (p.X, p.Y) || p.SwitchToApply < 0 || p.SwitchToApply >= GameState.SwitchCount) return;
+        _state.Switches[p.SwitchToApply] = true;
+        _s.RefreshSpawns();
+    }
+
+    /// <summary>
+    /// FUN_0040cad8: a living unit's contact slots (4 any time / 9 after movement), 5 down to 1, fire when a unit stands
+    /// next to it: its target unit, or (target "Nothing") a unit of the other side (allies and enemies against each
+    /// other; a neutral unit and the player's units count as each other's other side too).
+    /// </summary>
+    bool Contact(BattleUnit owner, int cond)
+    {
+        if (owner.Dead || owner.Hidden || owner.MapObject < 0) return false;
+        var o = Obj(owner);
+        for (int slot = 5; slot >= 1; slot--)
+        {
+            var sl = o.Slots[slot - 1];
+            if (sl.Condition == cond && !Fired(o, slot) && InContact(owner, sl.TargetUnit) && StartSlot(o, slot, once: true)) return true;
+        }
+        return false;
+    }
+
+    bool InContact(BattleUnit owner, int target) =>
+        _s.Field.Alive.Any(v => v != owner && Adjacent(v, owner) && (target >= 0 ? v.Unit == target : Opposed(owner, v)));
+
+    static bool Opposed(BattleUnit a, BattleUnit b)
+    {
+        bool ca = a.Side == Side.Enemy, cb = b.Side == Side.Enemy, na = a.Side == Side.Neutral, nb = b.Side == Side.Neutral;
+        return (ca != cb && !na && !nb) || (nb && !na && !ca) || (na && !nb && !cb);
+    }
+
+    /// <summary>
+    /// FUN_0040ecf0, a move's end (any side): "Other" objects on every tile walked onto get a pass-by mark, the one
+    /// on the final tile a stop-on mark (staying put marks both); then contacts (cond 4), the mover first. A contact
+    /// event ends the mover's action. Returns true if one started.
+    /// </summary>
+    bool MoveEnded(BattleUnit mover, IReadOnlyList<(int X, int Y)> path)
+    {
+        var tiles = path.Count > 0 ? path : new List<(int X, int Y)> { (mover.X, mover.Y) };
+        foreach (var t in tiles)
+            foreach (var o in _s.Others.Where(o => (o.X, o.Y) == t))
+                for (int slot = 1; slot <= 5; slot++) _passMarks[(o.Index, slot)] = mover;
+        foreach (var o in _s.Others.Where(o => (o.X, o.Y) == (mover.X, mover.Y)))
+            for (int slot = 1; slot <= 5; slot++) _stopMarks[(o.Index, slot)] = mover;
+        if (Contact(mover, 4) || _s.InRecordOrder.ToList().Any(u => Contact(u, 4)))
+        {
+            mover.Acted = true;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>The units a fight or spell meets on the other side, as the exe lists them for its first-attack slots (enemies vs. everyone else).</summary>
+    static List<BattleUnit> OpposingOf(BattleUnit actor, IEnumerable<BattleUnit> met) =>
+        met.Where(t => (t.Side == Side.Enemy) != (actor.Side == Side.Enemy)).Distinct().ToList();
+
+    /// <summary>
+    /// FUN_0040cd98: first-attack slots (10 before / 11 after) between the attacker and one unit it meets: the
+    /// attacker's own slots first, then the other's; a slot's owner must still be alive.
+    /// </summary>
+    bool AttackTrigger(BattleUnit attacker, BattleUnit other, int cond)
+    {
+        bool Check(BattleUnit owner, BattleUnit with)
+        {
+            if (owner.Dead || owner.Hp <= 0 || owner.MapObject < 0) return false;
+            var o = Obj(owner);
+            for (int slot = 5; slot >= 1; slot--)
+            {
+                var sl = o.Slots[slot - 1];
+                if (sl.Condition == cond && !Fired(o, slot) && (sl.TargetUnit < 0 || sl.TargetUnit == with.Unit) && StartSlot(o, slot, once: true)) return true;
+            }
+            return false;
+        }
+        return Check(attacker, other) || Check(other, attacker);
+    }
+
+    /// <summary>
+    /// FUN_00410388: before a fight or spell, its "before" events one at a time; the fight follows straight after
+    /// them (no checkpoint in between). Returns true if one started.
+    /// </summary>
+    bool BeforeFight(BattleUnit attacker, List<BattleUnit> met, Action fight)
+    {
+        foreach (var t in met)
+            if (AttackTrigger(attacker, t, 10)) { _resume = fight; return true; }
+        return false;
+    }
+
+    /// <summary>
+    /// FUN_0041093c / FUN_00410900: after a fight's EXP, its "after" events one at a time, then the checkpoint.
+    /// </summary>
+    void AfterFight()
+    {
+        if (_after is { } a)
+            foreach (var t in a.Others)
+                if (AttackTrigger(a.Attacker, t, 11)) { _resume = AfterFight; return; }
+        _after = null;
+        if (!CheckPoint()) Continue();
+    }
+
+    /// <summary>Back to whoever's phase it is once nothing else is going on.</summary>
+    void Continue()
+    {
+        _sel = null;
+        _state_ = _s.Field.AllyPhase ? State.Idle : State.EnemyPhase;
     }
 
     static bool Adjacent(BattleUnit a, BattleUnit b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) == 1;
 
-    /// <summary>After anything happens: deaths, switches, win/lose. Returns true if events were queued.</summary>
-    bool CheckPoint()
-    {
-        _s.UpdateVisibility();
-        DeathTriggers();
-        QueueSwitchEvents();
-        if (_s.Field.Won())
-        {
-            if (!_victoryQueued)
-            {
-                _victoryQueued = true;
-                // victory events run in reading order (help text)
-                foreach (var (o, i, sl) in Slots().Where(x => x.S.Condition == 8).OrderBy(x => x.Obj.Y).ThenBy(x => x.Obj.X))
-                    if (ObjectPresent(o) || o.Type == ObjectType.Other) Queue(o, i);
-            }
-            // death and victory events (e.g. the boss's last words) play out first
-            if (_events.Count == 0) { Win(); return true; }
-        }
-        if (_s.Field.Lost()) { End(MapOutcome.GameOver); return true; }
-        if (_events.Count > 0) { _state_ = State.Events; return true; }
-        return false;
-    }
-
+    /// <summary>
+    /// A map's end. Won: COMPLETE!! and the fanfare first. Lost through an event (map_complete "lose"): the original uses
+    /// it to move on quietly — the same way to the next map, the army saved, without the caption.
+    /// </summary>
     void End(MapOutcome o)
     {
         Outcome = o;
         _state_ = State.Ended;
-        if (o == MapOutcome.Won) _s.SaveRoster();
+        if (o is MapOutcome.Won or MapOutcome.Lost) _s.SaveRoster();
     }
 
     // ---------------- update ----------------
@@ -413,32 +517,13 @@ public sealed class BattleController
                 case EventEnd.GameOver: End(MapOutcome.GameOver); return;
                 case EventEnd.ReturnToTitle: End(MapOutcome.ReturnToTitle); return;
             }
-            _s.UpdateVisibility();
         }
-        if (_events.Count > 0)
-        {
-            var (_, sc) = _events.Dequeue();
-            _runner.Start(sc);
-            return;
-        }
-        if (_afterEvents is { } fight)
-        {
-            _afterEvents = null;
-            if (CheckPoint()) return;   // the events may have changed the situation (map won, unit gone)
-            fight();
-            return;
-        }
+        // the event is over: the opening hands over to the first turn; a waiting fight or "after" check goes on;
+        // otherwise the checkpoint looks again (FUN_0040d18c's end → state 2)
+        if (_opening) { OpeningDone(ran: true); return; }
+        if (_resume is { } r) { _resume = null; r(); return; }
         if (CheckPoint()) return;
-        if (_resumeMenu && _sel is { Dead: false }) { _resumeMenu = false; _state_ = State.ActionMenu; return; }
-        _resumeMenu = false;
-        if (_s.Field.AllyPhase)
-        {
-            _state_ = State.Idle;
-            if (_announcePlayer) { _announcePlayer = false; TurnTelop(1, () => { }); }
-            return;
-        }
-        _state_ = State.EnemyPhase;
-        if (_enemyQueue.Count == 0 && _plan is null) BeginEnemyPhase();
+        Continue();
     }
 
     void MoveCursor(BattleInput i)
@@ -457,6 +542,11 @@ public sealed class BattleController
 
     bool Pick(BattleInput i) => i.Confirm || i.Click;
 
+    /// <summary>
+    /// FUN_0040e658, the player's phase: a click on a unit that can act shows its movement range — the player's own
+    /// to move it, anyone else's just to look (FUN_0040ebcc) — while acted or sleeping units do nothing; a right
+    /// click (or the info key) opens the status window; a click on an empty tile opens the turn menu.
+    /// </summary>
     void UpdateIdle(BattleInput i)
     {
         MoveCursor(i);
@@ -464,22 +554,24 @@ public sealed class BattleController
         if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; _state_ = State.Status; return; }
         if (!Pick(i)) return;
         Sfx.Click();
-        if (u is { Side: Side.Ally, Acted: false })
-        {
-            _sel = u;
-            _selFrom = (u.X, u.Y);
-            _reach = _s.Field.Reachable(u);
-            _state_ = State.Selected;
-        }
-        else if (u is not null) { _statusUnit = u; _state_ = State.Status; }
-        else OpenTurnMenu();
+        if (u is null) { OpenTurnMenu(); return; }
+        if (u.Acted || u.SleepTurns > 0) return;
+        _sel = u;
+        _selFrom = (u.X, u.Y);
+        _reach = _s.Field.Reachable(u);
+        _viewOnly = u.Side != Side.Ally;
+        _state_ = State.Selected;
     }
+
+    /// <summary>The range shown belongs to an enemy or neutral unit: any click closes it.</summary>
+    bool _viewOnly;
 
     void UpdateSelected(BattleInput i)
     {
         MoveCursor(i);
         if (i.Cancel || i.RightClick) { _state_ = State.Idle; _sel = null; return; }
         if (!Pick(i) || _sel is null || _reach is null) return;
+        if (_viewOnly) { _state_ = State.Idle; _sel = null; return; }
         var t = (_cursor.X, _cursor.Y);
         if (!_reach.ContainsKey(t)) { _state_ = State.Idle; _sel = null; return; }
         var path = Battlefield.PathTo(_reach, t);
@@ -490,14 +582,14 @@ public sealed class BattleController
     }
     List<(int X, int Y)> _pendingPath = new();
 
+    /// <summary>The move is over: tile marks and contacts (a contact event ends the unit's action), else the action menu.</summary>
     void OpenActionMenu()
     {
-        AfterMove(_sel!, _pendingPath);
+        var u = _sel!;
+        if (MoveEnded(u, _pendingPath)) { _actor = u; _sel = null; return; }
         BuildActionMenu();
-        if (_events.Count > 0) { _resumeMenu = true; _state_ = State.Events; return; }
         _state_ = State.ActionMenu;
     }
-    bool _resumeMenu;
 
     void BuildActionMenu()
     {
@@ -524,9 +616,9 @@ public sealed class BattleController
         _state.Items.Where(kv => kv.Value > 0 && kv.Key >= 0 && kv.Key < _db.Items.Length)
             .Select(kv => _db.Items[kv.Key]).Where(it => _s.Field.CanUseInBattle(u, it)).OrderBy(it => it.Index);
 
-    bool ItemReady(BattleUnit u, Item it) => _s.Field.ItemSpell(it) is { } m
+    bool ItemReady(BattleUnit u, Item it) => it.Type is ItemType.StatUp or ItemType.ClassChange || (_s.Field.ItemSpell(it) is { } m
         ? _s.Field.SpellAims(u, m, u.X, u.Y).Any()
-        : _s.Field.MedicineTargets(u, it).Any();
+        : _s.Field.MedicineTargets(u, it).Any());
 
     /// <summary>Weapons the unit can switch to: the one in hand, then usable ones from the inventory.</summary>
     List<Item> WeaponChoices(BattleUnit u)
@@ -648,6 +740,7 @@ public sealed class BattleController
         int pick = ListNavigate(i);
         if (pick < 0) return;
         var it = _items[pick];
+        if (it.Type is ItemType.StatUp or ItemType.ClassChange) { DoSelfItem(_sel!, it); return; }
         if (_s.Field.ItemSpell(it) is { } m) { BeginAim(m, it); return; }
         _aimItem = it;
         if (it.S.MedRange <= 0) { DoMedicine(_sel!, it, _sel!); return; }   // range 0 = oneself
@@ -697,8 +790,10 @@ public sealed class BattleController
 
     void DoCast(BattleUnit caster, Magic m, (int X, int Y) aim, Item? item)
     {
-        var hostiles = _s.Field.SpellTargets(caster, m, aim.X, aim.Y).Where(t => Battlefield.Hostile(caster, t)).ToList();
-        if (BeforeFight(hostiles.Select(t => (caster, t)), () => DoCast(caster, m, aim, item))) return;
+        // the units the spell meets on the other side get their first-attack slots (FUN_00410388)
+        var met = OpposingOf(caster, _s.Field.SpellTargets(caster, m, aim.X, aim.Y));
+        if (BeforeFight(caster, met, () => DoCast(caster, m, aim, item))) return;
+        if (caster.Dead || caster.Hidden) { AfterFight(); return; }
         if (item is not null) { _state.AddItem(item.Index, -1); Popup($"{caster.Name}は{item.Name}{Word(58)}"); }   // "を使います"
         var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
         int mpBefore = caster.Mp;
@@ -709,8 +804,42 @@ public sealed class BattleController
             if (_scenes.Count > 0) _scenes.Peek().ShowMpBefore(caster, mpBefore);
         }
         if (!Quiet) ShowResult(caster, r, numbersShown: ShowScenes);
-        foreach (var t in hostiles) AttackTriggers(caster, t, 11);
+        _after = (caster, met);
         Finish(caster);
+    }
+
+    /// <summary>
+    /// A stat-up or class-change item used in battle, on the user (FUN_0040b074): stat-ups add their positive values
+    /// (max HP/MP up to 60, the rest 30, current HP/MP with them); a class change restarts the level at 1, moves the
+    /// stats by the classes' initial-stat difference and sends unusable equipment to the inventory.
+    /// </summary>
+    void DoSelfItem(BattleUnit user, Item it)
+    {
+        _state.AddItem(it.Index, -1);
+        Popup($"{user.Name}は{it.Name}{Word(58)}");
+        if (it.Type == ItemType.StatUp)
+        {
+            var (b, gained) = UnitChanges.StatUp(user.Base, it.S.StatUp);
+            Array.Copy(b, user.Base, 6);
+            user.Hp += gained[0];
+            user.Mp += gained[1];
+            int[] words = { 2, 3, 8, 9, 10, 11 };   // ＨＰ ＴＰ 攻撃補正値 特殊補正値 命中回避値 耐久力
+            for (int k = 0; k < 6; k++)
+                if (gained[k] > 0) Popup($"{Word(words[k])}{Word(64)}{Wide(gained[k])}{Word(65)}{Word(68)}");
+        }
+        else
+        {
+            int to = UnitChanges.ClassChangeTarget(it, user.ClassId);
+            var from = _db.Classes[Math.Clamp(user.ClassId, 0, _db.Classes.Length - 1)];
+            Array.Copy(UnitChanges.ClassChangeStats(user.Base, from, _db.Classes[to]), user.Base, 6);
+            user.ClassId = to;
+            user.Level = 1;
+            int Keep(int item) { if (item >= 0 && !UnitChanges.Usable(_db.Items[item], to)) { _state.AddItem(item, 1); return -1; } return item; }
+            (user.Weapon, user.Armor, user.Accessory) = (Keep(user.Weapon), Keep(user.Armor), Keep(user.Accessory));
+            Popup($"{user.Name}は{_db.Classes[to].Name}{Word(72)}");   // 「に昇格」
+        }
+        _after = null;
+        Finish(user);
     }
 
     void DoMedicine(BattleUnit user, Item it, BattleUnit target)
@@ -723,8 +852,8 @@ public sealed class BattleController
 
     void Finish(BattleUnit actor)
     {
-        _afterShow = actor.Side == Side.Ally ? State.Idle : State.EnemyPhase;
-        if (actor.Side == Side.Ally) AfterAction(actor);
+        actor.Acted = true;
+        _actor = actor;
         RunScenes();
     }
 
@@ -852,9 +981,11 @@ public sealed class BattleController
     {
         if (i.Cancel || i.RightClick)
         {
-            // undo the move (allowed until the unit acts)
+            // undo the move (allowed until the unit acts); every pass-by / stop-on mark goes too (FUN_0040f0ac)
             _sel!.X = _selFrom.X;
             _sel.Y = _selFrom.Y;
+            _passMarks.Clear();
+            _stopMarks.Clear();
             _state_ = State.Selected;
             return;
         }
@@ -981,7 +1112,10 @@ public sealed class BattleController
 
     void DoAttack(BattleUnit atk, BattleUnit def)
     {
-        if (BeforeFight(new[] { (atk, def) }, () => DoAttack(atk, def))) return;
+        var met = OpposingOf(atk, new[] { def });
+        if (BeforeFight(atk, met, () => DoAttack(atk, def))) return;
+        // a "before" event can change things (rarely): no fight if either side is gone
+        if (atk.Dead || atk.Hidden || def.Dead || def.Hidden) { atk.Acted = true; _actor = atk; AfterFight(); return; }
         var before = HpSnapshot(new[] { atk, def });
         var r = _s.Field.Attack(atk, def);
         if (Quiet) { }
@@ -1004,9 +1138,8 @@ public sealed class BattleController
                 if (st.Killed) _s.Ghosts.Add(st.Target);
             }
         ShowGrowth(r);
-        AttackTriggers(atk, def, 11);
-        _afterShow = atk.Side == Side.Ally ? State.Idle : State.EnemyPhase;
-        if (atk.Side == Side.Ally) AfterAction(atk);
+        _after = (atk, met);
+        _actor = atk;
         RunScenes();
     }
 
@@ -1025,10 +1158,10 @@ public sealed class BattleController
         if (_popups.Count > 0) { _popup = _popups.Dequeue(); _popupKill = _popupKills.Dequeue(); _popupSounds.Dequeue()?.Invoke(); _popupFrames = 0; _state_ = State.Showing; }
         else
         {
+            // everything shown: the fight's "after" events, then the checkpoint (FUN_0041093c)
             _popup = null;
             _sel = null;
-            if (CheckPoint()) return;
-            _state_ = _afterShow;
+            AfterFight();
         }
     }
 
@@ -1041,7 +1174,7 @@ public sealed class BattleController
     void FinishAction()
     {
         _sel!.Acted = true;
-        AfterAction(_sel);
+        _actor = _sel;
         _sel = null;
         if (CheckPoint()) return;
         _state_ = State.Idle;   // the turn only ends from the menu (T19a)
@@ -1076,56 +1209,56 @@ public sealed class BattleController
         }
     }
 
+    /// <summary>
+    /// ターン終了 (FUN_00410618 → FUN_00410b90): the phase changes (upkeep for the enemies), ENEMY TURN, then the
+    /// checkpoint before the first enemy moves.
+    /// </summary>
     void EndPlayerTurn()
     {
         _s.Field.NextPhase();          // enemy phase
         _state_ = State.EnemyPhase;
-        _enemyQueue.Clear();
         _plan = null;
-        TurnTelop(2, () =>
-        {
-            QueuePhaseEvents();
-            if (CheckPoint()) return;
-            BeginEnemyPhase();
-        });
+        _group = 1;
+        _wait = 0;
+        TurnTelop(2, () => { if (!CheckPoint()) _state_ = State.EnemyPhase; });
     }
 
     bool _planWalking;
-
-    void BeginEnemyPhase()
-    {
-        _enemyQueue = new Queue<BattleUnit>(_s.Field.Alive.Where(u => u.Side != Side.Ally && !u.Acted).OrderBy(u => u.MapObject));
-        _plan = null;
-        _wait = Quiet ? 0 : 20;
-    }
+    /// <summary>Who moves now in the computer's phase: 1 the enemies, then 2 the neutral units (FUN_0040e658).</summary>
+    int _group = 1;
 
     /// <summary>Option: the enemy phase resolves without walking, panning, battle scenes or result popups (events still play).</summary>
     public bool SkipEnemyTurn { get; set; }
     bool Quiet => SkipEnemyTurn && !_s.Field.AllyPhase;
 
+    /// <summary>
+    /// The computer's phase (FUN_0040e658): every enemy that hasn't acted, by record number, then every neutral unit;
+    /// each one's AI decides, the camera shows it while it walks, it acts, and the checkpoint runs before the next.
+    /// A unit with nothing to do is done at once (no camera). Then the camera goes to the first player unit and the
+    /// player's phase begins.
+    /// </summary>
     void UpdateEnemyPhase(BattleInput i)
     {
         if (_wait > 0) { _wait -= i.FastForward ? 4 : 1; return; }
         if (_plan is { } p)
         {
-            if (!_planWalking && Quiet)
-            {
-                (p.Unit.X, p.Unit.Y) = p.Destination;
-                _planWalking = true;
-            }
             if (!_planWalking)
             {
-                // the screen scrolls to each enemy before it moves (T19f), then follows it to its destination
-                if (_s.Panning) return;
-                _s.Walk(p.Unit, p.Path);
-                if (p.Path.Count > 0) _s.PanTo(p.Destination.X, p.Destination.Y);
+                if (Quiet) (p.Unit.X, p.Unit.Y) = p.Destination;
+                else
+                {
+                    _s.ShowTile(p.Unit.X, p.Unit.Y);
+                    _s.Walk(p.Unit, p.Path);
+                }
                 _planWalking = true;
                 return;
             }
-            if (_s.MovesRunning || _s.Panning) return;
-            if (p.SwitchToApply >= 0 && p.SwitchToApply < GameState.SwitchCount) _state.Switches[p.SwitchToApply] = true;
+            if (_s.MovesRunning) return;
             _plan = null;
             p.Unit.Acted = true;
+            _actor = p.Unit;
+            // the move's end: tile marks and contacts; a contact event takes the unit's action away
+            if (MoveEnded(p.Unit, p.Path)) return;
             if (p.Spell is { } sp && Battlefield.CanCast(p.Unit, sp) && _s.Field.SpellTargets(p.Unit, sp, p.Aim.X, p.Aim.Y).Count > 0)
             {
                 _cursor = new Point(p.Aim.X, p.Aim.Y);
@@ -1137,23 +1270,30 @@ public sealed class BattleController
             _wait = Quiet ? 0 : 8;
             return;
         }
-        while (_enemyQueue.Count > 0)
+        while (true)
         {
-            var u = _enemyQueue.Dequeue();
-            if (u.Dead || u.Hidden) continue;
-            _plan = EnemyAi.Plan(_s.Field, u, _state.Switches);
+            var u = _s.InRecordOrder.FirstOrDefault(u => !u.Dead && !u.Acted && (_group == 1 ? u.Side == Side.Enemy : u.Side == Side.Neutral));
+            if (u is null)
+            {
+                if (_group == 1) { _group = 2; continue; }
+                break;
+            }
+            var plan = EnemyAi.Plan(_s.Field, u, _state.Switches);
+            if (plan.Path.Count == 0 && plan.Target is null && plan.Spell is null)
+            {
+                u.Acted = true;   // nothing to do (FUN_0041589c returns at once)
+                continue;
+            }
+            _plan = plan;
             _planWalking = false;
-            if (!Quiet) _s.PanTo(u.X, u.Y);
             return;
         }
-        // enemy phase over: back to the player
+        // the computer's phase is over: the camera to the first player unit, the player's phase (upkeep), PLAYER TURN
+        _group = 1;
+        if (!Quiet && _s.FirstPlayerUnit() is { } f) _s.ShowTile(f.X, f.Y);
         _s.Field.NextPhase();
         _state_ = State.Idle;
-        TurnTelop(1, () =>
-        {
-            QueuePhaseEvents();
-            CheckPoint();
-        });
+        TurnTelop(1, () => { if (!CheckPoint()) _state_ = State.Idle; });
     }
 
     // ---------------- drawing ----------------

@@ -9,19 +9,17 @@ public sealed class GameState
     public int[] Variables { get; } = new int[VariableCount];
     public Dictionary<int, int> Items { get; } = new();
     public int Gold { get; set; }
-    /// <summary>Unit ids that have joined the player's army.</summary>
-    public HashSet<int> Party { get; } = new();
-    /// <summary>Per-unit overrides set by events (class change, equipment change).</summary>
-    public Dictionary<int, int> ClassOverride { get; } = new();
-    public Dictionary<int, int> WeaponOverride { get; } = new();
 
-    /// <summary>The player's army between maps (save-file roster, FORMAT_NOTES §14), by unit id.</summary>
-    public Dictionary<int, RosterEntry> Roster { get; } = new();
+    /// <summary>
+    /// The player's army between maps (save-file roster, FORMAT_NOTES §14), by unit id. The original sorts it by
+    /// unit id at every map's end (FUN_0041d5e4), so the camp and the deployment follow unit-id order.
+    /// </summary>
+    public SortedDictionary<int, RosterEntry> Roster { get; } = new();
 
-    /// <summary>Camps reached so far (save header 0x004).</summary>
-    public int CampCount { get; set; }
-    /// <summary>Units chosen to sortie on the next map (null = everyone in the roster).</summary>
-    public HashSet<int>? Sortie { get; set; }
+    /// <summary>The map being played or the camp's map, 0-based (save header 0x004).</summary>
+    public int MapIndex { get; set; }
+    /// <summary>The map that comes next, 0-based (save header 0x010): MapIndex + 1 unless a "Next Map" command set it.</summary>
+    public int NextMap { get; set; }
     /// <summary>Bytes of the last save loaded, the template for unknown fields when saving.</summary>
     public byte[]? LastSave { get; set; }
 
@@ -34,24 +32,28 @@ public sealed class GameState
         Array.Clear(Variables);
         Items.Clear();
         Gold = 0;
-        Party.Clear();
-        ClassOverride.Clear();
-        WeaponOverride.Clear();
         Roster.Clear();
-        CampCount = 0;
-        Sortie = null;
+        MapIndex = 0;
+        NextMap = 1;
         LastSave = null;
     }
 
+    /// <summary>FUN_0040add8 / FUN_0040ae68: at most 99 of an item and 100 different items; −1 is no item.</summary>
     public void AddItem(int item, int count)
     {
-        int n = Math.Max(0, ItemCount(item) + count);
+        if (item < 0) return;
+        if (!Items.ContainsKey(item) && count > 0 && Items.Count >= 100) return;
+        int n = Math.Clamp(ItemCount(item) + count, 0, 99);
         if (n == 0) Items.Remove(item); else Items[item] = n;
     }
 }
 
 /// <summary>A party member's persistent state between maps.</summary>
-public sealed record RosterEntry(int ClassId, int Level, int Exp, int[] Base, int Weapon, int Armor, int Accessory);
+public sealed record RosterEntry(int ClassId, int Level, int Exp, int[] Base, int Weapon, int Armor, int Accessory)
+{
+    /// <summary>出撃: goes onto the next map's start positions (record [13]).</summary>
+    public bool Sortie { get; init; } = true;
+}
 
 /// <summary>Battle-map state the event conditions can look at.</summary>
 public interface IMapContext
@@ -60,11 +62,22 @@ public interface IMapContext
     int Phase { get; }
     /// <summary>0 alive, 1 dead, 2 not present, 3 controlled by player, 4 controlled by computer.</summary>
     bool UnitState(int unit, int state);
-    void ScrollTo(int x, int y);
+    /// <summary>Scrolls (smoothly) until the tile is in the view's middle box; <see cref="Panning"/> while it moves.</summary>
+    void ShowTile(int x, int y);
+    bool Panning { get; }
     void QueueMove(int unit, IReadOnlyList<byte> steps);
-    /// <summary>Starts all queued moves; returns true while they are still animating.</summary>
+    /// <summary>Starts all queued moves; <see cref="MovesRunning"/> while they are still animating.</summary>
     void ExecuteMoves();
     bool MovesRunning { get; }
     /// <summary>Puts every moving unit at the end of its moves at once (cutscene skip).</summary>
     void FinishMoves();
+    /// <summary>A switch changed: units appear and leave by their objects' switch conditions (FUN_00409658).</summary>
+    void SwitchesChanged();
+    /// <summary>"Party possesses item" (FUN_00424e70): in the inventory, or equipped by a player-side unit on the map.</summary>
+    bool PartyHas(int item);
+    /// <summary>Event party commands, acting on the roster and on units of that id on the map (FORMAT_NOTES §16).</summary>
+    void PartyAdd(int unit);
+    void PartyRemove(int unit);
+    void ChangeClass(int unit, int cls);
+    void ChangeEquipment(int unit, int item);
 }

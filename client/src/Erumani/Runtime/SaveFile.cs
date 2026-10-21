@@ -38,10 +38,13 @@ public sealed class SaveFile
 
     /// <summary>1 when saved at a camp, 0 during a battle (inferred).</summary>
     public bool AtCamp => I32(0x000) == 1;
-    /// <summary>Map number, 1-based: the map being played, or the map the camp leads to.</summary>
-    public int MapNumber => I32(0x010);
+    /// <summary>The map being played, or the camp's map, 0-based (header 0x004: what FUN_004048ac loads).</summary>
+    public int MapIndex => I32(0x004);
+    /// <summary>The map after it, 0-based (header 0x010): MapIndex + 1 unless a "Next Map" command changed it.</summary>
+    public int NextMap => I32(0x010);
     public int Gold => I32(0x534);
-    public int CampCount => I32(0x004);
+    /// <summary>The music playing when the game was saved (header 0x53C, 48 bytes of Shift-JIS).</summary>
+    public string Bgm => Encoding.GetEncoding(932).GetString(Raw, 0x53C, 48).Split('\0')[0];
 
     /// <summary>Copies the save into the game state: switches, variables, inventory, gold and the roster.</summary>
     public void ApplyTo(GameState s)
@@ -57,9 +60,9 @@ public sealed class SaveFile
             if (item >= 0 && n > 0) s.AddItem(item, n);
         }
         s.Gold = Gold;
-        s.CampCount = CampCount;
+        s.MapIndex = MapIndex;
+        s.NextMap = NextMap;
         s.Roster.Clear();
-        s.Party.Clear();
         for (int i = 0; i < RosterUnits; i++)
         {
             int off = RosterOff + i * UnitSize;
@@ -67,8 +70,7 @@ public sealed class SaveFile
             int Rec(int k) => I32(off + k * 4);
             int unit = Rec(8);
             var bases = Enumerable.Range(20, 6).Select(Rec).ToArray();
-            s.Roster[unit] = new RosterEntry(Rec(9), Rec(10), Rec(11), bases, Rec(40), Rec(41), Rec(42));
-            s.Party.Add(unit);
+            s.Roster[unit] = new RosterEntry(Rec(9), Rec(10), Rec(11), bases, Rec(40), Rec(41), Rec(42)) { Sortie = Rec(13) != 0 };
         }
         s.LastSave = (byte[])Raw.Clone();
     }
@@ -78,12 +80,12 @@ public sealed class SaveFile
     /// roster records the client knows are written; everything else comes from <paramref name="template"/>
     /// (the slot's old file, else the last save loaded, else zeros).
     /// </summary>
-    public static SaveFile ForCamp(GameState s, Database db, int mapIndex, string bgm, byte[]? template)
+    public static SaveFile ForCamp(GameState s, Database db, int mapIndex, string bgm, byte[]? template, int? nextMap = null)
     {
         var f = new SaveFile(template is { Length: Size } ? (byte[])template.Clone() : new byte[Size]);
         f.I32(0x000, 1);
-        f.I32(0x004, s.CampCount);
-        f.I32(0x010, mapIndex + 1);
+        f.I32(0x004, mapIndex);
+        f.I32(0x010, nextMap ?? (mapIndex + 1) % 100);
         for (int i = 0; i < GameState.SwitchCount; i++) f.Raw[0x14 + i] = (byte)(s.Switches[i] ? 1 : 0);
         Array.Clear(f.Raw, 0x210, 0x320);
         int n = 0;
@@ -133,7 +135,7 @@ public sealed class SaveFile
         var (w, a) = (It(e.Weapon), It(e.Armor));
         var (str, mag, skl, sta, moveBonus) = Combat.WithAccessory(e.Base[2], e.Base[3], e.Base[4], e.Base[5], It(e.Accessory));
         var (rmin, rmax) = w is { Type: ItemType.Weapon } && w.S.WpnRange is >= 0 and < 8 ? Item.WeaponRanges[w.S.WpnRange] : (1, 1);
-        R(0, 1); R(1, 1); R(2, 0); R(3, 0); R(4, -1); R(7, -1); R(8, unit); R(9, e.ClassId); R(10, e.Level); R(11, e.Exp); R(13, 1);
+        R(0, 1); R(1, 1); R(2, 0); R(3, 0); R(4, -1); R(7, -1); R(8, unit); R(9, e.ClassId); R(10, e.Level); R(11, e.Exp); R(13, e.Sortie ? 1 : 0);
         R(19, cls.Movement + moveBonus);
         for (int i = 0; i < 6; i++) R(20 + i, e.Base[i]);
         R(26, e.Base[0]); R(27, e.Base[1]); R(28, str); R(29, mag); R(30, skl); R(31, sta);
@@ -165,9 +167,9 @@ public sealed class SaveFile
     /// <summary>Phase counter (ally turn t = 2t−1) at 0x20C.</summary>
     public int Phase => I32(0x20C);
 
-    /// <summary>One map-unit record of a battle save (§14 fields).</summary>
-    public sealed record SavedUnit(int Object, int Unit, int ClassId, int Level, int Exp, int[] Base, int Hp, int Mp,
-        int Weapon, int Armor, int Accessory, int X, int Y, bool Acted, bool Alive, bool Computer);
+    /// <summary>One map-unit record of a battle save (§14 fields): its record number, [3] computer, [14] guest, [15] neutral.</summary>
+    public sealed record SavedUnit(int Record, int Object, int Unit, int ClassId, int Level, int Exp, int[] Base, int Hp, int Mp,
+        int Weapon, int Armor, int Accessory, int X, int Y, bool Acted, bool Alive, bool Computer, bool Guest, bool Neutral);
 
     /// <summary>The map units of a battle save, in record order (records start at index 1).</summary>
     public IEnumerable<SavedUnit> MapUnitRecords()
@@ -177,10 +179,14 @@ public sealed class SaveFile
             int off = UnitOff + i * UnitSize;
             if (I32(off) == 0) continue;
             int R(int k) => I32(off + k * 4);
-            yield return new SavedUnit(R(7), R(8), R(9), R(10), R(11), Enumerable.Range(20, 6).Select(R).ToArray(), R(26), R(27),
-                R(40), R(41), R(42), R(5), R(6), R(2) != 0, R(1) != 0, R(3) != 0);
+            yield return new SavedUnit(i, R(7), R(8), R(9), R(10), R(11), Enumerable.Range(20, 6).Select(R).ToArray(), R(26), R(27),
+                R(40), R(41), R(42), R(5), R(6), R(2) != 0, R(1) != 0, R(3) != 0, R(14) != 0, R(15) != 0);
         }
     }
+
+    /// <summary>The object table copy: whether an object is still waiting to come onto the map, and where (in-use word, x, y).</summary>
+    public (bool Pending, int X, int Y) ObjectState(int obj) =>
+        (I32(ObjectsOff + obj * ObjectSize) != 0, I32(ObjectsOff + obj * ObjectSize + 4), I32(ObjectsOff + obj * ObjectSize + 8));
 
     /// <summary>Event slots that have fired: the object table copy keeps a 16-bit flag per slot at +124 + 2·(slot−1).</summary>
     public IEnumerable<(int Object, int Slot)> FiredSlots()
@@ -199,31 +205,39 @@ public sealed class SaveFile
     public static SaveFile ForBattle(GameState s, Database db, int mapIndex, string bgm, int phase, string mapPath,
         IEnumerable<Srpg95.Rules.BattleUnit> units, IEnumerable<(int Object, int Slot)> fired, byte[]? template)
     {
-        var f = ForCamp(s, db, mapIndex, bgm, template);
+        var f = ForCamp(s, db, mapIndex, bgm, template, s.NextMap);
         f.I32(0x000, 0);
         f.I32(0x20C, phase);
         Array.Clear(f.Raw, UnitOff, MapUnits * UnitSize);
-        var ordered = units.Where(u => !u.Hidden).OrderBy(u => u.MapObject < 0 ? 0 : 1).ThenBy(u => u.MapObject).ToList();
-        int index = 1, deployed = 0;
-        foreach (var u in ordered.Take(MapUnits - 1))
+        var all = units.ToList();
+        var onMap = all.Where(u => !u.Hidden && u.Slot is > 0 and < MapUnits).OrderBy(u => u.Slot).ToList();
+        var rosterOrder = s.Roster.Keys.ToList();
+        foreach (var u in onMap)
         {
-            int off = UnitOff + index++ * UnitSize;
+            // each unit at its own record number, as the exe keeps them
+            int off = UnitOff + u.Slot * UnitSize;
             WriteUnit(f, off, db, u.Unit, new RosterEntry(u.ClassId, u.Level, u.Exp, u.Base, u.Weapon, u.Armor, u.Accessory), keepBattleState: false);
             void R(int k, int v) => f.I32(off + k * 4, v);
-            R(1, u.Dead ? 0 : 1); R(2, u.Acted ? 1 : 0); R(3, u.Side == Srpg95.Rules.Side.Ally ? 0 : 1);
+            R(1, u.Dead && u.Cleared ? 0 : 1); R(2, u.Acted ? 1 : 0); R(3, u.Side == Srpg95.Rules.Side.Enemy ? 1 : 0);
             R(5, u.X); R(6, u.Y); R(7, u.MapObject); R(13, u.MapObject < 0 ? 1 : 0);
-            R(26, Math.Max(0, u.Hp)); R(27, u.Mp); R(36, u.PowerUp);
+            R(14, u.Guest ? 1 : 0); R(15, u.Side == Srpg95.Rules.Side.Neutral ? 1 : 0); R(16, u.Unattackable ? 1 : 0);
+            R(26, Math.Max(0, u.Hp)); R(27, u.Mp); R(36, u.PowerUp); R(37, u.DefUp); R(38, u.MdefUp); R(45, u.PoisonTurns); R(46, u.SleepTurns);
             R(54, u.X); R(55, u.Y);
-            // [4]: deployment slot of a unit brought from the army (ルーティ 0, ジュナ 1 in SAVE3), else −1
-            R(4, u.MapObject < 0 ? deployed++ : -1);
+            // [4]: the unit's roster index when it came from the army (ルーティ 0, ジュナ 1 in SAVE3), else −1
+            R(4, rosterOrder.IndexOf(u.Unit) is var ri && ri >= 0 && (u.MapObject < 0 || u.Side == Srpg95.Rules.Side.Ally) ? ri : -1);
             // [50] movement left: computer units only get theirs back on their own phase (0 during the player's, SAVE3)
             if (u.Side != Srpg95.Rules.Side.Ally && phase % 2 == 1) R(50, 0);
         }
-        // object table: the map's own, spawned objects marked, fired slots flagged
+        // object table: the map's own; objects whose unit is on the map are consumed (in-use 0), and an object whose
+        // unit left the map waits where the unit stood; fired slots flagged
         var smap = File.ReadAllBytes(mapPath);
         Array.Copy(smap, 0x1130, f.Raw, ObjectsOff, 100 * ObjectSize);
-        foreach (var u in ordered.Where(u => u.MapObject >= 0))
-            f.I32(ObjectsOff + u.MapObject * ObjectSize, 0);
+        foreach (var u in all.Where(u => u.MapObject is >= 0 and < 100))
+        {
+            int o = ObjectsOff + u.MapObject * ObjectSize;
+            if (!u.Hidden) f.I32(o, 0);
+            else if (u.Appeared) { f.I32(o + 4, u.X); f.I32(o + 8, u.Y); }
+        }
         foreach (var (o, slot) in fired)
             if (o is >= 0 and < 100 && slot is >= 1 and <= 5)
                 BinaryPrimitives.WriteInt16LittleEndian(f.Raw.AsSpan(ObjectsOff + o * ObjectSize + FiredOff + (slot - 1) * 2), 1);

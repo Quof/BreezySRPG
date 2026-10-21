@@ -27,12 +27,23 @@ public sealed class BattleUnit
     public int Facing { get; set; }
     public bool Acted { get; set; }
     public bool Dead { get; set; }
-    /// <summary>Not on the map right now (its object's switch condition is OFF).</summary>
+    /// <summary>The unit id of whoever defeated it (record [56] keeps the killer), for "dies" slots that name a target.</summary>
+    public int KilledBy { get; set; } = -1;
+    /// <summary>
+    /// A fallen unit the event checkpoint has taken off the map (the exe clears record [1] only after the unit's
+    /// own events had their chance, FUN_0040c24c): until then it still counts as present for event conditions.
+    /// </summary>
+    public bool Cleared { get; set; }
+    /// <summary>Not on the map right now (its object's switch condition is OFF, or it hasn't appeared yet).</summary>
     public bool Hidden { get; set; }
+    /// <summary>Has been on the map before (a unit that disappears and comes back starts afresh, FUN_00409658).</summary>
+    public bool Appeared { get; set; }
+    /// <summary>The unit's record number on the map (1–99): the order the exe walks units in. 0 while not on the map.</summary>
+    public int Slot { get; set; }
     /// <summary>Developer option (--place): stays on the map whatever its object's switch condition says.</summary>
     public bool ForceShown { get; set; }
     public bool Leader { get; init; }
-    public bool Guest { get; init; }
+    public bool Guest { get; set; }
     public bool Unattackable { get; init; }
     public int PowerUp { get; set; }
     public int DefUp { get; set; }

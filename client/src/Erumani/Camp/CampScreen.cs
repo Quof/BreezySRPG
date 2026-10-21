@@ -141,13 +141,11 @@ public sealed class CampScreen
         _field = new Battlefield(next, db, null);
         _menu.Set(new[] { W(24), W(25), W(26), W(27), W(21), W(22), W(23) },   // WORD.DAT 24-27, 21-23
             new[] { true, _state.Roster.Count > 0, next.ShopItems.Length > 0, true, true, true, true });
-        // who sorties: everyone until changed here, up to the map's start positions (units the map places come anyway)
-        _state.Sortie = new HashSet<int>(_state.Roster.Keys.Take(SortieMax));
     }
 
     string W(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
     string Gold(int n) => $"{n}{W(31)}";   // shown literally: 「60,肉」 (T23)
-    int SortieMax => Math.Max(1, _next.StartPositions.Length);
+    int SortieMax => _next.StartPositions.Length;
 
     BattleUnit Unit(int id)
     {
@@ -253,18 +251,23 @@ public sealed class CampScreen
     void RefreshUnits()
     {
         _units.Set(_unitIds.Select(id => _db.Units[id].Name).ToArray());
-        _units.Columns = new[] { _unitIds.Select(id => _state.Sortie!.Contains(id) ? W(39) : W(40)).ToArray() };   // 出撃 / ――
+        _units.Columns = new[] { _unitIds.Select(id => _state.Roster[id].Sortie ? W(39) : W(40)).ToArray() };   // 出撃 / ――
     }
 
     bool SortieColumnHit(Point mouse) =>
         Enumerable.Range(0, _unitIds.Count).Any(k => _units.Row(k).Contains(mouse) && mouse.X >= _units.Rect.X + 130);
 
-    /// <summary>出撃 ↔ ――, up to the map's start positions; locked when the map disables party changes (guess).</summary>
+    /// <summary>
+    /// 出撃 ↔ ―― (FUN_0041d3f4's camp code): on only while fewer than the map's start positions are; a unit from the
+    /// map's character list can't be taken off; nothing changes when the map disables party changes.
+    /// </summary>
     void ToggleSortie()
     {
         if (_next.DisablePartyChanges || _unitIds.Count == 0) return;
         int id = _unitIds[_units.Index];
-        if (!_state.Sortie!.Remove(id) && _state.Sortie.Count < SortieMax) _state.Sortie.Add(id);
+        var e = _state.Roster[id];
+        if (!e.Sortie && _state.Roster.Values.Count(x => x.Sortie) < SortieMax) _state.Roster[id] = e with { Sortie = true };
+        else if (e.Sortie && !_next.CharacterList.Contains(id)) _state.Roster[id] = e with { Sortie = false };
         RefreshUnits();
     }
 
@@ -275,8 +278,14 @@ public sealed class CampScreen
     IEnumerable<int> EquipChoices(int slot, RosterEntry e) =>
         _state.Items.Keys.Where(id => _db.Items[id].Type == SlotTypes[slot] && Usable(_db.Items[id], e.ClassId)).Order();
 
+    /// <summary>
+    /// 道具を使う's items (the exe's camp list): stat-up items the class may use, and class-change items whose
+    /// from → to pairs include the class, once the unit has the item's level.
+    /// </summary>
     IEnumerable<int> UseChoices(RosterEntry e) =>
-        _state.Items.Keys.Where(id => _db.Items[id].Type is ItemType.StatUp or ItemType.ClassChange && Usable(_db.Items[id], e.ClassId)).Order();
+        _state.Items.Keys.Where(id => _db.Items[id] is var it &&
+            (it.Type == ItemType.StatUp && Usable(it, e.ClassId) ||
+             it.Type == ItemType.ClassChange && e.Level >= it.S.ClassChangeLevel && UnitChanges.ClassChangeTarget(it, e.ClassId) >= 0)).Order();
 
     void OpenCommands()
     {
@@ -343,18 +352,7 @@ public sealed class CampScreen
         _mode = Mode.UseItem;
     }
 
-    bool ItemWorks(int id, RosterEntry e)
-    {
-        var it = _db.Items[id];
-        return it.Type == ItemType.StatUp || (e.Level >= it.S.ClassChangeLevel && ClassChangeTarget(it, e.ClassId) >= 0);
-    }
-
-    static int ClassChangeTarget(Item it, int from)
-    {
-        for (int k = 0; k + 1 < it.S.ClassChange.Length; k += 2)
-            if (it.S.ClassChange[k] == from && it.S.ClassChange[k + 1] >= 0) return it.S.ClassChange[k + 1];
-        return -1;
-    }
+    bool ItemWorks(int id, RosterEntry e) => UseChoices(e).Contains(id);
 
     void UseItem(int id)
     {
@@ -363,16 +361,16 @@ public sealed class CampScreen
         string name = _db.Units[_unit].Name;
         if (it.Type == ItemType.StatUp)
         {
-            var b = (int[])e.Base.Clone();
-            for (int k = 0; k < 6; k++) b[k] += it.S.StatUp[k];
+            // FUN_0040b8f0: positive values only, max HP/MP up to 60, the rest up to 30
+            var (b, _) = UnitChanges.StatUp(e.Base, it.S.StatUp);
             _state.Roster[_unit] = e with { Base = b };
             Say($"{name}{W(64)}{W(68)}");   // guess: 「〜が上昇した」
         }
         else
         {
-            int to = ClassChangeTarget(it, e.ClassId);
-            _state.Roster[_unit] = e with { ClassId = to };
-            Say($"{name}は{_db.Classes[to].Name}{W(72)}");   // 「に昇格」
+            // FUN_0040be00 → FUN_0040bb0c: the new class from level 1, the initial-stat difference, unusable gear back
+            int to = Party.UseClassChangeItem(_state, _db, _unit, it);
+            if (to >= 0) Say($"{name}は{_db.Classes[to].Name}{W(72)}");   // 「に昇格」
         }
         _state.AddItem(id, -1);
         OpenUseItem();
@@ -514,7 +512,7 @@ public sealed class CampScreen
         var r = new Rectangle(432, 40, 112, 48);
         _ui.Panel(sb, r);
         if (_ui.SmallText.Get(W(38)) is { } a) sb.Draw(a, new Vector2(r.X + 12, r.Y + 8), Ui.Ui.PanelText);   // 出撃ユニット数
-        if (_ui.SmallText.Get($"{_state.Sortie!.Count}／{SortieMax,2}") is { } b) sb.Draw(b, new Vector2(r.Right - 12 - b.Width, r.Y + 26), Ui.Ui.PanelText);
+        if (_ui.SmallText.Get($"{_state.Roster.Values.Count(e => e.Sortie)}／{SortieMax,2}") is { } b) sb.Draw(b, new Vector2(r.Right - 12 - b.Width, r.Y + 26), Ui.Ui.PanelText);
     }
 
     /// <summary>Description window 480x48 at (80,32): "name：" and the text (items and spells).</summary>

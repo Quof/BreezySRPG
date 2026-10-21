@@ -134,7 +134,7 @@ public class RulesTests
         for (int turn = 0; turn < 3; turn++)
         {
             f.NextPhase();                         // enemy phase starts
-            acted.Add(enemy.Acted);                // Acted at phase start = can't move
+            acted.Add(enemy.SleepTurns > 0);       // still asleep at its phase start = can't move (FUN_00410b90)
             f.NextPhase();                         // back to the allies
         }
         Assert.Equal(new[] { true, true, false }, acted);

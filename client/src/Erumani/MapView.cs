@@ -13,6 +13,8 @@ public sealed class UnitVisual
     public int Facing;
     public Queue<byte> Pending { get; } = new();
     public Queue<byte> Running { get; } = new();
+    /// <summary>The running steps come from an event's move command: a step onto an occupied or impassable tile is skipped.</summary>
+    public bool Scripted;
     public Vector2 Offset;
     public Vector2 StepFrom;   // pixel offset at the start of the current step
     public int StepFrames;
@@ -22,7 +24,10 @@ public sealed class UnitVisual
 public sealed class MapSession : IMapContext
 {
     public const int Tile = Chipset.ChipSize;   // 32 px
-    const int FramesPerTile = 8;
+    /// <summary>A step takes 8 ticks of the original's 30 Hz loop (FUN_0040ecf0, FUN_00424a68): 16 frames here.</summary>
+    const int FramesPerTile = 16;
+    /// <summary>The view in tiles: 608×448 px.</summary>
+    const int ViewTilesX = 19, ViewTilesY = 14;
 
     readonly Database _db;
     readonly GameState _state;
@@ -42,20 +47,29 @@ public sealed class MapSession : IMapContext
     public int PixelWidth => Map.Width * Tile;
     public int PixelHeight => Map.Height * Tile;
 
-    public MapSession(MapData map, Database db, GameState state, Textures tex, byte[]? chipTerrain)
+    /// <summary>
+    /// A map as FUN_0041dc34 sets it up: the army first (roster units with 出撃, in roster order, each on the first
+    /// start position nobody holds yet), then the map's objects in index order wherever their switch condition holds
+    /// and their tile is free; the camera starts on the first player unit.
+    /// </summary>
+    public MapSession(MapData map, Database db, GameState state, Textures tex, byte[]? chipTerrain, bool deploy = true)
     {
         Map = map;
         _db = db;
         _state = state;
         _tex = tex;
         _chips = tex.Get($"MAPC_{map.Tileset:000}.BMP", transparent: false);
-        Field = new Battlefield(map, db, chipTerrain);
+        Field = new Battlefield(map, db, chipTerrain) { ChipOverride = OtherChipAt };
         Others = map.Objects.Where(o => o.InUse && o.Type == ObjectType.Other).ToList();
-        foreach (var o in map.Objects.Where(o => o.InUse && o.Type != ObjectType.Other))
-            Add(CreateUnit(o.Unit, o.Type switch { ObjectType.Ally => Side.Ally, ObjectType.Enemy => Side.Enemy, _ => Side.Neutral },
-                o.X, o.Y, o));
-        DeployRoster();
-        UpdateVisibility();
+        if (deploy) DeployRoster();
+        foreach (var o in map.Objects.Where(o => o.InUse && o.Type != ObjectType.Other).OrderBy(o => o.Index))
+        {
+            var u = ObjectUnit(o);
+            u.Hidden = true;
+            Add(u);
+        }
+        RefreshSpawns();
+        if (FirstPlayerUnit() is { } first) StartCamera(first.X, first.Y);
     }
 
     void Add(BattleUnit u)
@@ -64,56 +78,107 @@ public sealed class MapSession : IMapContext
         Visuals[u] = new UnitVisual();
     }
 
-    /// <summary>Builds a unit from UNIT.DAT, or from the roster for party members (allies only).</summary>
-    BattleUnit CreateUnit(int unitId, Side side, int x, int y, MapObject? o)
+    MapObject Object(int index) => Map.Objects.First(o => o.Index == index);
+
+    bool SwitchOn(int sw) => sw >= 0 && sw < GameState.SwitchCount && _state.Switches[sw];
+
+    /// <summary>
+    /// A map object's unit, always from UNIT.DAT (FUN_00409658): level, stats and class as listed, and each piece of
+    /// equipment only if it is of the right type and the class may use it.
+    /// </summary>
+    BattleUnit ObjectUnit(MapObject o)
     {
-        var u = _db.Units[Math.Clamp(unitId, 0, _db.Units.Length - 1)];
-        var r = side == Side.Ally && _state.Roster.TryGetValue(unitId, out var e) ? e : null;
-        var baseStats = (int[])(r?.Base ?? u.BaseStats).Clone();
+        var u = _db.Units[Math.Clamp(o.Unit, 0, _db.Units.Length - 1)];
+        var (w, a, x) = UnitChanges.StartingEquipment(_db, u);
         return new BattleUnit
         {
-            Unit = unitId, Side = side, MapObject = o?.Index ?? -1, Name = u.Name,
-            ClassId = _state.ClassOverride.TryGetValue(unitId, out var c) ? c : r?.ClassId ?? u.ClassId,
-            Level = r?.Level ?? u.Level, Exp = r?.Exp ?? u.Exp, Base = baseStats, Growth = u.GrowthPct,
-            Hp = baseStats[0], Mp = baseStats[1],
-            Weapon = _state.WeaponOverride.TryGetValue(unitId, out var w) ? w : r?.Weapon ?? u.Weapon,
-            Armor = r?.Armor ?? u.Armor, Accessory = r?.Accessory ?? u.Accessory,
-            X = x, Y = y, Leader = o?.Leader ?? false, Guest = o?.Guest ?? false, Unattackable = o?.Unattackable ?? false,
-            MovePatterns = o?.MovePatterns ?? Array.Empty<MovePattern>(),
+            Unit = o.Unit, Side = SideOf(o), MapObject = o.Index, Name = u.Name,
+            ClassId = u.ClassId, Level = u.Level, Exp = u.Exp, Base = (int[])u.BaseStats.Clone(), Growth = u.GrowthPct,
+            Hp = u.BaseStats[0], Mp = u.BaseStats[1], Weapon = w, Armor = a, Accessory = x,
+            X = o.X, Y = o.Y, Leader = o.Leader, Guest = o.Guest, Unattackable = o.Unattackable,
+            MovePatterns = o.MovePatterns,
         };
     }
 
-    /// <summary>
-    /// Party members not placed by the map itself go onto the map's start positions, in roster
-    /// order (provisional: the camp's sortie screen chooses this in the original).
-    /// </summary>
+    static Side SideOf(MapObject o) => o.Type switch { ObjectType.Ally => Side.Ally, ObjectType.Enemy => Side.Enemy, _ => Side.Neutral };
+
+    /// <summary>A unit coming back after leaving the map starts afresh from UNIT.DAT, as the exe rebuilds its record.</summary>
+    void Respawn(BattleUnit u, MapObject o)
+    {
+        var fresh = ObjectUnit(o);
+        u.Side = fresh.Side;
+        u.ClassId = fresh.ClassId;
+        u.Level = fresh.Level;
+        u.Exp = fresh.Exp;
+        Array.Copy(fresh.Base, u.Base, 6);
+        (u.Hp, u.Mp, u.Weapon, u.Armor, u.Accessory) = (fresh.Hp, fresh.Mp, fresh.Weapon, fresh.Armor, fresh.Accessory);
+        u.Guest = o.Guest;
+        (u.PowerUp, u.DefUp, u.MdefUp, u.PoisonTurns, u.SleepTurns, u.Acted) = (0, 0, 0, 0, 0, false);
+    }
+
+    /// <summary>The army: roster units with 出撃, in roster order, on the first start position no one holds yet.</summary>
     void DeployRoster()
     {
-        var placed = Field.Units.Select(u => u.Unit).ToHashSet();
-        var free = new Queue<(int X, int Y)>(Map.StartPositions.Where(p => Field.UnitAt(p.X, p.Y) is null));
-        foreach (var id in _state.Roster.Keys)
+        foreach (var (id, e) in _state.Roster)
         {
-            if (placed.Contains(id) || free.Count == 0) continue;
-            if (_state.Sortie is { } chosen && !chosen.Contains(id)) continue;   // left at camp
-            var p = free.Dequeue();
-            Add(CreateUnit(id, Side.Ally, p.X, p.Y, null));
+            if (!e.Sortie) continue;
+            var pos = Map.StartPositions.Where(p => Field.UnitAt(p.X, p.Y) is null).Select(p => ((int X, int Y)?)p).FirstOrDefault();
+            if (pos is not { } p) continue;
+            var u = _db.Units[Math.Clamp(id, 0, _db.Units.Length - 1)];
+            var unit = new BattleUnit
+            {
+                Unit = id, Side = Side.Ally, Name = u.Name, ClassId = e.ClassId, Level = e.Level, Exp = e.Exp,
+                Base = (int[])e.Base.Clone(), Growth = u.GrowthPct, Hp = e.Base[0], Mp = e.Base[1],
+                Weapon = e.Weapon, Armor = e.Armor, Accessory = e.Accessory, X = p.X, Y = p.Y, Appeared = true,
+            };
+            unit.Slot = FreeSlot();
+            Add(unit);
         }
     }
 
-    /// <summary>Objects with a switch condition are only on the map while that switch is ON.</summary>
-    public void UpdateVisibility()
+    /// <summary>The lowest record number no unit on the map holds (fallen units keep theirs).</summary>
+    int FreeSlot()
     {
-        foreach (var u in Field.Units)
-        {
-            if (u.MapObject < 0 || u.ForceShown) { if (u.ForceShown) u.Hidden = false; continue; }
-            var o = Map.Objects.First(x => x.Index == u.MapObject);
-            u.Hidden = o.SwitchCondition >= 0 && o.SwitchCondition < GameState.SwitchCount && !_state.Switches[o.SwitchCondition];
-        }
+        var used = Field.Units.Where(u => !u.Hidden && u.Slot > 0).Select(u => u.Slot).ToHashSet();
+        int s = 1;
+        while (used.Contains(s)) s++;
+        return s;
     }
 
     /// <summary>
-    /// Puts a battle save's units on the map: units the save recorded replace the map's own (by object index); army
-    /// units come from their records; objects never spawned stay as the map defines them (hidden by their switch).
+    /// FUN_00409658, run when a map starts and whenever a switch changes: units whose object's switch condition is now
+    /// OFF leave the map (the object waits where they stood); objects whose condition holds come onto the map, in index
+    /// order, if nobody alive stands on their tile — a unit that had been on the map before starts afresh.
+    /// </summary>
+    public void RefreshSpawns()
+    {
+        foreach (var u in Field.Units.Where(u => !u.Hidden && u.MapObject >= 0 && !u.ForceShown).ToList())
+            if (Object(u.MapObject).SwitchCondition is var sc and >= 0 && !SwitchOn(sc))
+            {
+                u.Hidden = true;
+                u.Slot = 0;
+                Ghosts.Remove(u);
+            }
+        foreach (var u in Field.Units.Where(u => u.Hidden && u.MapObject >= 0).OrderBy(u => u.MapObject).ToList())
+        {
+            var o = Object(u.MapObject);
+            if (o.SwitchCondition >= 0 && !SwitchOn(o.SwitchCondition)) continue;
+            if (Field.UnitAt(u.X, u.Y) is not null) continue;
+            if (u.Appeared) Respawn(u, o);
+            (u.Hidden, u.Appeared, u.Dead, u.Cleared) = (false, true, false, false);
+            u.Slot = FreeSlot();
+        }
+    }
+
+    /// <summary>Units on the map in record order (the order the exe walks them in), fallen ones included.</summary>
+    public IEnumerable<BattleUnit> InRecordOrder => Field.Units.Where(u => !u.Hidden).OrderBy(u => u.Slot);
+
+    /// <summary>The first player-side unit (ally or neutral) in record order, as the camera looks for it.</summary>
+    public BattleUnit? FirstPlayerUnit() => InRecordOrder.FirstOrDefault(u => !u.Dead && u.Side != Side.Enemy);
+
+    /// <summary>
+    /// Puts a battle save's units on the map: army units come from their records; units of map objects replace the
+    /// object's own (by object index); objects the save never had on the map stay pending (hidden by their switch).
     /// </summary>
     public void RestoreFrom(SaveFile save)
     {
@@ -122,13 +187,21 @@ public sealed class MapSession : IMapContext
             Field.Units.Remove(u);
             Visuals.Remove(u);
         }
+        foreach (var u in Field.Units)
+        {
+            (u.Hidden, u.Slot) = (true, 0);
+            // an object still waiting to come on: where the save's object table has it
+            var (pending, ox, oy) = save.ObjectState(u.MapObject);
+            if (pending) { u.Appeared = (ox, oy) != (Object(u.MapObject).X, Object(u.MapObject).Y); (u.X, u.Y) = (ox, oy); }
+        }
         foreach (var r in save.MapUnitRecords())
         {
             var u = r.Object >= 0 ? Field.Units.FirstOrDefault(x => x.MapObject == r.Object) : null;
             if (u is null)
             {
                 if (r.Object >= 0) continue;
-                u = CreateUnit(r.Unit, Side.Ally, r.X, r.Y, null);
+                var d = _db.Units[Math.Clamp(r.Unit, 0, _db.Units.Length - 1)];
+                u = new BattleUnit { Unit = r.Unit, Side = Side.Ally, Name = d.Name, Growth = d.GrowthPct, Base = new int[6] };
                 Add(u);
             }
             u.ClassId = r.ClassId;
@@ -136,56 +209,95 @@ public sealed class MapSession : IMapContext
             u.Exp = r.Exp;
             Array.Copy(r.Base, u.Base, 6);
             (u.Hp, u.Mp, u.Weapon, u.Armor, u.Accessory) = (r.Hp, r.Mp, r.Weapon, r.Armor, r.Accessory);
-            (u.X, u.Y, u.Acted, u.Dead) = (r.X, r.Y, r.Acted, !r.Alive);
+            (u.X, u.Y, u.Acted, u.Dead, u.Cleared) = (r.X, r.Y, r.Acted, r.Hp <= 0, !r.Alive);
+            u.Side = r.Computer ? Side.Enemy : r.Neutral ? Side.Neutral : Side.Ally;
+            u.Guest = r.Guest;
+            (u.Hidden, u.Appeared, u.Slot) = (false, true, r.Record);
         }
         Field.SetPhase(Math.Max(1, save.Phase));
-        UpdateVisibility();
+        RefreshSpawns();   // the exe runs FUN_00409658 after loading too
+        if (FirstPlayerUnit() is { } first) StartCamera(first.X, first.Y);
     }
 
-    public bool OtherVisible(MapObject o) => o.SwitchCondition < 0 || _state.Switches[o.SwitchCondition];
+    public bool OtherVisible(MapObject o) => o.SwitchCondition < 0 || SwitchOn(o.SwitchCondition);
 
-    /// <summary>Allies that survive a won map join (or update) the roster, unless they're guests.</summary>
-    public void SaveRoster()
-    {
-        // fallen allies come back at the camp (user, T23d); hidden ones (not yet joined) don't count
-        foreach (var u in Field.Units.Where(u => u.Side == Side.Ally && !u.Guest && !u.Hidden))
-            _state.Roster[u.Unit] = new RosterEntry(u.ClassId, u.Level, u.Exp, (int[])u.Base.Clone(), u.Weapon, u.Armor, u.Accessory);
-    }
+    /// <summary>FUN_0040c1d4: an "Other" object shown on a tile puts its graphic's chip there (terrain, movement, recovery).</summary>
+    int? OtherChipAt(int x, int y) =>
+        Others.FirstOrDefault(o => o.X == x && o.Y == y && o.Graphic >= 0 && OtherVisible(o))?.Graphic;
+
+    /// <summary>A map's end: the army goes back into the roster (FUN_0041d5e4).</summary>
+    public void SaveRoster() => Party.SaveFromMap(_state, Field);
 
     // ---------------- IMapContext (event interpreter) ----------------
 
-    IEnumerable<BattleUnit> Present(int unit) => Field.Alive.Where(u => u.Unit == unit);
-
-    public bool UnitState(int unit, int state) => state switch
+    /// <summary>
+    /// FUN_00424ee0's unit conditions, record by record as the exe keeps them: 0 alive = on the map (a fallen unit
+    /// still counts until the checkpoint takes it off), 1 dead = taken off after falling, 2 not present = no record at
+    /// all (a fallen unit is still "present"), 3 player-controlled = an ally record or in the roster, 4 = neither.
+    /// The roster lookup skips the first entry, as the exe's loop does.
+    /// </summary>
+    public bool UnitState(int unit, int state)
     {
-        0 => Present(unit).Any(),
-        1 => Field.Units.Any(u => u.Unit == unit && u.Dead),
-        2 => !Present(unit).Any(),
-        3 => Present(unit).Any(u => u.Side == Side.Ally),
-        4 => Present(unit).Any(u => u.Side != Side.Ally),
-        _ => false,
-    };
+        var records = Field.Units.Where(u => u.Unit == unit && !u.Hidden).ToList();
+        bool present = records.Any(u => !(u.Dead && u.Cleared));
+        bool player = records.Any(u => u.Side == Side.Ally) || _state.Roster.Keys.Skip(1).Contains(unit);
+        return state switch
+        {
+            0 => present,
+            1 => !present && records.Any(u => u.Dead && u.Cleared),
+            2 => records.Count == 0,
+            3 => player,
+            4 => !player,
+            _ => false,
+        };
+    }
 
+    public void SwitchesChanged() => RefreshSpawns();
+
+    public bool PartyHas(int item) => _state.ItemCount(item) > 0 ||
+        Field.Units.Any(u => !u.Hidden && !(u.Dead && u.Cleared) && u.Side != Side.Enemy && (u.Weapon == item || u.Armor == item || u.Accessory == item));
+
+    public void PartyAdd(int unit) => Party.Add(_state, _db, Field, unit);
+    public void PartyRemove(int unit) => Party.Remove(_state, Field, unit);
+    public void ChangeClass(int unit, int cls) => Party.ChangeClass(_state, _db, Field, unit, cls);
+    public void ChangeEquipment(int unit, int item) => Party.ChangeEquipment(_state, _db, Field, unit, item);
+
+    /// <summary>Centres the view on a tile at once (developer jumps, loading).</summary>
     public void ScrollTo(int x, int y)
     {
         Camera = new Point(x * Tile + Tile / 2 - ErumaniGame.ViewWidth / 2, y * Tile + Tile / 2 - ErumaniGame.ViewHeight / 2);
         ClampCamera();
     }
 
-    Point? _panTarget;
-    const int PanSpeed = 16;   // px per frame (provisional)
-
-    /// <summary>Scrolls smoothly until tile (x,y) is on screen, centring it; no-op if already well inside the view.</summary>
-    public void PanTo(int x, int y)
+    /// <summary>The camera a map starts with (FUN_0041dc34): the tile 9 left and 6 above the first player unit, kept on the map.</summary>
+    void StartCamera(int x, int y)
     {
-        int px = x * Tile, py = y * Tile, m = 2 * Tile;
-        if (px >= Camera.X + m && px + Tile <= Camera.X + ErumaniGame.ViewWidth - m &&
-            py >= Camera.Y + m && py + Tile <= Camera.Y + ErumaniGame.ViewHeight - m) return;
-        var saved = Camera;
-        ScrollTo(x, y);
-        _panTarget = Camera;
-        Camera = saved;
+        Camera = new Point(Math.Clamp(x - 9, 0, Math.Max(0, Map.Width - ViewTilesX)) * Tile,
+            Math.Clamp(y - 6, 0, Math.Max(0, Map.Height - ViewTilesY)) * Tile);
+        _panTarget = null;
     }
+
+    Point? _panTarget;
+    /// <summary>The original's camera moves a tile per 30 Hz tick: 16 px a frame here.</summary>
+    const int PanSpeed = 16;
+
+    /// <summary>
+    /// FUN_00416fb0: scrolls just enough to bring the tile into the view's middle box (columns 6–12, rows 5–8 of the
+    /// 19×14 tiles), a tile per tick; used by events' scroll command, the enemy phase and after the opening.
+    /// </summary>
+    public void ShowTile(int x, int y)
+    {
+        int cx = Camera.X / Tile, cy = Camera.Y / Tile;
+        int tx = x - cx < 6 ? x - 6 : x - cx > 12 ? x - 12 : cx;
+        int ty = y - cy < 5 ? y - 5 : y - cy > 8 ? y - 8 : cy;
+        tx = Math.Clamp(tx, 0, Math.Max(0, Map.Width - ViewTilesX));
+        ty = Math.Clamp(ty, 0, Math.Max(0, Map.Height - ViewTilesY));
+        var target = new Point(tx == cx ? Camera.X : tx * Tile, ty == cy ? Camera.Y : ty * Tile);
+        _panTarget = target == Camera ? null : target;
+    }
+
+    /// <summary>The enemy phase's "show this unit" (the same box rule).</summary>
+    public void PanTo(int x, int y) => ShowTile(x, y);
 
     public bool Panning => _panTarget is not null;
 
@@ -203,34 +315,51 @@ public sealed class MapSession : IMapContext
         Camera.Y = Math.Clamp(Camera.Y, 0, Math.Max(0, PixelHeight - ErumaniGame.ViewHeight));
     }
 
+    /// <summary>FUN_004249a4: every unit of that id on the map gets the steps (at most 16).</summary>
     public void QueueMove(int unit, IReadOnlyList<byte> steps)
     {
-        var u = Present(unit).FirstOrDefault();
-        if (u is null) return;
-        foreach (var s in steps) Visuals[u].Pending.Enqueue(s);
+        foreach (var u in Field.Alive.Where(u => u.Unit == unit))
+        {
+            var v = Visuals[u];
+            v.Pending.Clear();
+            foreach (var s in steps.Take(16)) v.Pending.Enqueue(s);
+        }
     }
 
+    /// <summary>
+    /// FUN_00424a68: the camera first goes to the units about to move (the last one wins), then every unit takes its
+    /// steps together, one per 8 ticks; a step onto an occupied or impassable tile is skipped but still takes its time.
+    /// </summary>
     public void ExecuteMoves()
     {
-        foreach (var v in Visuals.Values)
+        BattleUnit? last = null;
+        foreach (var (u, v) in Visuals)
+        {
+            if (v.Pending.Count == 0) continue;
+            last = u;
+            v.Scripted = true;
             while (v.Pending.Count > 0) v.Running.Enqueue(v.Pending.Dequeue());
+        }
+        if (last is not null) ShowTile(last.X, last.Y);
     }
 
     public bool MovesRunning => Visuals.Values.Any(v => v.Running.Count > 0 || v.StepFrames > 0);
 
     public void FinishMoves()
     {
-        foreach (var (u, v) in Visuals)
+        _panTarget = null;
+        bool any = true;
+        while (any)
         {
-            while (v.Running.Count > 0)
+            any = false;
+            foreach (var (u, v) in Visuals)
             {
-                int s = v.Running.Dequeue(), dir = s % 4;
-                v.Facing = FacingRow[dir];
-                if (s < 4) { u.X += StepDelta[dir].X; u.Y += StepDelta[dir].Y; }
+                if (v.Running.Count == 0) continue;
+                any = true;
+                Step(u, v, v.Running.Dequeue());
             }
-            v.StepFrames = 0;
-            v.Offset = Vector2.Zero;
         }
+        foreach (var v in Visuals.Values) { v.StepFrames = 0; v.Offset = Vector2.Zero; v.Scripted = false; }
     }
 
     /// <summary>Animates a unit along a path of tiles (battle movement).</summary>
@@ -248,6 +377,18 @@ public sealed class MapSession : IMapContext
     static readonly int[] FacingRow = { 1, 4, 0, 2 };          // step dir up/right/down/left -> sheet row
     static readonly Point[] StepDelta = { new(0, -1), new(1, 0), new(0, 1), new(-1, 0) };
 
+    /// <summary>One step: turn, then move unless an event's step is blocked (out of the map, a living unit there, or no way through).</summary>
+    bool Step(BattleUnit u, UnitVisual v, int s)
+    {
+        int dir = s % 4;
+        v.Facing = FacingRow[dir];
+        if (s >= 4) return false;
+        int nx = u.X + StepDelta[dir].X, ny = u.Y + StepDelta[dir].Y;
+        if (v.Scripted && (!Field.InBounds(nx, ny) || Field.UnitAt(nx, ny) is not null || Field.MoveCost(u, nx, ny) <= 0)) return false;
+        (u.X, u.Y) = (nx, ny);
+        return true;
+    }
+
     public void Update()
     {
         UpdatePan();
@@ -257,19 +398,14 @@ public sealed class MapSession : IMapContext
             {
                 v.StepFrames--;
                 v.Offset = v.StepFrom * v.StepFrames / FramesPerTile;
+                if (v.StepFrames == 0 && v.Running.Count == 0) v.Scripted = false;
                 continue;
             }
-            if (v.Running.Count == 0) continue;
+            if (v.Running.Count == 0) { v.Scripted = false; continue; }
             int s = v.Running.Dequeue();
-            int dir = s % 4;
-            v.Facing = FacingRow[dir];
-            if (s < 4)
-            {
-                u.X += StepDelta[dir].X;
-                u.Y += StepDelta[dir].Y;
-                v.StepFrames = FramesPerTile;
-                v.Offset = v.StepFrom = new Vector2(-StepDelta[dir].X, -StepDelta[dir].Y) * Tile;
-            }
+            bool moved = Step(u, v, s);
+            v.StepFrames = FramesPerTile;
+            v.Offset = v.StepFrom = moved ? new Vector2(-StepDelta[s % 4].X, -StepDelta[s % 4].Y) * Tile : Vector2.Zero;
         }
     }
 

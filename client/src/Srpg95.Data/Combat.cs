@@ -88,6 +88,6 @@ public static class Combat
     /// <summary>Raise/lower spells: value + Magic × relation / 10.</summary>
     public static int SpellEffect(Magic spell, int mag) => spell.Value + mag * spell.Relation / 10;
 
-    /// <summary>Poison: 25 % of current HP per turn, rounded up.</summary>
-    public static int PoisonDamage(int hp) => (hp + 3) / 4;
+    /// <summary>Poison: a quarter of the current HP per turn, rounded down (FUN_00410b90); it never takes the last HP.</summary>
+    public static int PoisonDamage(int hp) => hp / 4;
 }
