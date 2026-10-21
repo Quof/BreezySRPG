@@ -239,6 +239,7 @@ public sealed class ErumaniGame : Game
         var map = MapData.Load(_folder.MapPath(idx));
         _state.MapIndex = idx;
         _state.NextMap = (idx + 1) % 100;
+        _title = null;   // a camp save loaded from the title: the title goes (it's drawn and run before a camp)
         _session = null;
         _runner = null;
         _battle = null;
@@ -273,6 +274,7 @@ public sealed class ErumaniGame : Game
     void ApplySave(SaveFile save, int slot)
     {
         Sfx.SaveLoad();
+        _backlog.Clear();   // the loaded game's text only
         save.ApplyTo(_state);
         // the play time EasySRPG95 noted for exactly this save, if it did
         var note = SaveExtras.For(SaveExtras.Read(_folder), slot, save.Raw);
@@ -705,6 +707,7 @@ public sealed class ErumaniGame : Game
         // "rclick": a right click as soon as an event shows a message or a choice, once the --advance confirms are done (the
         // event's menu: save, load, options); "rclickfx" as soon as it shows neither (a screen effect, a move, a pan, a wait)
         if (_script.TryPeek(out sk) && sk is "rclick" or "rclickfx" && EventShowing && _options is null && _eventMenu is null && _shotAdvance <= 0 && !bi.Confirm
+            && !_fx.Holding && _afterFade is null   // a right click then does nothing (a load's hold, a fade)
             && (sk == "rclick" ? _runner is { Message: not null } or { Choice: not null } : _runner is { Message: null, Choice: null }))
         {
             _script.Dequeue();
