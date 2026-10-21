@@ -78,6 +78,9 @@ public sealed class ErumaniGame : Game
     MouseState _prevMouse;
     int _activeFrames, _leftHeld;
     readonly Queue<string> _choose = new();
+    readonly Random _chooseRng = new(1);
+    int _choicesSeen;
+    bool _choiceWasUp;
 
     public ErumaniGame(GameFolder folder, Options opts)
     {
@@ -95,6 +98,14 @@ public sealed class ErumaniGame : Game
         // two frames per game tick: 33 ms at start-up, 30 ms on maps and camps (GameClock)
         TargetElapsedTime = TimeSpan.FromMilliseconds(GameClock.FrameMs);
         GameClock.Changed += () => TargetElapsedTime = TimeSpan.FromMilliseconds(GameClock.FrameMs);
+        if (opts.Fast && opts.Screenshot is not null)
+        {
+            // a scripted run at full speed: everything advances by frames, so only the wall-clock time changes (and it
+            // doesn't idle while its window is in the background, as several runs at once are)
+            IsFixedTimeStep = false;
+            InactiveSleepTime = TimeSpan.Zero;
+            _gfx.SynchronizeWithVerticalRetrace = false;
+        }
         _shotAdvance = opts.Advance;
         foreach (var tok in (opts.Keys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _script.Enqueue(tok.ToLowerInvariant());
         foreach (var c in (opts.Choose ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _choose.Enqueue(c.ToLowerInvariant());
@@ -203,9 +214,13 @@ public sealed class ErumaniGame : Game
             Quit = () => AfterFade(10, Exit),
             WarpPointer = WarpMouse,
         };
-        Window.Title = "Erumani";
+        Window.Title = GameTitle;
         _status = "";
+        if (_opts.Screenshot is not null) Trace($"{_frame}: title");
     }
+
+    /// <summary>The window's title: the game folder's name (the client plays any SRPG Maker 95 game).</summary>
+    string GameTitle => new DirectoryInfo(_folder.Root).Name;
 
     /// <summary>Fades the screen out, <paramref name="step"/> % a tick, then does <paramref name="then"/>.</summary>
     void AfterFade(int step, Action then)
@@ -245,8 +260,9 @@ public sealed class ErumaniGame : Game
             _audio.PlayBgm(_camp.Bgm);
             GameClock.SetTick(30);
         }
-        Window.Title = $"Erumani — camp before SMAP_{idx + 1:000} {map.Name}";
+        Window.Title = $"{GameTitle} — camp before SMAP_{idx + 1:000} {map.Name}";
         _status = "";
+        if (_opts.Screenshot is not null) Trace($"{_frame}: camp before SMAP_{idx + 1:000} {map.Name} (army {_state.Roster.Count}, gold {_state.Gold})");
     }
 
     /// <summary>
@@ -269,6 +285,7 @@ public sealed class ErumaniGame : Game
 
     /// <summary>The music a loaded save starts once its 800 ms of black are over.</summary>
     string? _bgmAfterHold;
+    bool _eventStarted;
 
     void LoadMap(int pos, SaveFile? resume = null, bool fromCamp = false)
     {
@@ -278,6 +295,7 @@ public sealed class ErumaniGame : Game
         int idx = _mapIndices[_mapPos];
         var map = MapData.Load(_folder.MapPath(idx));
         _state.MapIndex = idx;
+        if (_opts.Screenshot is not null) Trace($"{_frame}: map SMAP_{idx + 1:000} {map.Name} (army {_state.Roster.Count(kv => kv.Value.Sortie)}/{_state.Roster.Count})");
         if (resume is null) _state.NextMap = (idx + 1) % 100;   // FUN_0041d5e4: the following map unless a "Next Map" says otherwise
         // FUN_0041dc34: pictures go, brightness and tone stay; the screen fades in from −20 by 20 a tick (one black tick,
         // then 20 % steps) while the opening already runs; the tick becomes 30 ms and the mouse goes to (320, 256)
@@ -329,14 +347,18 @@ public sealed class ErumaniGame : Game
         _battle.QuitRequested = Exit;
         if (resume is not null)
         {
-            // a battle save: its units, phase and fired events instead of the opening (statuses aren't saved)
+            // a battle save: its units (with their statuses), phase and fired events instead of the opening
             _session.RestoreFrom(resume);
             _battle.Resume(resume.FiredSlots());
         }
-        else _battle.Start(_opts.Event);
+        else
+        {
+            _battle.Start(_eventStarted ? null : _opts.Event);   // --event takes the place of the first map's opening only
+            _eventStarted = true;
+        }
         _seenOutcome = MapOutcome.None;
         _pendingMap = null;
-        Window.Title = $"Erumani — SMAP_{idx + 1:000} {map.Name}";
+        Window.Title = $"{GameTitle} — SMAP_{idx + 1:000} {map.Name}";
         _status = "";
     }
 
@@ -463,17 +485,26 @@ public sealed class ErumaniGame : Game
 
         var input = new EventInput(confirm, cancel, up, down, ff);
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
-        // "choice+N": the shot N frames after the next character choice comes up, left unanswered
-        if (_opts.Screenshot is not null && _runner?.Choice is not null && _script.FirstOrDefault(s => s.StartsWith("choice+")) is { } choiceTok)
+        // "choice+N" / "choiceK+N": the shot N frames after the next (the K-th) character choice comes up, left unanswered
+        bool choiceUp = _runner?.Choice is not null;
+        if (choiceUp && !_choiceWasUp) _choicesSeen++;
+        _choiceWasUp = choiceUp;
+        if (_opts.Screenshot is not null && choiceUp && _script.FirstOrDefault(s => s.StartsWith("choice")) is { } choiceTok
+            && System.Text.RegularExpressions.Regex.Match(choiceTok, @"^choice(\d*)\+(\d+)$") is { Success: true } cm
+            && (cm.Groups[1].Value == "" || int.Parse(cm.Groups[1].Value) == _choicesSeen))
         {
             _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, choiceTok)));
-            _shotAt = _frame + int.Parse(choiceTok[7..]);
+            _shotAt = _frame + int.Parse(cm.Groups[2].Value);
             _shotAdvance = 0;
         }
         if (_opts.Screenshot is not null && _shotAdvance != 0 && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null } or { WaitingForButton: true }))
         {
             if (_runner is { Choice: { } options } && _choose.TryDequeue(out var pick))
-                _runner.HoverChoice(pick == "last" ? options.Length - 1 : int.TryParse(pick, out var n) ? Math.Clamp(n, 0, options.Length - 1) : 0);
+            {
+                if (pick == "random") _choose.Enqueue(pick);   // every choice from here on at random (seeded, so a run repeats)
+                _runner.HoverChoice(pick == "random" ? _chooseRng.Next(options.Length) : pick == "last" ? options.Length - 1
+                    : int.TryParse(pick, out var n) ? Math.Clamp(n, 0, options.Length - 1) : 0);
+            }
             input = input with { Confirm = true };
             _shotAdvance--;
         }
@@ -654,12 +685,12 @@ public sealed class ErumaniGame : Game
             && !_fx.Holding && _afterFade is null;   // a loaded save's black hold and a choice's fade-out take no input
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
-            || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice+") || _script.Peek().StartsWith("click+") || _script.Peek().StartsWith("state:")
+            || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice") || _script.Peek().StartsWith("click+") || _script.Peek().StartsWith("state:")
             || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
-        _trace.Add($"{_frame}: {tok} in {(_title is not null ? "Title" : _camp is not null ? "Camp" : _battle!.DebugState.Split('\n')[0])}");
+        Trace($"{_frame}: {tok} in {(_title is not null ? "Title" : _camp is not null ? "Camp" : _battle!.DebugState.Split('\n')[0])}");
         return tok switch
         {
             "up" => bi with { Up = true },
@@ -672,6 +703,7 @@ public sealed class ErumaniGame : Game
             "backlog" => Do(() => _backlog.Scroll(1), bi),
             "threat" => Do(ToggleThreat, bi),
             "options" => Do(OpenOptions, bi),
+            "endturn" => Do(() => _battle?.ScriptEndTurn(), bi),
             _ when tok.StartsWith("at:") && tok[3..].Split('.') is [var x, var y] =>
                 bi with { MouseTile = new Point(int.Parse(x), int.Parse(y)), MouseMoved = true },
             _ => bi,
@@ -679,6 +711,14 @@ public sealed class ErumaniGame : Game
     }
 
     static BattleInput Do(Action a, BattleInput bi) { a(); return bi; }
+
+    /// <summary>A scripted run's trace: kept for the .txt beside the screenshot and appended to its .log as it happens.</summary>
+    void Trace(string line)
+    {
+        _trace.Add(line);
+        if (_opts.Screenshot is { } shot)
+            try { File.AppendAllText(Path.ChangeExtension(shot, ".log"), line + "\n"); } catch (IOException) { }
+    }
 
     void ToggleThreat()
     {
@@ -688,7 +728,7 @@ public sealed class ErumaniGame : Game
     }
 
     int _shotAt = int.MaxValue;
-    bool ShotReady => _frame > 30000 || _frame >= _shotAt ||
+    bool ShotReady => _frame > _opts.Frames || _frame >= _shotAt ||
         (_frame > 2 && (_opts.Keys is null ? _shotAdvance <= 0 && (_shotAdvance == 0 || _idleFrames > 30) : _script.Count == 0 && _idleFrames > 30));
 
     /// <summary>Map tile under the mouse, or null outside the viewport.</summary>
@@ -714,6 +754,7 @@ public sealed class ErumaniGame : Game
         {
             _seenOutcome = _battle.Outcome;
             OnMapEnded();
+            if (_session is null || _battle is null) return;   // a return to the title has closed the map
         }
 
         // camera: WASD (a modern addition) when nothing is animating; the mouse scrolls through the frame (EdgeScroll)
@@ -816,6 +857,7 @@ public sealed class ErumaniGame : Game
 
     void OpenGameOver()
     {
+        if (_opts.Screenshot is not null) Trace($"{_frame}: game over on SMAP_{_state.MapIndex + 1:000}");
         _gameOver = 0;
         _fx.ResetForMap();
         _fx.SetTone(100, 100, 100, 100);
@@ -891,7 +933,11 @@ public sealed class ErumaniGame : Game
         Present(gameTime);
     }
 
-    /// <summary>A battle map: tiles, overlays, units, pictures, the frame, the battle UI and the event windows.</summary>
+    /// <summary>
+    /// A battle map in the exe's order (its map loop around FUN_0041371c): the tiles with their overlays, the screen frame,
+    /// the units (over the frame where they reach past the view), the picture (a full-screen one covers the frame, as in
+    /// the original's cutscenes), then the battle UI and the event windows.
+    /// </summary>
     void DrawMap()
     {
         var view = new Rectangle(ViewX, ViewY, ViewWidth, ViewHeight);
@@ -900,17 +946,17 @@ public sealed class ErumaniGame : Game
             _session.DrawTiles(_sb, view);
             _battle?.DrawThreat(_sb, view);
             _battle?.DrawOverlays(_sb, view, _frame);
-            _session.DrawUnits(_sb, view, _frame, _battle?.FacingUnit);
         }
-        DrawPicture();
-        // the frame on top of the picture (as in the original); its red arrows point where the view can scroll, only in
-        // the player's phase while nothing else goes on, blinking: 18 ticks on, 6 off (FUN_00413768)
+        // the frame's red arrows point where the view can scroll, only in the player's phase while nothing else goes on,
+        // blinking: 18 ticks on, 6 off (FUN_00413768)
         if (_session is { } s)
         {
             bool on = _battle?.ScrollArrows == true && _frame / 2 / 6 % 4 != 0;
             _ui.ScreenFrame(_sb, on && s.Camera.Y > 0, on && s.Camera.Y < s.PixelHeight - ViewHeight,
                 on && s.Camera.X > 0, on && s.Camera.X < s.PixelWidth - ViewWidth);
+            _session.DrawUnits(_sb, view, _frame, _battle?.FacingUnit);
         }
+        DrawPicture();
         _battle?.DrawUi(_sb, view, _frame);
         DrawMessage();
         DrawChoice();

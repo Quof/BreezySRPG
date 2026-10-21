@@ -89,6 +89,9 @@ public sealed class EventScript
 /// </summary>
 public static class TreeBuilder
 {
+    /// <summary>A message shows at most five lines: its own and the four message lines after it (FUN_0040d18c).</summary>
+    public const int MaxMessageLines = 5;
+
     public static (List<ScriptNode> Tree, string? Problem) Build(List<Command> cmds)
     {
         int pos = 0;
@@ -104,12 +107,15 @@ public static class TreeBuilder
         List<ScriptNode> Block(int depth)
         {
             var list = new List<ScriptNode>();
+            bool afterMessage = false;
             while (pos < cmds.Count)
             {
                 var c = cmds[pos];
                 if (c.Op is Op.EndBlock or Op.EndBranch or Op.ChoiceCase or Op.EndChoice) return list;
                 if (c.Depth != depth) Fail($"command {pos} ({c.Op}) at depth {c.Depth}, expected {depth}");
                 pos++;
+                bool wasAfterMessage = afterMessage;
+                afterMessage = c.Op is Op.Message or Op.MessageLine;
                 switch (c.Op)
                 {
                     case Op.EndOfScript:
@@ -118,8 +124,9 @@ public static class TreeBuilder
                         list.Add(new MessageNode(c.Window, new List<string> { c.Text }));
                         break;
                     case Op.MessageLine:
-                        if (list.Count > 0 && list[^1] is MessageNode m) m.Lines.Add(c.Text);
-                        else list.Add(new MessageNode(c.Window, new List<string> { c.Text }));
+                        // FUN_0040d18c takes up to four more lines straight after a message (five in all); a line past
+                        // those, or one with no message before it, is skipped unseen
+                        if (wasAfterMessage && list.Count > 0 && list[^1] is MessageNode m && m.Lines.Count < MaxMessageLines) m.Lines.Add(c.Text);
                         break;
                     case Op.ConditionalBranch:
                         var then = Block(depth + 1);

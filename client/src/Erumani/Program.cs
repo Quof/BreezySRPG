@@ -7,9 +7,10 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        Options? opts = null;
         try
         {
-            var opts = Options.Parse(args);
+            opts = Options.Parse(args);
             var game = new GameFolder(opts.GameDir, opts.RtpDir);
             using var g = new ErumaniGame(game, opts);
             g.Run();
@@ -17,8 +18,8 @@ public static class Program
         }
         catch (Exception e)
         {
-            // WinExe has no console: leave the error next to the executable.
-            File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "error.log"), e.ToString());
+            // WinExe has no console: leave the error next to the executable (a scripted run: next to its screenshot)
+            File.WriteAllText(opts?.Screenshot is { } shot ? Path.ChangeExtension(shot, ".error.txt") : Path.Combine(AppContext.BaseDirectory, "error.log"), e.ToString());
             return 1;
         }
     }
@@ -29,6 +30,9 @@ public static class Program
 ///               --screenshot FILE.png  (render one frame at 640x480, save it, exit)
 ///               --scale N              (with --screenshot: render and save the frame at N × 640x480, as a window N times
 ///                                       the size draws it)
+///               --fast 1               (with --screenshot: run frames as fast as the machine can instead of at 60 a
+///                                       second; the game advances by frames, so the outcome is the same)
+///               --frames N             (with --screenshot: the shot at frame N at the latest; default 30000)
 ///               --advance N            (with --screenshot: auto-confirm N messages/choices first)
 ///               --event NAME           (run this script on load instead of OPENING, e.g. EV000202)
 ///               --advance -1           (confirm every message/choice)
@@ -39,22 +43,26 @@ public static class Program
 ///               --load N               (load SAVEn.DAT from the game folder at start)
 ///               --camp N               (developer: open the camp before map N, 1-based)
 ///               --choose "a,b,.."     (with --screenshot: the option each character choice takes in turn, 0-based or
-///                                       "last"; once used up, the first option)
+///                                       "last"; once used up, the first option; "random" picks every one from then
+///                                       on at random, seeded)
 ///               --keys "a,b,..."       (with --screenshot: scripted input once the map is idle;
 ///                                       up/down/left/right/enter/esc, at:X,Y moves the cursor to a tile,
 ///                                       wait skips a beat, shot+N takes the shot N frames later even mid-animation;
 ///                                       telop+N / telopK+N wait for the next caption (any, or TELOPK.BMP) and shoot N frames in;
 ///                                       state:Name+N shoots N frames after the battle map enters state Name (e.g. Acting);
+///                                       choice+N / choiceK+N shoot N frames after the next (the K-th) character choice;
+///                                       endturn ends the player's turn (ターン終了);
 ///                                       otherwise the shot is taken once the queue is done and the map is idle)
 /// </summary>
-public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null, int? Level = null, string? Give = null, string? Place = null, int? LoadSlot = null, int? CampBefore = null, string? SaveDir = null, string? Choose = null, int Scale = 1)
+public sealed record Options(string GameDir, string? RtpDir, int? StartMap, string? Screenshot, int Advance, string? Event, string? Keys = null, int? Level = null, string? Give = null, string? Place = null, int? LoadSlot = null, int? CampBefore = null, string? SaveDir = null, string? Choose = null, int Scale = 1, bool Fast = false, int Frames = 30000)
 {
     public static Options Parse(string[] args)
     {
         string? game = null, rtp = null, shot = null, ev = null, keys = null, give = null, place = null, saves = null, choose = null;
         int? level = null, loadSlot = null, campBefore = null;
         int? map = null;
-        int advance = 0, scale = 1;
+        int advance = 0, scale = 1, frames = 30000;
+        bool fast = false;
         for (int i = 0; i + 1 < args.Length; i += 2)
         {
             switch (args[i])
@@ -74,12 +82,14 @@ public sealed record Options(string GameDir, string? RtpDir, int? StartMap, stri
                 case "--camp": campBefore = int.Parse(args[i + 1]) - 1; break;
                 case "--choose": choose = args[i + 1]; break;
                 case "--scale": scale = int.Parse(args[i + 1]); break;
+                case "--fast": fast = args[i + 1] != "0"; break;
+                case "--frames": frames = int.Parse(args[i + 1]); break;
             }
         }
         game ??= FindGameFolder() ?? throw new DirectoryNotFoundException(
             "Game folder not found. Pass --game <folder containing SRPGEXEC.EXE>.");
         rtp ??= FindUp(AppContext.BaseDirectory, Path.Combine("srpg maker 95", "RTP"));
-        return new Options(game, rtp, map, shot, advance, ev, keys, level, give, place, loadSlot, campBefore, saves, choose, scale);
+        return new Options(game, rtp, map, shot, advance, ev, keys, level, give, place, loadSlot, campBefore, saves, choose, scale, fast, frames);
     }
 
     /// <summary>Next to the exe, or in a parent directory (development layout: ./えるまに).</summary>

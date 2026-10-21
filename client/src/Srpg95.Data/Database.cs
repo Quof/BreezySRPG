@@ -136,6 +136,11 @@ public sealed class Database
     public bool DoubleAttacks { get; init; }
     /// <summary>GAME.DAT [4]: battle animations play slower by this many percent (the tick is 33 + 33·[4]/100 ms; 0 in えるまに).</summary>
     public int SceneSlowdown { get; init; }
+    /// <summary>
+    /// GAME.DAT [5]: units that fell are lost (FUN_0041d5e4) — at a map's end a fallen army unit leaves the roster, and a
+    /// fallen unit not from it doesn't join (0 in えるまに: they come back).
+    /// </summary>
+    public bool FallenLost { get; init; }
 
     delegate T RecordParser<T>(int index, ReadOnlySpan<byte> record);
 
@@ -167,6 +172,7 @@ public sealed class Database
             Counterattacks = Bin.I32(g.ReadData("GAME.DAT"), 8) != 0,
             DoubleAttacks = Bin.I32(g.ReadData("GAME.DAT"), 12) != 0,
             SceneSlowdown = Bin.I32(g.ReadData("GAME.DAT"), 16),
+            FallenLost = Bin.I32(g.ReadData("GAME.DAT"), 20) != 0,
         };
     }
 }

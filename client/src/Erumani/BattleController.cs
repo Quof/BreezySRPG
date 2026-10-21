@@ -1731,6 +1731,14 @@ public sealed class BattleController
         }
     }
 
+    /// <summary>Scripted runs ("endturn"): ターン終了 as the turn menu gives it, when the player's phase waits on the map.</summary>
+    public bool ScriptEndTurn()
+    {
+        if (_state_ != State.Idle || !_s.Field.AllyPhase) return false;
+        EndPlayerTurn();
+        return true;
+    }
+
     /// <summary>
     /// ターン終了 (FUN_00410618 → FUN_00410b90): the phase changes (upkeep for the enemies), ENEMY TURN, then the
     /// checkpoint before the first enemy moves.

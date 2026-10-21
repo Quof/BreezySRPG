@@ -114,10 +114,10 @@ public sealed class Audio(GameFolder game) : IDisposable
         return sb.ToString();
     }
 
-    // HarmonyGetMusicLooping: whether the current music has played to its end at least once (COMPLETE!! waits for it)
-    double _bgmLengthMs;
-    readonly System.Diagnostics.Stopwatch _bgmClock = new();
-    public bool BgmLooped => CurrentBgm is not null && _bgmLengthMs > 0 && _bgmClock.Elapsed.TotalMilliseconds >= _bgmLengthMs;
+    // HarmonyGetMusicLooping: whether the current music has played to its end at least once (COMPLETE!! waits for it),
+    // timed on the game's clock (each frame adds its length), so a scripted run at full speed waits as many frames as play
+    double _bgmLengthMs, _bgmPlayedMs;
+    public bool BgmLooped => CurrentBgm is not null && _bgmLengthMs > 0 && _bgmPlayedMs >= _bgmLengthMs;
 
     public void PlayBgm(string file)
     {
@@ -130,7 +130,7 @@ public sealed class Audio(GameFolder game) : IDisposable
         var path = game.Find("BGM/" + next);
         if (path is null) return;
         _bgmLengthMs = LengthMs(path);   // also while muted, so scripted runs keep the same timing
-        _bgmClock.Restart();
+        _bgmPlayedMs = 0;
         if (Muted) return;
         bool midi = path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase);
         if (midi && _sequencer is not null)
@@ -184,6 +184,7 @@ public sealed class Audio(GameFolder game) : IDisposable
     /// <summary>Call every frame: keeps the synth fed and restarts MCI BGM when it reaches the end (looping).</summary>
     public void Update()
     {
+        _bgmPlayedMs += GameClock.FrameMs;
         FeedSynth();
         if (!_bgmOpen || ++_pollFrames < 30) return;
         _pollFrames = 0;
@@ -196,7 +197,11 @@ public sealed class Audio(GameFolder game) : IDisposable
     {
         if (Muted || file.Length == 0) return;
         if (!_cache.TryGetValue(file, out var se))
-            _cache[file] = se = Load(game.Find("EFS/" + file));
+        {
+            try { se = Load(game.Find("EFS/" + file)); }
+            catch (Exception) { se = null; }   // a damaged or unusual WAV stays silent
+            _cache[file] = se;
+        }
         se?.Play(Math.Clamp(SoundVolume, 0, 1), 0, 0);
     }
 

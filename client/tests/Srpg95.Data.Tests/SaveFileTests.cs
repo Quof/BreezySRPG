@@ -97,22 +97,46 @@ public class SaveFileTests
         Assert.False(save.AtCamp);
         var state = new GameState();
         save.ApplyTo(state);
-        // rebuild the units the way the client holds them, then write a battle save
-        var units = save.MapUnitRecords().Select(r => new Srpg95.Rules.BattleUnit
-        {
-            Unit = r.Unit, Side = r.Computer ? Srpg95.Rules.Side.Enemy : Srpg95.Rules.Side.Ally, MapObject = r.Object,
-            ClassId = r.ClassId, Level = r.Level, Exp = r.Exp, Base = r.Base, Hp = r.Hp, Mp = r.Mp,
-            Weapon = r.Weapon, Armor = r.Armor, Accessory = r.Accessory, X = r.X, Y = r.Y, Acted = r.Acted, Dead = !r.Alive,
-            Cleared = !r.Alive, Slot = r.Record, Guest = r.Guest,
-        }).ToList();
-        var bgm = System.Text.Encoding.GetEncoding(932).GetString(save.Raw, 0x53C, 48).TrimEnd('\0');
-        var again = SaveFile.ForBattle(state, db, save.MapIndex, bgm, save.Phase, folder.MapPath(save.MapIndex),
-            units, save.FiredSlots(), save.Raw);
+        var again = Rewrite(folder, db, save, state, BattleUnits(save));
         var differing = new HashSet<string>();
         for (int i = 0; i < SaveFile.Size; i++)
             if (save.Raw[i] != again.Raw[i])
                 differing.Add(i is >= 0x7D0 and < 0x101D0 ? $"unit[{(i - 0x7D0) % 640 / 4}]" : $"0x{i:X}");
         // what the client can't know: an ally's movement left and position before moving from earlier play, and [52]
         Assert.Subset(new HashSet<string> { "unit[50]", "unit[52]", "unit[54]", "unit[55]" }, differing);
+    }
+
+    [Fact]
+    public void Battle_saves_keep_buffs_poison_and_sleep()
+    {
+        var test = Folder("えるまに - Save testplay");
+        var game = Folder("えるまに");
+        if (test is null || game is null || !File.Exists(Path.Combine(test, "SAVE3.DAT"))) return;
+        var folder = new GameFolder(game);
+        var save = SaveFile.Load(Path.Combine(test, "SAVE3.DAT"))!;
+        var state = new GameState();
+        save.ApplyTo(state);
+        var units = BattleUnits(save);
+        var u = units.First(x => x.Side == Srpg95.Rules.Side.Ally);
+        (u.PowerUp, u.DefUp, u.MdefUp, u.PoisonTurns, u.SleepTurns) = (2, -1, 3, 4, 1);
+        // records [36]–[38] and [45]/[46], written and read back as a load restores them
+        var back = Rewrite(folder, Database.Load(folder), save, state, units).MapUnitRecords().Single(r => r.Record == u.Slot);
+        Assert.Equal((2, -1, 3, 4, 1), (back.PowerUp, back.DefUp, back.MdefUp, back.PoisonTurns, back.SleepTurns));
+    }
+
+    /// <summary>A battle save's units rebuilt the way the client holds them.</summary>
+    static List<Srpg95.Rules.BattleUnit> BattleUnits(SaveFile save) => save.MapUnitRecords().Select(r => new Srpg95.Rules.BattleUnit
+    {
+        Unit = r.Unit, Side = r.Computer ? Srpg95.Rules.Side.Enemy : Srpg95.Rules.Side.Ally, MapObject = r.Object,
+        ClassId = r.ClassId, Level = r.Level, Exp = r.Exp, Base = r.Base, Hp = r.Hp, Mp = r.Mp,
+        Weapon = r.Weapon, Armor = r.Armor, Accessory = r.Accessory, X = r.X, Y = r.Y, Acted = r.Acted, Dead = !r.Alive,
+        Cleared = !r.Alive, Slot = r.Record, Guest = r.Guest, FromRoster = r.FromRoster,
+    }).ToList();
+
+    /// <summary>The battle save the client writes for these units, on top of the original.</summary>
+    static SaveFile Rewrite(GameFolder folder, Database db, SaveFile save, GameState state, List<Srpg95.Rules.BattleUnit> units)
+    {
+        var bgm = System.Text.Encoding.GetEncoding(932).GetString(save.Raw, 0x53C, 48).TrimEnd('\0');
+        return SaveFile.ForBattle(state, db, save.MapIndex, bgm, save.Phase, folder.MapPath(save.MapIndex), units, save.FiredSlots(), save.Raw);
     }
 }

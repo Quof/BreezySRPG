@@ -39,6 +39,7 @@ public static class Party
             u.Side = Side.Ally;
             if (done || s.Roster.Count >= MaxRoster) continue;
             u.Guest = false;
+            u.FromRoster = true;
             s.Roster[unit] = FromUnit(u);
             done = true;
         }
@@ -134,12 +135,17 @@ public static class Party
     /// <summary>
     /// A map's end (FUN_0041d5e4): every player unit on the map that isn't a guest or neutral (fallen ones too) is copied
     /// into the roster (its own entry, or a new one), with 出撃 on; HP, MP and statuses come back in full. The roster
-    /// stays sorted by unit id.
+    /// stays sorted by unit id. When the game has fallen units lost (GAME.DAT [5]), a fallen unit holding a roster entry
+    /// first has it deleted, and a fallen one without doesn't join.
     /// </summary>
     public static void SaveFromMap(GameState s, Battlefield f)
     {
-        foreach (var u in f.Units.Where(u => !u.Hidden && u.Side == Side.Ally && !u.Guest).OrderBy(u => u.Slot))
+        var players = f.Units.Where(u => !u.Hidden && u.Side == Side.Ally && !u.Guest).OrderBy(u => u.Slot).ToList();
+        if (f.Db.FallenLost)
+            foreach (var u in players.Where(u => u.Dead && u.FromRoster)) s.Roster.Remove(u.Unit);
+        foreach (var u in players)
         {
+            if (f.Db.FallenLost && u.Dead) continue;
             if (!s.Roster.ContainsKey(u.Unit) && s.Roster.Count >= MaxRoster) continue;
             s.Roster[u.Unit] = FromUnit(u);
         }

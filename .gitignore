@@ -1,6 +1,11 @@
 # Original game, editor and test copies: never committed (third-party content)
 /えるまに*/
 /srpg maker 95/
+# Other SRPG Maker 95 games tested with the client, and their archives
+/昴の騎士/
+/闇鍋企画/
+/ＯtoＺ/
+/*.zip
 
 # Generated parser output (rebuild with re/srpg95_data.py)
 /re/json*/

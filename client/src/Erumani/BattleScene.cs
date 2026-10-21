@@ -249,6 +249,16 @@ public sealed class BattleScene
         var ground = st.Kind == StepKind.Cast ? st.Actor! : st.Target!;
         int back = _field.TerrainAt(ground.X, ground.Y).BattleBackground;
         if (back > 0 && _tex.Get($"BACK_{back:000}.BMP", transparent: false) is { } bg) sb.Draw(bg, new Vector2(slide, 0), Color.White);
+        // GAME.DAT [1]: a strike's stage is the target's terrain with the striker's half from the striker's own terrain when
+        // the two differ — the left half for a computer's unit, else the right (the scene loader FUN_0041a5b0, with the
+        // backgrounds FUN_0041a9c4 sets at +0x6114 / +0x6118)
+        if (_field.Db.SplitBackgrounds && st.Kind == StepKind.Strike && st.Actor is { } striker
+            && _field.TerrainAt(striker.X, striker.Y).BattleBackground is var own and > 0 && own != back
+            && _tex.Get($"BACK_{own:000}.BMP", transparent: false) is { } half)
+        {
+            int hx = st.Flag ? 0 : StageWidth / 2;
+            sb.Draw(half, new Vector2(slide + hx, 0), new Rectangle(hx, 0, StageWidth / 2, StageHeight), Color.White);
+        }
         if (st.Kind != StepKind.Cast && st.Target is { } t) DrawTarget(sb, st, t, slide);
         DrawActor(sb, st, slide);
         DrawNumber(sb, st, slide);

@@ -123,18 +123,21 @@ public sealed class MapSession : IMapContext
         {
             if (!e.Sortie) continue;
             var pos = Map.StartPositions.Where(p => Field.UnitAt(p.X, p.Y) is null).Select(p => ((int X, int Y)?)p).FirstOrDefault();
-            if (pos is not { } p) continue;
+            if (pos is not { } p || FreeSlot() > MaxRecord) continue;
             var u = _db.Units[Math.Clamp(id, 0, _db.Units.Length - 1)];
             var unit = new BattleUnit
             {
                 Unit = id, Side = Side.Ally, Name = u.Name, ClassId = e.ClassId, Level = e.Level, Exp = e.Exp,
                 Base = (int[])e.Base.Clone(), Growth = u.GrowthPct, Hp = e.Base[0], Mp = e.Base[1],
-                Weapon = e.Weapon, Armor = e.Armor, Accessory = e.Accessory, X = p.X, Y = p.Y, Appeared = true,
+                Weapon = e.Weapon, Armor = e.Armor, Accessory = e.Accessory, X = p.X, Y = p.Y, Appeared = true, FromRoster = true,
             };
             unit.Slot = FreeSlot();
             Add(unit);
         }
     }
+
+    /// <summary>The exe keeps 99 unit records (1–99): with all of them taken, no more units come onto the map.</summary>
+    const int MaxRecord = 99;
 
     /// <summary>The lowest record number no unit on the map holds (fallen units keep theirs).</summary>
     int FreeSlot()
@@ -148,7 +151,8 @@ public sealed class MapSession : IMapContext
     /// <summary>
     /// FUN_00409658, run when a map starts and whenever a switch changes: units whose object's switch condition is now
     /// OFF leave the map (the object waits where they stood); objects whose condition holds come onto the map, in index
-    /// order, if nobody alive stands on their tile — a unit that had been on the map before starts afresh.
+    /// order, if nobody alive stands on their tile and one of the 99 unit records is free (else it keeps waiting) — a
+    /// unit that had been on the map before starts afresh.
     /// </summary>
     public void RefreshSpawns()
     {
@@ -164,9 +168,11 @@ public sealed class MapSession : IMapContext
             var o = Object(u.MapObject);
             if (o.SwitchCondition >= 0 && !SwitchOn(o.SwitchCondition)) continue;
             if (Field.UnitAt(u.X, u.Y) is not null) continue;
+            int slot = FreeSlot();
+            if (slot > MaxRecord) continue;
             if (u.Appeared) Respawn(u, o);
             (u.Hidden, u.Appeared, u.Dead, u.Cleared) = (false, true, false, false);
-            u.Slot = FreeSlot();
+            u.Slot = slot;
         }
     }
 
@@ -212,6 +218,8 @@ public sealed class MapSession : IMapContext
             (u.X, u.Y, u.Acted, u.Dead, u.Cleared) = (r.X, r.Y, r.Acted, r.Hp <= 0, !r.Alive);
             u.Side = r.Computer ? Side.Enemy : r.Neutral ? Side.Neutral : Side.Ally;
             u.Guest = r.Guest;
+            u.FromRoster = r.FromRoster;
+            (u.PowerUp, u.DefUp, u.MdefUp, u.PoisonTurns, u.SleepTurns) = (r.PowerUp, r.DefUp, r.MdefUp, r.PoisonTurns, r.SleepTurns);
             (u.Hidden, u.Appeared, u.Slot) = (false, true, r.Record);
         }
         Field.SetPhase(Math.Max(1, save.Phase));
@@ -514,9 +522,10 @@ public sealed class MapSession : IMapContext
     static readonly int[] FrameCycle = { 0, 0, 1, 2, 2, 1 };
 
     /// <summary>
-    /// The units (FUN_00413918): the standing ones by their row on the screen, then the ones stepping (a sort key of
-    /// y + 1000), each a 64 × 64 cell of its sheet centred on its tile. One stepping (walking, or an event's turn) shows its
-    /// way's row and a new phase of the cycle every 2 ticks; <paramref name="facing"/>, the chosen unit, its way's row
+    /// The units (FUN_00413918): those whose tile is in the view (19 × 14 tiles; a unit just outside, or off the map,
+    /// isn't drawn, so nothing of it overhangs into the view), the standing ones by their row on the screen, then the
+    /// ones stepping (a sort key of y + 1000), each a 64 × 64 cell of its sheet centred on its tile. One stepping
+    /// (walking, or an event's turn) shows its way's row and a new phase of the cycle every 2 ticks; <paramref name="facing"/>, the chosen unit, its way's row
     /// every 3 ticks; any other row 0 every 4 — or, once it has acted, frame 0 with SYSTEM.BMP's END on its tile — and a
     /// poisoned or (instead) sleeping one SYSTEM.BMP's PSN / SLP, a new frame every 4 ticks.
     /// </summary>
@@ -528,7 +537,9 @@ public sealed class MapSession : IMapContext
         foreach (var u in Field.Alive.Concat(Ghosts).OrderBy(u => (Stepping(Visuals[u]) ? 1000 : 0) + u.Y * Tile + Visuals[u].Offset.Y))
         {
             var v = Visuals[u];
-            var pos = ScreenPos(u.X, u.Y, viewport) + v.Offset;
+            var tile = ScreenPos(u.X, u.Y, viewport);
+            if (tile.X <= viewport.X - Tile || tile.X >= viewport.Right || tile.Y <= viewport.Y - Tile || tile.Y >= viewport.Bottom) continue;
+            var pos = tile + v.Offset;
             var sheet = UnitSheet(u);
             if (sheet is null) continue;
             bool stepping = Stepping(v), chosen = !stepping && u == facing && v.Facing > 0;

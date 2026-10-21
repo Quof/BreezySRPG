@@ -68,9 +68,13 @@ public sealed partial class Battlefield
     /// </summary>
     public Func<int, int, int?>? ChipOverride { get; set; }
 
+    /// <summary>
+    /// The terrain of a tile (FUN_0040c1d4): an "Other" object's graphic, else the chip of the 40 × 40 grid — also for
+    /// tiles past the map's edge, where units placed off the map stand.
+    /// </summary>
     public Terrain TerrainAt(int x, int y)
     {
-        int chip = ChipOverride?.Invoke(x, y) ?? Map.Tiles[y, x];
+        int chip = ChipOverride?.Invoke(x, y) ?? (x is >= 0 and < MapData.MaxSize && y is >= 0 and < MapData.MaxSize ? Map.Tiles[y, x] : 0);
         int t = chip >= 0 && chip < _chipTerrain.Length ? _chipTerrain[chip] : 0;
         return Db.Terrains[Math.Min(t, Db.Terrains.Length - 1)];
     }

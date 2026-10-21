@@ -373,9 +373,9 @@ public sealed class Ui : IDisposable
     public void DrawText(SpriteBatch sb, string s, Vector2 pos, Color c) => Text.Get(s)?.Draw(sb, pos, c);
 
     /// <summary>
-    /// Screen frame from SFRAME_H/V.BMP: 16-px strips around the 608x448 map viewport, copied opaque over whatever is
-    /// under them — units reaching past the view, pictures (FUN_00413768 → FUN_004069a4). Strip variants: red arrow =
-    /// can scroll that way, grey = can't.
+    /// Screen frame from SFRAME_H/V.BMP: 16-px strips around the 608x448 map viewport, copied opaque over the tiles
+    /// (FUN_00413768 → FUN_004069a4); the units and a picture are drawn after it, so they cover it where they reach. Strip
+    /// variants: red arrow = can scroll that way, grey = can't.
     /// </summary>
     public void ScreenFrame(SpriteBatch sb, bool up, bool down, bool left, bool right)
     {

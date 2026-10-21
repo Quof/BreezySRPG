@@ -66,6 +66,7 @@ public sealed class EventRunner
         End = EventEnd.None;
         Message = null;
         Choice = null;
+        _face = 0;   // every event starts without a face (FUN_0040cfe0 / FUN_0040d0a4 clear +0x5fbc)
         if (script.Error is not null)
         {
             Trace($"{script.Name}: malformed script not run ({script.Error})");

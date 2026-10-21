@@ -58,7 +58,12 @@ public sealed class MapData
     public required int[] CharacterList { get; init; }
     public required int CampBackground { get; init; }
     public required bool DisablePartyChanges { get; init; }
-    /// <summary>[y, x] chip index into MAPC_tileset.BMP (12 chips per row).</summary>
+    /// <summary>
+    /// [y, x] chip index into MAPC_tileset.BMP, the whole 40 × 40 grid the exe keeps (FUN_004048ac; FUN_0040c1d4 reads it
+    /// with no bounds check): past the map's width and height it holds what the file stores there (0 in every shipped
+    /// map), which units placed off the map stand on — some games hide the army there with start positions outside the
+    /// map.
+    /// </summary>
     public required ushort[,] Tiles { get; init; }
     public required MapObject[] Objects { get; init; }
     public required Dictionary<string, EventScript> Scripts { get; init; }
@@ -77,10 +82,11 @@ public sealed class MapData
     public static MapData Parse(byte[] d)
     {
         int w = Bin.I32(d, 0x20), h = Bin.I32(d, 0x24);
-        int stride = Bin.I32(d, 0x444) != 0 ? MaxSize : w;
-        var tiles = new ushort[h, w];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
+        bool whole = Bin.I32(d, 0x444) != 0;
+        int rows = whole ? MaxSize : Math.Clamp(h, 0, MaxSize), cols = whole ? MaxSize : Math.Clamp(w, 0, MaxSize), stride = whole ? MaxSize : w;
+        var tiles = new ushort[MaxSize, MaxSize];
+        for (int y = 0; y < rows; y++)
+            for (int x = 0; x < cols; x++)
                 tiles[y, x] = Bin.U16(d, TilesOff + (y * stride + x) * 2);
 
         int objOff = ObjectsOffset(d);

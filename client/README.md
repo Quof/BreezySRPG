@@ -47,6 +47,9 @@ Options:
 - `--map N`: the map to open (1-based, as in `SMAP_nnn`).
 - `--screenshot FILE.png`: render one frame at 640×480, save it and exit. It also writes `FILE.txt` with the battle state (units, HP, EXP) and a trace of the scripted input. In this mode the real keyboard and mouse are ignored and the battle RNG is seeded, so runs are reproducible.
 - `--scale N`: used with `--screenshot`, renders and saves the frame at N × 640×480, as a window N times the size draws it.
+- `--fast 1`: used with `--screenshot`, runs frames as fast as the machine allows instead of 60 a second. The game advances by frames, so the outcome is the same, only sooner.
+- `--frames N`: used with `--screenshot`, captures at frame N at the latest (default 30000), so a run that never settles still ends. A scripted run also appends map, camp, title and game-over lines to `FILE.log` as they happen, and a crash leaves `FILE.error.txt`.
+- `--choose "a,b,..."`: used with `--advance`, the option each character choice takes in turn (0-based, or `last`); `random` picks every choice from then on at random (seeded, so a run repeats).
 - `--advance N`: used with `--screenshot`, auto-confirms N event messages or choices before capturing. `-1` confirms all of them.
 - `--keys "a,b,..."`: used with `--screenshot`, scripted input fed one token every 10 frames while the map is idle:
   - `up`, `down`, `left`, `right`, `enter`, `esc`;
@@ -54,13 +57,15 @@ Options:
   - `wait` skips a beat;
   - `shot+N` captures N frames later, even mid-animation.
   - `telop+N` / `telopK+N` captures N frames after the next caption (any, or `TELOPK.BMP`: 1 PLAYER TURN, 2 ENEMY TURN, 3 COMPLETE!!) appears.
+  - `choice+N` / `choiceK+N` captures N frames after the next (the K-th) character choice comes up, leaving it unanswered.
+  - `endturn` ends the player's turn, as ターン終了 does.
 
   Example: select ジュナ on map 1 and move her 3 tiles up:
 
   ```bash
   dotnet run --project client/src/Erumani -- --map 1 --advance -1 --keys "at:7.12,enter,at:7.9,enter" --screenshot shot.png
   ```
-- `--event NAME`: run this script on load instead of `OPENING`.
+- `--event NAME`: run this script on load instead of the first map's `OPENING`, e.g. `--map 4 --event EV000101` (object 1's first event slot). With `--advance -1 --choose random --fast 1 --screenshot` this runs any event of any map by itself.
 - `--load N`: load `SAVEn.DAT` at start (a camp save opens its camp).
 - `--saves DIR`: where `SAVEn.DAT` files are read and written. The default is the game folder, as in the original; point it elsewhere to keep the game folder untouched.
 - `--camp N` (developer): open the camp before map N.

@@ -11,6 +11,11 @@ public sealed class BattleUnit
     public required Side Side { get; set; }
     /// <summary>SMAP object index (-1 = deployed from the roster onto a start position).</summary>
     public int MapObject { get; init; } = -1;
+    /// <summary>
+    /// Holds a roster entry (record [4] ≥ 0): deployed from the army, or the first of its id to join it by an event
+    /// (FUN_004244d8). With GAME.DAT [5] such a unit's entry is deleted when it has fallen by the map's end.
+    /// </summary>
+    public bool FromRoster { get; set; }
     public int ClassId { get; set; }
     public int Level { get; set; } = 1;
     public int Exp { get; set; }
