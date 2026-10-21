@@ -362,6 +362,7 @@ public sealed class ErumaniGame : Game
         _battle.NewSaveMenu = MakeSaveMenu;
         _battle.LoadRequested = n => { if (SaveFile.Load(SaveFile.PathFor(_folder, n)) is not { } f) return false; ApplySave(f, n); return true; };
         _battle.QuitRequested = Exit;
+        _battle.OptionsRequested = OpenOptions;
         if (resume is not null)
         {
             // a battle save: its units (with their statuses), phase and fired events instead of the opening

@@ -242,6 +242,8 @@ public sealed class BattleController
     public Func<int, bool>? LoadRequested { get; set; }
     public Func<int, bool>? SlotExists { get; set; }
     public Action? QuitRequested { get; set; }
+    /// <summary>The turn menu's 環境設定 (modern): the game opens the options.</summary>
+    public Action? OptionsRequested { get; set; }
     readonly Camp.MenuList _files = new() { ItemWidth = 60 };
     readonly Camp.MenuList _quit = new() { ItemWidth = 36 };
     bool _saving;
@@ -451,11 +453,11 @@ public sealed class BattleController
     /// <summary>FUN_00410698: はい fades out and quits; いいえ or a right click go back to ゲーム終了.</summary>
     void UpdateQuit(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { ReopenTurnMenu(4); return; }
+        if (i.Cancel || i.RightClick) { ReopenTurnMenu(5); return; }
         if (_quit.Navigate(i, MouseVirtual) is var c and >= 0)
         {
             if (c == 0) Leave(() => QuitRequested?.Invoke());
-            else ReopenTurnMenu(4);
+            else ReopenTurnMenu(5);
         }
     }
 
@@ -911,13 +913,15 @@ public sealed class BattleController
     /// <summary>
     /// FUN_0040e658, the player's phase: a click on a unit that can act shows its movement range — the player's own
     /// to move it, anyone else's just to look (FUN_0040ebcc) — while acted or sleeping units do nothing; a right
-    /// click (or the info key) opens the status window; a click on an empty tile opens the turn menu.
+    /// click (or the info key) opens the status window; a click on an empty tile opens the turn menu (a right click there too, modern).
     /// </summary>
     void UpdateIdle(BattleInput i)
     {
         MoveCursor(i);
         var u = _s.Field.UnitAt(_cursor.X, _cursor.Y);
         if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; _state_ = State.Status; return; }
+        // a right click on an empty tile opens the turn menu too (modern; the original does nothing there)
+        if (i.RightClick && i.MouseTile is not null) { Sfx.Click(); OpenTurnMenu(); return; }
         if (!Pick(i)) return;
         Sfx.Click();
         if (u is null) { OpenTurnMenu(); return; }
@@ -1829,13 +1833,13 @@ public sealed class BattleController
     /// <summary>
     /// The turn menu (FUN_00418614) on a click on an empty tile, the pointer's place kept (slot 0) and the pointer on the
     /// first entry. WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了 (the original's test
-    /// play adds デバッグ, which isn't part of the game).
+    /// play adds デバッグ, which isn't part of the game); the client adds 環境設定 (Options) before ゲーム終了.
     /// </summary>
     void OpenTurnMenu()
     {
         SavePointer(0);
-        _menu = new[] { Word(19), Word(20), Word(21), Word(22), Word(23) };
-        _menuEnabled = new[] { true, true, true, true, true };
+        _menu = new[] { Word(19), Word(20), Word(21), Word(22), Ui.Lang.T("Options", "環境設定"), Word(23) };
+        _menuEnabled = new[] { true, true, true, true, true, true };
         _menuIndex = 0;
         _turnMenuAt = _s.ScreenPos(_cursor.X, _cursor.Y, ViewportRect).ToPoint();
         _sel = null;
@@ -1861,7 +1865,8 @@ public sealed class BattleController
             case 1: _state_ = State.WholeMap; break;
             case 2: OpenFiles(save: true); break;
             case 3: OpenFiles(save: false); break;
-            case 4: OpenConfirm(57, State.QuitConfirm); break;      // ゲームを終了します (FUN_00418a00)
+            case 4: OptionsRequested?.Invoke(); break;              // the client's options; the menu stays up under them
+            case 5: OpenConfirm(57, State.QuitConfirm); break;      // ゲームを終了します (FUN_00418a00)
         }
     }
 

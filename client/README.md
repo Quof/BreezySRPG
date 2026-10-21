@@ -98,7 +98,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | Keys | Action |
 |---|---|
 | Enter / Z, left click | confirm. On a unit: select it, or show its status if it can't act. On an empty tile: the turn menu |
-| Esc / X / Backspace, right click | cancel or back (at the command menu: undo the move). During a battle scene: skip it |
+| Esc / X / Backspace, right click | cancel or back (at the command menu: undo the move). During a battle scene: skip it. A right click on an empty tile opens the turn menu, which also has 環境設定 (Options) |
 | Arrows | move the map cursor (hold to repeat); move in menus |
 | W A S D | scroll the map camera; W/S also move in menus |
 | C / Left Shift, right click on a unit | unit status |
