@@ -3,15 +3,38 @@ using Srpg95.Data;
 namespace Erumani.Runtime;
 
 /// <summary>
-/// Reads bitmap resources out of SRPGEXEC.EXE (the start-up logos LOGO1 and LOGO2, FUN_00425818 / FUN_004258d0). The
-/// file is only read: a PE32 resource directory walk (type RT_BITMAP, the named entry, its first language), the DIB
-/// given the file header a BMP has.
+/// Reads resources out of SRPGEXEC.EXE: the start-up logos LOGO1 and LOGO2 (RT_BITMAP, FUN_00425818 / FUN_004258d0) and
+/// the 12-px font KANJIFONT (type "KANJI", FUN_0040a284). The file is only read: a PE32 resource directory walk (the type,
+/// the named entry, its first language).
 /// </summary>
 public static class ExeResources
 {
     const int RtBitmap = 2;
 
+    /// <summary>A bitmap resource, given the file header a BMP has.</summary>
     public static IndexedBitmap? Bitmap(string exePath, string name)
+    {
+        if (Raw(exePath, RtBitmap, null, name) is not { } dib) return null;
+        try
+        {
+            int hdr = Bin.I32(dib, 0), bpp = Bin.U16(dib, 14), used = Bin.I32(dib, 32);
+            int colours = used != 0 ? used : bpp <= 8 ? 1 << bpp : 0;
+            var bmp = new byte[14 + dib.Length];
+            bmp[0] = (byte)'B';
+            bmp[1] = (byte)'M';
+            BitConverter.GetBytes(bmp.Length).CopyTo(bmp, 2);
+            BitConverter.GetBytes(14 + hdr + colours * 4).CopyTo(bmp, 10);
+            dib.CopyTo(bmp, 14);
+            return IndexedBitmap.Decode(bmp, name);
+        }
+        catch (Exception e) when (e is InvalidDataException or ArgumentException or IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A resource's bytes: of type <paramref name="typeId"/>, or of the type named <paramref name="typeName"/>.</summary>
+    public static byte[]? Raw(string exePath, int typeId, string? typeName, string name)
     {
         try
         {
@@ -49,23 +72,14 @@ public static class ExeResources
                 }
                 return null;
             }
-            if (Find(root, RtBitmap, null) is not int types || (types & int.MinValue) == 0) return null;
+            if (Find(root, typeId, typeName) is not int types || (types & int.MinValue) == 0) return null;
             if (Find(root + (types & 0x7FFFFFFF), 0, name) is not int names || (names & int.MinValue) == 0) return null;
             int langs = root + (names & 0x7FFFFFFF);
             if (Bin.U16(b, langs + 12) + Bin.U16(b, langs + 14) == 0) return null;
             int dataEntry = root + Bin.I32(b, langs + 16 + 4);
             int dataAt = Offset(Bin.I32(b, dataEntry)), size = Bin.I32(b, dataEntry + 4);
-            if (dataAt < 0) return null;
-            // a BMP file is the DIB with a 14-byte file header in front
-            int hdr = Bin.I32(b, dataAt), bpp = Bin.U16(b, dataAt + 14), used = Bin.I32(b, dataAt + 32);
-            int colours = used != 0 ? used : bpp <= 8 ? 1 << bpp : 0;
-            var bmp = new byte[14 + size];
-            bmp[0] = (byte)'B';
-            bmp[1] = (byte)'M';
-            BitConverter.GetBytes(bmp.Length).CopyTo(bmp, 2);
-            BitConverter.GetBytes(14 + hdr + colours * 4).CopyTo(bmp, 10);
-            Array.Copy(b, dataAt, bmp, 14, size);
-            return IndexedBitmap.Decode(bmp, name);
+            if (dataAt < 0 || dataAt + size > b.Length) return null;
+            return b.AsSpan(dataAt, size).ToArray();
         }
         catch (Exception e) when (e is IOException or InvalidDataException or ArgumentException or IndexOutOfRangeException or UnauthorizedAccessException)
         {

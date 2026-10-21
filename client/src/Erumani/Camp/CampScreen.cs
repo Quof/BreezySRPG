@@ -91,8 +91,7 @@ public sealed class MenuList
     {
         ui.Panel(sb, Rect);
         var white = Ui.Ui.PanelText;
-        // GDI's text origin is a pixel up and left of the client's text images (as everywhere else)
-        void T(string s, int x, int y, Color c) { if (ui.SmallText.Get(s) is { } t) sb.Draw(t, new Vector2(x + 1, y + 2), c); }
+        void T(string s, int x, int y, Color c) => ui.Text12(sb, s, x, y, c);
         for (int h = 0; h < Header.Length; h++)
         {
             if (Header[h] == "-") EtchedRule(sb, ui, Rect, RowY(h));
@@ -126,7 +125,7 @@ public sealed class MenuList
     public static void PageFooter(SpriteBatch sb, Ui.Ui ui, Rectangle panel, int rowY, int page, int pages, int pressed)
     {
         EtchedRule(sb, ui, panel, rowY);
-        void T(string s, int x) { if (ui.SmallText.Get(s) is { } t) sb.Draw(t, new Vector2(panel.X + x + 1, rowY + 16 + 2), Ui.Ui.PanelText); }
+        void T(string s, int x) => ui.Text12(sb, s, panel.X + x, rowY + 16, Ui.Ui.PanelText);
         T(PageLabel, 12);
         T($"{page + 1,2}／{pages,2}", 60);
         if (ui.SystemBmp is { } sys)
@@ -618,8 +617,7 @@ public sealed class CampScreen
 
     // ---------------- drawing ----------------
 
-    // GDI's text origin is a pixel up and left of the client's text images (as everywhere else)
-    void T(SpriteBatch sb, string s, int x, int y, Color c) { if (_ui.SmallText.Get(s) is { } t) sb.Draw(t, new Vector2(x + 1, y + 2), c); }
+    void T(SpriteBatch sb, string s, int x, int y, Color c) => _ui.Text12(sb, s, x, y, c);
 
     public void Draw(SpriteBatch sb, int frame)
     {

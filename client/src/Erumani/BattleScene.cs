@@ -385,55 +385,35 @@ public sealed class BattleScene
         }
     }
 
-    // bar gradients sampled from the recording (median of many columns; colours approximate)
-    static readonly Color[] HpFull =
-    {
-        new(192, 0, 0), new(248, 64, 56), new(200, 88, 40), new(255, 208, 152), new(176, 104, 32), new(255, 224, 152),
-        new(240, 248, 144), new(240, 248, 144), new(240, 248, 144), new(240, 248, 144), new(255, 216, 144), new(176, 104, 32),
-        new(255, 208, 160), new(200, 88, 40), new(248, 64, 56), new(192, 0, 0),
-    };
-    static readonly Color[] BarEmpty =
-    {
-        new(128, 0, 0), new(160, 16, 16), new(216, 0, 0), new(232, 0, 0), new(216, 0, 0), new(232, 0, 0),
-        new(248, 0, 0), new(248, 0, 0), new(248, 0, 0), new(248, 0, 0), new(232, 0, 8), new(216, 0, 0),
-        new(232, 0, 0), new(216, 0, 0), new(152, 16, 8), new(120, 0, 0),
-    };
-    static readonly Color[] TpFull =
-    {
-        new(0, 96, 0), new(40, 152, 40), new(40, 152, 24), new(144, 248, 120), new(56, 152, 8), new(144, 248, 96),
-        new(160, 248, 96), new(160, 248, 96), new(152, 248, 88), new(152, 248, 88), new(152, 248, 104), new(56, 152, 8),
-        new(144, 248, 128), new(40, 152, 24), new(40, 152, 40), new(0, 96, 0),
-    };
-
     /// <summary>
-    /// Info panels (T22): name (18 px) over an etched rule; ＨＰ / ＴＰ with "cur／max" right-aligned over
-    /// 16-px gradient bars (empty part red); two rows of stats: 攻撃力 物理防御 特殊補正値 / 攻撃精度 特殊防御 地形効果.
+    /// The info panels (FUN_0041d214 → FUN_0041c960): 320 × 160 at (0,320) and (320,320) in the unit's side's colour —
+    /// blue for the player's, red for the computer's, yellow for neutral ones — text in its light swatch (GDI positions):
+    /// the name, 16 px bold, at (12,8) over an etched rule at y 28; ＨＰ at (12,32) and 「%2d／%2d」 at 272 over its bar at
+    /// y 48; ＴＰ at (12,72) and its numbers over the bar at y 88; then 攻撃力 物理防御 特殊補正値 / 攻撃精度 特殊防御
+    /// 地形効果 at x 12, 118, 224 on y 116 / 132, each 「%4d」 at 60 px further on.
     /// </summary>
     void DrawPanels(SpriteBatch sb, float alpha)
     {
         foreach (var (unit, r) in new[] { (StageLeft, new Rectangle(0, 320, 320, 160)), (StageRight, new Rectangle(320, 320, 320, 160)) })
         {
             if (unit is not { } u) continue;
-            var color = u.Side == Side.Ally ? Ui.Ui.PanelColor.Blue : Ui.Ui.PanelColor.Red;
+            var color = u.Side switch { Side.Neutral => Ui.Ui.PanelColor.Yellow, Side.Enemy => Ui.Ui.PanelColor.Red, _ => Ui.Ui.PanelColor.Blue };
             _ui.Panel(sb, r, color);
             var (light, dark) = Ui.Ui.EdgeColors(color);
-            var text = Ui.Ui.PanelText;
-            void T(Ui.GdiText font, string s, int x, int y, bool right = false)
-            {
-                if (font.Get(s) is not { } t) return;
-                sb.Draw(t, new Vector2(r.X + (right ? x - t.Width : x), r.Y + y), text);
-            }
-            T(_ui.NameText, u.Name, 12, 8);
+            var text = Ui.Ui.Modern ? Ui.Ui.PanelText : light;
+            void T(string s, int x, int y) => _ui.Text12(sb, s, r.X + x, r.Y + y, text);
+            // the name through GDI's DrawText (FUN_00407954), its corner at the rectangle's
+            if (_ui.NameText.Get(u.Name) is { } name) sb.Draw(name, new Vector2(r.X + 12, r.Y + 8), text);
             _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 28, 296, 1), dark);
             _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 29, 296, 1), light);
             int hp = Math.Max(0, _shown.TryGetValue(u, out var shownHp) ? shownHp : Hp(u));
-            T(_ui.SmallText, _db.Words[2], 14, 35);
-            T(_ui.SmallText, $"{hp}／{u.MaxHp,2}", 307, 35, right: true);
-            Bar(sb, r.X + 12, r.Y + 48, hp, u.MaxHp, HpFull, light, dark);
-            T(_ui.SmallText, _db.Words[3], 14, 75);
+            T(_db.Words[2], 12, 32);
+            T($"{hp,2}／{u.MaxHp,2}", 272, 32);
+            Bar(sb, r.X + 12, r.Y + 48, hp, u.MaxHp, 0, light, dark);
             int mp = _mp.TryGetValue(u, out var m0) ? m0 : u.Mp;
-            T(_ui.SmallText, $"{mp}／{u.MaxMp,2}", 307, 75, right: true);
-            Bar(sb, r.X + 12, r.Y + 88, mp, u.MaxMp, TpFull, light, dark);
+            T(_db.Words[3], 12, 72);
+            T($"{mp,2}／{u.MaxMp,2}", 272, 72);
+            Bar(sb, r.X + 12, r.Y + 88, mp, u.MaxMp, 16, light, dark);
             var s = _field.Stats(u);
             int terrain = _field.TerrainAt(u.X, u.Y).DefenseBonus;
             (int Word, int Value)[,] stats =
@@ -444,25 +424,34 @@ public sealed class BattleScene
             for (int row = 0; row < 2; row++)
                 for (int col = 0; col < 3; col++)
                 {
-                    int x = 13 + col * 106, y = 118 + row * 16;
-                    T(_ui.SmallText, _db.Words[stats[row, col].Word], x, y);
-                    T(_ui.SmallText, stats[row, col].Value.ToString(), x + 84, y, right: true);
+                    int x = 12 + col * 106, y = 116 + row * 16;
+                    T(_db.Words[stats[row, col].Word], x, y);
+                    T($"{stats[row, col].Value,4}", x + 60, y);
                 }
         }
         if (alpha < 1) _ui.Fill(sb, new Rectangle(0, 320, 640, 160), Color.Black * (1 - alpha));
     }
 
-    void Bar(SpriteBatch sb, int x, int y, int value, int max, Color[] full, Color light, Color dark)
+    /// <summary>
+    /// An HP / TP bar (FUN_0041c960, its pieces put together by FUN_00411d74): 296 × 16 of SYSTEM.BMP's 8 × 16 pieces —
+    /// the empty one at (56, <paramref name="row"/>) all along, the full one at (48, row) for value × 296 / max px (all
+    /// of it when there's no maximum) — in a sunken frame a pixel outside, dark top and left, light bottom and right.
+    /// </summary>
+    void Bar(SpriteBatch sb, int x, int y, int value, int max, int row, Color light, Color dark)
     {
         const int w = 296;
         int filled = max <= 0 ? w : w * Math.Clamp(value, 0, max) / max;
-        _ui.Fill(sb, new Rectangle(x, y - 1, w, 1), dark);
-        for (int row = 0; row < 16; row++)
-        {
-            if (filled > 0) _ui.Fill(sb, new Rectangle(x, y + row, filled, 1), full[row]);
-            if (filled < w) _ui.Fill(sb, new Rectangle(x + filled, y + row, w - filled, 1), BarEmpty[row]);
-        }
-        _ui.Fill(sb, new Rectangle(x, y + 16, w, 1), light);
+        if (_tex.Get("SYSTEM.BMP", transparent: false) is { } sys)   // copied opaque (FUN_004069a4)
+            for (int px = 0; px < w; px += 8)
+            {
+                int full = Math.Clamp(filled - px, 0, 8);
+                if (full > 0) sb.Draw(sys, new Vector2(x + px, y), new Rectangle(48, row, full, 16), Color.White);
+                if (full < 8) sb.Draw(sys, new Vector2(x + px + full, y), new Rectangle(56 + full, row, 8 - full, 16), Color.White);
+            }
+        _ui.Fill(sb, new Rectangle(x - 1, y - 1, w + 2, 1), dark);
+        _ui.Fill(sb, new Rectangle(x - 1, y + 16, w + 2, 1), light);
+        _ui.Fill(sb, new Rectangle(x - 1, y - 1, 1, 18), dark);
+        _ui.Fill(sb, new Rectangle(x + w, y - 1, 1, 18), light);
     }
 
     /// <summary>

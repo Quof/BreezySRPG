@@ -90,6 +90,9 @@ public sealed class ErumaniGame : Game
         if (_db.Words.Length > 63) Camp.MenuList.PageLabel = _db.Words[63];   // ページ
         _tex = new Textures(GraphicsDevice, _folder);
         _ui = new Ui.Ui(GraphicsDevice, _tex);
+        // the original's 12-px text comes from its own font (FUN_0040a284 loads KANJIFONT)
+        if (_folder.Find("SRPGEXEC.EXE") is { } exePath && ExeResources.Raw(exePath, 0, "KANJI", "KANJIFONT") is { Length: >= 24 } glyphs)
+            _ui.MenuFont = new Ui.ExeFont(GraphicsDevice, glyphs);
         _audio = new Audio(_folder) { Muted = _opts.Screenshot is not null };
         Sfx.Audio = _audio;
         _settings = Settings.Load(persistent: _opts.Screenshot is null);
@@ -1104,7 +1107,7 @@ public sealed class ErumaniGame : Game
         for (int i = 0; i < opts.Length; i++)
         {
             var c = _ui.MenuRow(_sb, ChoiceRow(r, i), _choiceActive && i == _runner.ChoiceIndex, true, _frame);
-            if (_ui.SmallText.Get(opts[i]) is { } t) _sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + i * 16), c);
+            _ui.Text12(_sb, opts[i], r.X + 12, r.Y + 8 + i * 16, c);
         }
     }
 

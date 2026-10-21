@@ -31,8 +31,7 @@ public static class StatusWindow
         var text = Ui.Modern ? Ui.PanelText : light;
         var st = field.Stats(u);
         string Word(int i) => i >= 0 && i < db.Words.Length ? db.Words[i] : "";
-        // GDI's text origin is a pixel up and left of the client's text images (as everywhere else)
-        void T(GdiText font, string s, int x, int y) { if (font.Get(s) is { } t) sb.Draw(t, new Vector2(r.X + x + 1, r.Y + y + 2), text); }
+        void T(string s, int x, int y) => ui.Text12(sb, s, r.X + x, r.Y + y, text);
         void Line(int x, int y, int w, int h, Color c) => ui.Fill(sb, new Rectangle(r.X + x, r.Y + y, w, h), c);
 
         int face = db.Units[Math.Clamp(u.Unit, 0, db.Units.Length - 1)].Face;
@@ -46,31 +45,32 @@ public static class StatusWindow
         Line(8, 36, 246, 1, dark);
         Line(8, 7, 1, 28, light);
         Line(255, 7, 1, 28, dark);
-        T(ui.NameText, u.Name, 12, 14);
+        // the name through GDI's DrawText (FUN_00407954), its corner at the rectangle's
+        if (ui.NameText.Get(u.Name) is { } name) sb.Draw(name, new Vector2(r.X + 12, r.Y + 14), text);
 
         string cls = field.Class(u).Name;
-        T(ui.SmallText, cls, 12, 40);
-        T(ui.SmallText, cls, 13, 40);
-        T(ui.SmallText, Word(1), 144, 40);
-        T(ui.SmallText, $"   {u.Level,2} ({u.Exp,2})", 180, 40);
-        T(ui.SmallText, Word(2), 12, 64);
-        T(ui.SmallText, $"  {u.Hp,2}／{u.MaxHp,2}", 60, 64);
-        T(ui.SmallText, Word(3), 144, 64);
-        T(ui.SmallText, $"  {u.Mp,2}／{u.MaxMp,2}", 192, 64);
+        T(cls, 12, 40);
+        T(cls, 13, 40);
+        T(Word(1), 144, 40);
+        T($"   {u.Level,2} ({u.Exp,2})", 180, 40);
+        T(Word(2), 12, 64);
+        T($"  {u.Hp,2}／{u.MaxHp,2}", 60, 64);
+        T(Word(3), 144, 64);
+        T($"  {u.Mp,2}／{u.MaxMp,2}", 192, 64);
 
         int[] vals = { st.Attack, st.Speed, st.Defense, st.MagicDefense, st.Str, st.Mag, st.Skl, st.Sta };
         int[] rows = { 88, 104, 120, 136, 160, 176, 192, 208 };
         for (int i = 0; i < 8; i++)
         {
-            T(ui.SmallText, Word(4 + i), 12, rows[i]);
-            T(ui.SmallText, $"  {vals[i],2}", 84, rows[i]);
+            T(Word(4 + i), 12, rows[i]);
+            T($"  {vals[i],2}", 84, rows[i]);
         }
 
         int[] held = { u.Weapon, u.Armor, u.Accessory };
         for (int s = 0; s < 3; s++)
         {
-            T(ui.SmallText, Word(12 + s), 12, 232 + 16 * s);
-            if (held[s] >= 0 && held[s] < db.Items.Length) T(ui.SmallText, db.Items[held[s]].Name, 84, 232 + 16 * s);
+            T(Word(12 + s), 12, 232 + 16 * s);
+            if (held[s] >= 0 && held[s] < db.Items.Length) T(db.Items[held[s]].Name, 84, 232 + 16 * s);
         }
     }
 }

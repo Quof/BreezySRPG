@@ -76,6 +76,22 @@ public sealed class Ui : IDisposable
 
     public void Fill(SpriteBatch sb, Rectangle r, Color c) => sb.Draw(_pixel, r, c);
 
+    /// <summary>The original's 12-px font, read from SRPGEXEC.EXE (null when it can't be).</summary>
+    public ExeFont? MenuFont { get; set; }
+
+    /// <summary>
+    /// The original's 12-px text (FUN_00407744) at GDI position (x, y): the exe's own font; with the modern skin or no exe,
+    /// MS Gothic 12 px a pixel right and two down (where its glyphs then fall closest to the exe's).
+    /// </summary>
+    public void Text12(SpriteBatch sb, string s, int x, int y, Color c)
+    {
+        if (!Modern && MenuFont?.Get(s) is { } t) sb.Draw(t, new Vector2(x, y), c);
+        else if (SmallText.Get(s) is { } g) sb.Draw(g, new Vector2(x + 1, y + 2), c);
+    }
+
+    /// <summary>The width <see cref="Text12"/> gives a string.</summary>
+    public int Measure12(string s) => !Modern && MenuFont is not null ? ExeFont.Measure(s) : SmallText.Measure(s);
+
     /// <summary>SYSTEM.BMP with palette index 0 transparent (arrows, cursors, balloon pieces).</summary>
     public Texture2D? SystemBmp => _tex.Get("SYSTEM.BMP");
 
@@ -305,6 +321,7 @@ public sealed class Ui : IDisposable
         Text.Dispose();
         SmallText.Dispose();
         NameText.Dispose();
+        MenuFont?.Dispose();
         _pixel.Dispose();
         foreach (var t in _windows.Values) t.Dispose();
         foreach (var t in _modern.Values) t.Dispose();

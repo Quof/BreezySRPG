@@ -1500,7 +1500,7 @@ public sealed class BattleController
 
     /// <summary>A one-line message of the client's own (strike results with the battle scenes off).</summary>
     void Popup(string text, BattleUnit? kill = null, Action? sound = null) =>
-        _panels.Enqueue(new Panel(new[] { text }, 0, Math.Max(20, (_ui.SmallText.Measure(text) + 32 + 11) / 12), kill,
+        _panels.Enqueue(new Panel(new[] { text }, 0, Math.Max(20, (_ui.Measure12(text) + 32 + 11) / 12), kill,
             sound ?? (kill is not null ? Sfx.Down : null), Auto: true));
 
     /// <summary>One of the original's message panels (nothing when there are no lines).</summary>
@@ -1796,15 +1796,11 @@ public sealed class BattleController
             : Ui.Ui.EdgeColors(u.Side switch { Side.Enemy => Ui.Ui.PanelColor.Red, Side.Neutral => Ui.Ui.PanelColor.Yellow, _ => Ui.Ui.PanelColor.Blue });
         void Outlined(string s, int x, int y)
         {
-            if (_ui.SmallText.Get(s) is not { } t) return;
             int w = Bin.Sjis.GetByteCount(s) * 6;
             x = Math.Min(Math.Max(x, 16), 624 - w);
             if (y < 14) y += 68;
-            // GDI's text origin is a pixel up and left of the client's text images (as everywhere else)
-            var at = new Vector2(x + 1, y + 2);
-            foreach (var d in new[] { new Vector2(1, 0), new Vector2(0, 1), new Vector2(-1, 0), new Vector2(0, -1) })
-                sb.Draw(t, at + d, dark);
-            sb.Draw(t, at, light);
+            foreach (var (dx, dy) in new[] { (1, 0), (0, 1), (-1, 0), (0, -1) }) _ui.Text12(sb, s, x + dx, y + dy, dark);
+            _ui.Text12(sb, s, x, y, light);
         }
         Outlined(u.Name, tile.X + 14 - Bin.Sjis.GetByteCount(u.Name) * 6 / 2, tile.Y - 34);
         Outlined($"{u.Hp,2}／{u.MaxHp,2}", tile.X - 1, tile.Y - 20);
@@ -1818,7 +1814,7 @@ public sealed class BattleController
         for (int i = 0; i < _menu.Length; i++)
         {
             var c = _ui.MenuRow(sb, MenuBarRect(r, i), i == _menuIndex, _menuEnabled[i], frame);
-            if (_ui.SmallText.Get(_menu[i]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + i * 16), c);
+            _ui.Text12(sb, _menu[i], r.X + 12, r.Y + 8 + i * 16, c);
         }
     }
 
@@ -1850,50 +1846,33 @@ public sealed class BattleController
         _ui.Panel(sb, r);
         int first = Paged ? _itemPage * ItemRows : 0;
         int count = Paged ? Math.Min(ItemRows, _menu.Length - first) : _menu.Length;
-        void T(string s, int x, int y, Color c, bool right = false)
-        {
-            if (_ui.SmallText.Get(s) is not { } tx) return;
-            sb.Draw(tx, new Vector2(right ? x - tx.Width : x, y), c);
-        }
         for (int k = 0; k < count; k++)
         {
             int i = first + k;
             var row = RowRect(i);
-            T(_menu[i], r.X + 13, row.Y + 2, _ui.MenuRow(sb, row, i == _menuIndex, _menuEnabled[i], frame));
+            _ui.Text12(sb, _menu[i], r.X + 12, row.Y, _ui.MenuRow(sb, row, i == _menuIndex, _menuEnabled[i], frame));
         }
         int pages = Math.Max(1, (_menu.Length + ItemRows - 1) / ItemRows);
         if (_state_ == State.ItemList || (_state_ == State.EquipList && pages > 1))
-        {
-            var (light, dark) = Ui.Ui.EdgeColors(Ui.Ui.PanelColor.Green);
-            _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + ItemRows * 16 + 15, r.Width - 24, 1), dark);
-            _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + ItemRows * 16 + 16, r.Width - 24, 1), light);
-            int fy = r.Y + ItemRows * 16 + 24;
-            T(Word(63), r.X + 13, fy + 2, Ui.Ui.PanelText);                                   // ページ
-            T($"{_itemPage + 1,2}／{pages,2}", r.X + 61, fy + 2, Ui.Ui.PanelText);
-            if (_tex.Get("SYSTEM.BMP") is { } sys)
-            {
-                sb.Draw(sys, new Vector2(r.Right - 54, fy), new Rectangle(0, 304, 16, 16), Color.White);
-                sb.Draw(sys, new Vector2(r.Right - 30, fy), new Rectangle(32, 304, 16, 16), Color.White);
-            }
-        }
-        // the description window stays while the list is open, empty over a row with nothing to describe
+            Camp.MenuList.PageFooter(sb, _ui, r, r.Y + 8 + ItemRows * 16, _itemPage, pages, -1);
+        // the description window (FUN_004142d4) stays while the list is open, empty over a row with nothing to describe
         var d = new Rectangle(80, 32, 480, 48);
         _ui.Panel(sb, d);
         if (RowSubject(_menuIndex) is { } sub)
         {
-            T($"{sub.Name}：", d.X + 13, d.Y + 10, Ui.Ui.PanelText);
-            if (sub.Item is { } it) T(Ui.ItemInfo.Summary(it, _db), d.Right - 16, d.Y + 10, Ui.Ui.StatText, right: true);   // modern addition
-            T(sub.Desc, d.X + 13, d.Y + 26, Ui.Ui.PanelText);
+            _ui.Text12(sb, $"{sub.Name}：", d.X + 12, d.Y + 8, Ui.Ui.PanelText);
+            if (sub.Item is { } it && _ui.SmallText.Get(Ui.ItemInfo.Summary(it, _db)) is { } st)   // modern addition
+                sb.Draw(st, new Vector2(d.Right - 16 - st.Width, d.Y + 10), Ui.Ui.StatText);
+            _ui.Text12(sb, sub.Desc, d.X + 12, d.Y + 24, Ui.Ui.PanelText);
         }
     }
 
-    /// <summary>A message panel (see <see cref="Panel"/>); the text at GDI's (+12, +8), as the T22 recording shows it.</summary>
+    /// <summary>A message panel (see <see cref="Panel"/>); its lines at GDI's (+12, +8), 16 px apart.</summary>
     void DrawPanel(SpriteBatch sb, Panel p)
     {
         int w = p.Units * 12;
         var r = new Rectangle(p.Auto ? 320 - w / 2 : p.X, 64, w, (p.Lines.Length + 1) * 16);
         _ui.Panel(sb, r);
-        for (int k = 0; k < p.Lines.Length; k++)
-            if (_ui.SmallText.Get(p.Lines[k]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + k * 16), Ui.Ui.PanelText);
+        for (int k = 0; k < p.Lines.Length; k++) _ui.Text12(sb, p.Lines[k], r.X + 12, r.Y + 8 + k * 16, Ui.Ui.PanelText);
     }
 }
