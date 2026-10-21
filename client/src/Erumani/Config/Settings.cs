@@ -14,7 +14,7 @@ public enum GameAction
 
 public enum Scaling { Integer, Fit, Stretch }
 /// <summary>The interface's look: the original's, the modern dark one, or the gilded one (gold-framed dark boxes).</summary>
-public enum UiSkin { Original, Modern, Gilded }
+public enum UiSkin { Original, Gilded, Modern }   // the options list them in this order (settings.json keeps the names)
 /// <summary>The restyled skins' smooth font (the original skin keeps the original's bitmap fonts).</summary>
 public enum UiFont { NotoSans, NotoSerif, BizUd, YuGothic, MsGothic }
 /// <summary>The language of EasySRPG95's own menus and messages (the game's text is the game's).</summary>

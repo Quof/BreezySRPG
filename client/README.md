@@ -119,7 +119,7 @@ F1 opens them anywhere; during an event (a cutscene), a right click's menu has t
 
 | Section | Settings |
 |---|---|
-| Display | interface style (original / modern / gilded); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI, MS Gothic — the face the original draws its messages in); language of EasySRPG95's own menus and messages (English / 日本語 — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
+| Display | interface style (original / gilded / modern); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI, MS Gothic — the face the original draws its messages in); language of EasySRPG95's own menus and messages (English / 日本語 — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
 | Audio | BGM and SE volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, confirm sound (the CLICK "thunk") |
 | Gameplay | battle animations on/off, skip enemy turn, fast-forward key (hold / toggle), hold left click to fast-forward, speed (×2–×8), fast-forward skips battle scenes, fast-forward advances text |
 | Controls | rebind every action; reset to defaults |

@@ -224,28 +224,36 @@ static class Gilding
 
     /// <summary>
     /// The screen frame round the 608 × 448 view at (16, 16), the part of the 640 × 480 screen in <paramref name="part"/>:
-    /// dark strips, and the thin gold border just outside the view.
+    /// dark strips, and a thin gold wire where the original's silver one runs (SFRAME_H / SFRAME_V: 9½ px in from the
+    /// screen's edges, its corners rounded).
     /// </summary>
     public static Color[] ScreenFrame(Rectangle part, int k)
     {
-        const float b = Border;
+        const float inset = 9.5f, radius = 5f, half = 0.8f;
         int tw = part.Width * k, th = part.Height * k;
         var px = new Color[tw * th];
         var dark = Rgb(8, 10, 20);
+        // signed distance to the wire's middle line, a rounded rectangle (negative inside it)
+        static float Line(float x, float y)
+        {
+            float qx = MathF.Abs(x - 320) - (320 - inset - radius), qy = MathF.Abs(y - 240) - (240 - inset - radius);
+            return new Vector2(MathF.Max(qx, 0), MathF.Max(qy, 0)).Length() + MathF.Min(MathF.Max(qx, qy), 0) - radius;
+        }
         for (int row = 0; row < th; row++)
         {
             float y = part.Y + (row + 0.5f) / k;
             for (int col = 0; col < tw; col++)
             {
                 float x = part.X + (col + 0.5f) / k;
-                float dx = MathF.Max(MathF.Max(16 - x, x - 624), 0), dy = MathF.Max(MathF.Max(16 - y, y - 464), 0), dv = MathF.Max(dx, dy);
-                if (dv <= 0) continue;
+                if (x >= 16 && x <= 624 && y >= 16 && y <= 464) continue;
                 var c = new Vector4(dark, 1);
-                float edge = Math.Clamp((b - dv) * k + 0.5f, 0, 1);
-                if (edge > 0)
+                float d = Line(x, y), cover = Math.Clamp((half - MathF.Abs(d)) * k + 0.5f, 0, 1);
+                if (cover > 0)
                 {
-                    var gin = dx >= dy ? new Vector2(x < 16 ? 1 : -1, 0) : new Vector2(0, y < 16 ? 1 : -1);
-                    c = Vector4.Lerp(c, new Vector4(Gold(WireNormal(2 * Math.Clamp(b - dv, 0, b) / b - 1, gin), x, y), 1), edge);
+                    const float e = 0.05f;
+                    var gin = -new Vector2(Line(x + e, y) - Line(x - e, y), Line(x, y + e) - Line(x, y - e));
+                    if (gin.LengthSquared() > 1e-8f) gin.Normalize();
+                    c = Vector4.Lerp(c, new Vector4(Gold(WireNormal(Math.Clamp(-d / half, -1, 1), gin), x, y), 1), cover);
                 }
                 px[row * tw + col] = new Color(c);
             }

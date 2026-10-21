@@ -260,7 +260,7 @@ public sealed class ErumaniGame : Game
             _audio.PlayBgm(_camp.Bgm);
             GameClock.SetTick(30);
         }
-        Window.Title = $"{GameTitle} — camp before SMAP_{idx + 1:000} {map.Name}";
+        Window.Title = GameTitle;
         if (_opts.Screenshot is not null) Trace($"{_frame}: camp before SMAP_{idx + 1:000} {map.Name} (army {_state.Roster.Count}, gold {_state.Gold})");
     }
 
@@ -374,7 +374,7 @@ public sealed class ErumaniGame : Game
         }
         _seenOutcome = MapOutcome.None;
         _pendingMap = null;
-        Window.Title = $"{GameTitle} — SMAP_{idx + 1:000} {map.Name}";
+        Window.Title = GameTitle;
     }
 
     // ---------------- settings ----------------

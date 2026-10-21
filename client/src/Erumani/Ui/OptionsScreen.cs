@@ -117,7 +117,7 @@ public sealed class OptionsScreen
         }
         return new()
         {
-            Choice(T("Interface style", "インターフェース"), () => new[] { T("Original", "オリジナル"), T("Modern", "モダン"), T("Gilded", "ゴールド") },
+            Choice(T("Interface style", "インターフェース"), () => new[] { T("Original", "オリジナル"), T("Gilded", "ゴールド"), T("Modern", "モダン") },
                 () => (int)_s.Skin, i => _s.Skin = (UiSkin)i),
             Choice(T("Font (Modern / Gilded)", "フォント（モダン・ゴールド）"),
                 () => new[] { "Noto Sans JP", "Noto Serif JP", T("BIZ UDPGothic", "BIZ UDPゴシック"), T("Yu Gothic UI", "游ゴシック UI"), T("MS Gothic (the original's)", "ＭＳ ゴシック（オリジナル）") }

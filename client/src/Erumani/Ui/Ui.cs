@@ -347,7 +347,8 @@ public sealed class Ui : IDisposable
     /// right). The original and modern skins: the balloon 16 px down at x 112 without a face, 192 with one on the left, 32
     /// with one on the right, its tail toward the face, the text 18 px into it from 28 px below the area's top, 22-px lines.
     /// The gilded skin: a text box beside the face with a small pointer toward it (across the area without a face), and a
-    /// first line that is just 「name：」 in a name box over the text box's top-left corner.
+    /// first line that is just 「name：」 in a name box over the text box's top-left corner. The modern skin: the balloon's
+    /// place, that name in a box of its own above the text box, apart from it.
     /// </summary>
     public void Message(SpriteBatch sb, Texture2D? face, int windowY, bool faceRight, bool faceFlip, IReadOnlyList<string> lines,
         bool tailLeft = false)
@@ -356,6 +357,23 @@ public sealed class Ui : IDisposable
             sb.Draw(face, new Rectangle(faceRight ? 480 : 32, windowY + 16, 128, 128), null, Color.White, 0, Vector2.Zero,
                 faceFlip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
         bool left = face is not null && !faceRight || tailLeft, right = face is not null && faceRight;
+        if (Modern)
+        {
+            // the speaker in a box of its own above the text box, the two apart
+            var (who, said) = SplitSpeaker(lines);
+            int mx = left ? 192 : right ? 32 : 112, top = windowY + 16;
+            if (who is not null)
+            {
+                int w = Math.Max(96, NameText.Measure(who) + 32);
+                var nr = new Rectangle(mx + 1, top, w, 24);
+                ModernBox(sb, nr, ModernBase, 8, 0.92f);
+                if (NameText.Get(who) is { } t) ShadowText(sb, NameText, who, new Vector2(nr.X + (w - t.Width) / 2, nr.Y + (nr.Height - t.LayoutHeight) / 2), Color.White);
+                top += 28;
+            }
+            ModernBox(sb, new Rectangle(mx + 1, top, BalloonWidth - 2, windowY + 143 - top), ModernBase, 12, 0.92f);
+            for (int i = 0; i < said.Count; i++) DrawText(sb, said[i], new Vector2(mx + 18, top + 11 + i * LineHeight), TextColor);
+            return;
+        }
         if (!Gilded)
         {
             int bx = left ? 192 : right ? 32 : 112;
