@@ -465,17 +465,18 @@ public sealed class BattleScene
         _ui.Fill(sb, new Rectangle(x, y + 16, w, 1), light);
     }
 
-    /// <summary>A defeated unit's death message (UNIT.DAT), in the bottom message layout with its face.</summary>
+    /// <summary>
+    /// A defeated unit's death message (UNIT.DAT; FUN_0041d24c), in the scene's 160-px strip from y 320: its face at
+    /// (32, 336), the balloon at (192, 336) with its tail to the left whether or not there's a face, at most 5 lines of
+    /// text 18 px into it from y 348 (recording r1: the balloon's light edge at y 337, x 193).
+    /// </summary>
     void DrawDeathMessage(SpriteBatch sb, BattleUnit u)
     {
         var unit = _db.Units[Math.Clamp(u.Unit, 0, _db.Units.Length - 1)];
-        int y = 321;
-        var face = unit.Face > 0 ? _tex.Get($"FACE_{unit.Face:000}.BMP") : null;
-        int x = face is null ? 113 : 193;
-        _ui.MessageWindow(sb, new Point(x, y), tail: face is not null);
-        if (face is not null) sb.Draw(face, new Rectangle(32, y - 1, 128, 128), Color.White);
+        if (unit.Face > 0 && _tex.Get($"FACE_{unit.Face:000}.BMP") is { } face) sb.Draw(face, new Rectangle(32, 336, 128, 128), Color.White);
+        _ui.MessageBalloon(sb, new Point(192, 336), -1);
         var lines = unit.DeathMessage.Replace("\r", "").Split('\n');
-        for (int i = 0; i < lines.Length; i++)
-            _ui.DrawText(sb, lines[i], new Vector2(x + 17, y + 11 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
+        for (int i = 0; i < Math.Min(5, lines.Length); i++)
+            _ui.DrawText(sb, lines[i], new Vector2(210, 348 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
     }
 }

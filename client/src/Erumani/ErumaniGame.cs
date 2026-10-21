@@ -606,19 +606,23 @@ public sealed class ErumaniGame : Game
             _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, fxTok)));
             _shotAt = _frame + int.Parse(fxTok[3..]);
         }
-        // "panel+N": the shot N frames after the next message panel comes up (it then waits; nothing clicks it)
-        var panelTok = _script.FirstOrDefault(s => s.StartsWith("panel+"));
-        if (panelTok is not null && _battle?.PanelShowing == true)
+        // "panel+N": the shot N frames after the next message panel comes up; "click+N" after the battle next waits for a
+        // click of any kind (a death message, a panel, COMPLETE!!) — it then waits, nothing clicks it
+        foreach (var (prefix, waiting) in new[] { ("panel+", _battle?.PanelShowing == true), ("click+", _battle?.WaitingForClick == true) })
         {
-            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, panelTok)));
-            _shotAt = _frame + int.Parse(panelTok[6..]);
+            var waitTok = _script.FirstOrDefault(s => s.StartsWith(prefix));
+            if (waitTok is null || !waiting) continue;
+            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, waitTok)));
+            _shotAt = _frame + int.Parse(waitTok[prefix.Length..]);
             _shotAdvance = 0;
             bi = bi with { Confirm = false };
         }
-        bool idle = _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null };
+        bool idle = (_camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null })
+            && !_fx.Holding && _afterFade is null;   // a loaded save's black hold and a choice's fade-out take no input
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
-            || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice+") || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
+            || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice+") || _script.Peek().StartsWith("click+")
+            || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
@@ -681,14 +685,14 @@ public sealed class ErumaniGame : Game
     }
 
     /// <summary>
-    /// FUN_0040dee0: in the player's phase, while the map waits for a unit, a target or an aim (where the frame's arrows
-    /// show) and the view isn't panning, the left button held with the pointer on the frame scrolls the view that way.
+    /// FUN_0040dee0: in the player's phase, while the map waits for a unit, a target or an aim and the view isn't panning,
+    /// the left button held with the pointer on the frame scrolls the view that way.
     /// </summary>
     void EdgeScroll(MouseState m, bool mouseHere)
     {
         if (_session is null || _battle is null) return;
         int dx = 0, dy = 0;
-        if (_opts.Screenshot is null && mouseHere && m.LeftButton == ButtonState.Pressed && _battle.ScrollArrows && !_session.Panning)
+        if (_opts.Screenshot is null && mouseHere && m.LeftButton == ButtonState.Pressed && _battle.EdgeScrolls && !_session.Panning)
         {
             dx = _mouseVirtual.X < ViewX ? -1 : _mouseVirtual.X >= ViewX + ViewWidth ? 1 : 0;
             dy = _mouseVirtual.Y < ViewY ? -1 : _mouseVirtual.Y >= ViewY + ViewHeight ? 1 : 0;
@@ -1039,18 +1043,26 @@ public sealed class ErumaniGame : Game
     {
         var msg = _runner?.Message ?? (_runner?.Choice is not null ? _runner.LastMessage : null);
         if (msg is null) return;
-        int y = msg.Window switch { 0 => 33, 1 => 177, _ => 321 };
-        var face = msg.Face > 0 ? _tex.Get($"FACE_{msg.Face:000}.BMP") : null;
-        int x = face is null ? 113 : msg.FaceRight ? VirtualWidth - 193 - Ui.Ui.MessageWidth : 193;
-        _ui.MessageWindow(_sb, new Point(x, y), tail: face is not null && !msg.FaceRight);
+        DrawMessage(_sb, _ui, _tex, msg.Window, msg.Face, msg.FaceRight, msg.FaceFlip, msg.Lines);
+    }
+
+    /// <summary>
+    /// A message (FUN_004148a4): the window 608 × 160 at (16, 16 + 144 × window) — top, centre, bottom (FUN_0040d18c).
+    /// The face, 128 × 128, 16 px in from its left (or, on the right, at x 480) and 16 px down; the balloon 16 px down at x
+    /// 112 without a face, 192 with one on the left, 32 with one on the right, its tail towards the face; the text, 18 px
+    /// MS Gothic, 18 px into the balloon and from 28 px below the window's top, 22-px lines.
+    /// </summary>
+    public static void DrawMessage(SpriteBatch sb, Ui.Ui ui, Textures tex, int window, int faceId, bool faceRight, bool faceFlip, IReadOnlyList<string> lines)
+    {
+        int y = 16 + 144 * Math.Clamp(window, 0, 2);
+        var face = faceId > 0 ? tex.Get($"FACE_{faceId:000}.BMP") : null;
+        int bx = face is null ? 112 : faceRight ? 32 : 192;
         if (face is not null)
-        {
-            int fx = msg.FaceRight ? VirtualWidth - 32 - 128 : 32;
-            _sb.Draw(face, new Rectangle(fx, y - 1, 128, 128), null, Color.White, 0, Vector2.Zero,
-                msg.FaceFlip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
-        }
-        for (int i = 0; i < msg.Lines.Count; i++)
-            _ui.DrawText(_sb, msg.Lines[i], new Vector2(x + 17, y + 11 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
+            sb.Draw(face, new Rectangle(faceRight ? 480 : 32, y + 16, 128, 128), null, Color.White, 0, Vector2.Zero,
+                faceFlip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
+        ui.MessageBalloon(sb, new Point(bx, y + 16), face is null ? 0 : faceRight ? 1 : -1);
+        for (int i = 0; i < lines.Count; i++)
+            ui.DrawText(sb, lines[i], new Vector2(bx + 18, y + 28 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
     }
 
     /// <summary>The bar shows on the choice's row: the pointer is on it (it starts on the first), or keys moved it.</summary>

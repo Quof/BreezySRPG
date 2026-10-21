@@ -105,9 +105,14 @@ public sealed class BattleController
         || (_s.Panning && _state_ is State.ActionMenu or State.Targeting);
     /// <summary>
     /// The frame's red arrows may show (FUN_00413768): the player's phase, the map idle, a unit selected, or a target or
-    /// spell aim being chosen (states 2, 6, 0x10, 0x11) — when the mouse at the frame scrolls the view.
+    /// a spell's aim being chosen (states 2, 6, 0x11, 0x10) — not an item's aim (0xf).
     /// </summary>
-    public bool ScrollArrows => _s.Field.AllyPhase && _telop is null && _ending == MapOutcome.None
+    public bool ScrollArrows => EdgeScrolls && _state_ is not State.MedicineTarget && !(_state_ == State.Aiming && _aimItem is not null);
+    /// <summary>
+    /// The left button held on the frame scrolls the view (FUN_0040dee0): in the states of <see cref="ScrollArrows"/> and
+    /// while a medicine's target or a magic item's aim is chosen (0xf).
+    /// </summary>
+    public bool EdgeScrolls => _s.Field.AllyPhase && _telop is null && _ending == MapOutcome.None
         && _state_ is State.Idle or State.Selected or State.Targeting or State.Aiming or State.MedicineTarget;
     /// <summary>
     /// The mouse pointer the exe draws (FUN_00409db8, mode 0x198): 0 the arrow, 1 the hourglass, 2 none. None during

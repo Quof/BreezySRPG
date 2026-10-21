@@ -22,11 +22,8 @@ public sealed class Ui : IDisposable
     public static readonly Color WindowFill = new(184, 200, 160);
     static readonly Color EdgeLight = new(241, 241, 241), EdgeDark = new(96, 96, 96);
 
-    /// <summary>Message window including its 1-px outline (fill is 412x124).</summary>
-    public const int MessageWidth = 414, MessageHeight = 126;
-
     readonly GraphicsDevice _device;
-    readonly Texture2D _pixel, _messageWindow, _tail;
+    readonly Texture2D _pixel;
     readonly Textures _tex;
     public GdiText Text { get; }
     /// <summary>Menu/panel text (choices, camp menu): smaller than message text.</summary>
@@ -43,8 +40,6 @@ public sealed class Ui : IDisposable
         NameText = new GdiText(device, 16, 700, "ERUMANI_FONT");
         _pixel = new Texture2D(device, 1, 1);
         _pixel.SetData(new[] { Color.White });
-        _messageWindow = BuildWindow(MessageWidth, MessageHeight);
-        _tail = BuildTail();
     }
 
     /// <summary>
@@ -79,27 +74,6 @@ public sealed class Ui : IDisposable
         return tex;
     }
 
-    /// <summary>Speech tail pointing down-left from the window's left edge (measured: 16x19).</summary>
-    Texture2D BuildTail()
-    {
-        const int w = 17, h = 20;
-        var px = new Color[w * h];
-        // triangle: (16,0) top on the window edge, (0,18) tip, (16,15) back on the edge
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-            {
-                float upper = 16 - y * (16f / 18f);          // edge from (16,0) to (0,18)
-                float lower = 16 - (y - 15) * (16f / 3f);    // edge from (16,15) to (0,18)
-                if (x < upper - 0.5f || (y > 15 && x > lower + 0.5f) || y > 18) continue;
-                bool edgeUpper = x < upper + 0.5f;
-                bool edgeLower = y >= 15 && x > lower - 1.5f;
-                px[y * w + x] = edgeUpper ? EdgeLight : edgeLower ? EdgeLight : WindowFill;
-            }
-        var tex = new Texture2D(_device, w, h);
-        tex.SetData(px);
-        return tex;
-    }
-
     public void Fill(SpriteBatch sb, Rectangle r, Color c) => sb.Draw(_pixel, r, c);
 
     public void Frame(SpriteBatch sb, Rectangle r, Color c, int t = 1)
@@ -110,17 +84,33 @@ public sealed class Ui : IDisposable
         Fill(sb, new Rectangle(r.Right - t, r.Y, t, r.Height), c);
     }
 
-    /// <summary>The message window at its outline position; tail drawn when a face is shown on the left.</summary>
-    public void MessageWindow(SpriteBatch sb, Point topLeft, bool tail)
+    /// <summary>
+    /// The message balloon (FUN_004121ac, its skin from FUN_00411d74): SYSTEM.BMP's 48 × 48 corner as a nine-slice — 16-px
+    /// corners and edges, the fill between — 416 × 128 px from <paramref name="topLeft"/>; then the speech tail
+    /// (FUN_00406f98), 32 × 16 from SYSTEM.BMP (0,48) 16 px left of the balloon for a face on the left (<paramref name="tail"/>
+    /// −1) or (32,48) 16 px before its right edge for a face on the right (+1), 16 px down. Palette index 0 is transparent.
+    /// </summary>
+    public void MessageBalloon(SpriteBatch sb, Point topLeft, int tail)
     {
         if (Modern)
         {
-            ModernBox(sb, new Rectangle(topLeft.X, topLeft.Y, MessageWidth, MessageHeight), ModernBase, 12, 0.92f);
+            ModernBox(sb, new Rectangle(topLeft.X + 1, topLeft.Y + 1, BalloonWidth - 2, BalloonHeight - 2), ModernBase, 12, 0.92f);
             return;
         }
-        sb.Draw(_messageWindow, topLeft.ToVector2(), Color.White);
-        if (tail) sb.Draw(_tail, new Vector2(topLeft.X - 15, topLeft.Y + 13), Color.White);
+        var sys = _tex.Get("SYSTEM.BMP");
+        if (sys is null) return;
+        for (int y = 0; y < BalloonHeight; y += 16)
+            for (int x = 0; x < BalloonWidth; x += 16)
+            {
+                int sx = x == 0 ? 0 : x == BalloonWidth - 16 ? 32 : 16, sy = y == 0 ? 0 : y == BalloonHeight - 16 ? 32 : 16;
+                sb.Draw(sys, new Vector2(topLeft.X + x, topLeft.Y + y), new Rectangle(sx, sy, 16, 16), Color.White);
+            }
+        if (tail < 0) sb.Draw(sys, new Vector2(topLeft.X - 16, topLeft.Y + 16), new Rectangle(0, 48, 32, 16), Color.White);
+        if (tail > 0) sb.Draw(sys, new Vector2(topLeft.X + BalloonWidth - 16, topLeft.Y + 16), new Rectangle(32, 48, 32, 16), Color.White);
     }
+
+    /// <summary>The message balloon's size (FUN_004148a4: 26 × 8 cells of 16 px).</summary>
+    public const int BalloonWidth = 26 * 16, BalloonHeight = 8 * 16;
 
     /// <summary>Generic window for menus (same skin, any size).</summary>
     public void Window(SpriteBatch sb, Rectangle r)
@@ -190,8 +180,9 @@ public sealed class Ui : IDisposable
     }
 
     /// <summary>
-    /// Screen frame from SFRAME_H/V.BMP: 16-px strips around the 608x448 map viewport.
-    /// Strip variants: red arrow = can scroll that way, grey = can't.
+    /// Screen frame from SFRAME_H/V.BMP: 16-px strips around the 608x448 map viewport, copied opaque over whatever is
+    /// under them — units reaching past the view, pictures (FUN_00413768 → FUN_004069a4). Strip variants: red arrow =
+    /// can scroll that way, grey = can't.
     /// </summary>
     public void ScreenFrame(SpriteBatch sb, bool up, bool down, bool left, bool right)
     {
@@ -219,8 +210,8 @@ public sealed class Ui : IDisposable
             if (right) Chevron(633, 240, 1, 0);
             return;
         }
-        var h = _tex.Get("SFRAME_H.BMP");
-        var v = _tex.Get("SFRAME_V.BMP");
+        var h = _tex.Get("SFRAME_H.BMP", transparent: false);
+        var v = _tex.Get("SFRAME_V.BMP", transparent: false);
         if (h is null || v is null) return;
         sb.Draw(h, new Vector2(0, 0), new Rectangle(0, up ? 0 : 32, 640, 16), Color.White);
         sb.Draw(h, new Vector2(0, 464), new Rectangle(0, down ? 16 : 48, 640, 16), Color.White);
@@ -301,6 +292,7 @@ public sealed class Ui : IDisposable
         Fill(sb, bar, !enabled ? new Color(122, 122, 122) : green ? new Color(160, 248, 96) : new Color(248, 248, 248));
         return !enabled || green ? new Color(0, 32, 0) : new Color(0, 64, 0);
     }
+
     /// <summary>Stat numbers added on panels (item summaries, terrain): a soft yellow, readable on both skins.</summary>
     public static readonly Color StatText = new(248, 232, 152);
 
@@ -310,8 +302,6 @@ public sealed class Ui : IDisposable
         SmallText.Dispose();
         NameText.Dispose();
         _pixel.Dispose();
-        _messageWindow.Dispose();
-        _tail.Dispose();
         foreach (var t in _windows.Values) t.Dispose();
         foreach (var t in _modern.Values) t.Dispose();
     }
