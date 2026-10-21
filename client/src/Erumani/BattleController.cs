@@ -2175,7 +2175,7 @@ public sealed class BattleController
         }
     }
 
-    /// <summary>The enemy ranges key (a modern aid): every enemy's reach for its coming phase, shown as one area — yellow where they can move, red where they can only hit.</summary>
+    /// <summary>The enemy ranges key (a modern aid): every enemy's reach for its coming phase, shown as one area — blue where they can move, red where they can only hit.</summary>
     public bool ShowThreat { get; set; }
     HashSet<(int X, int Y)> _threat = new(), _threatStops = new(), _threatAll = new();
     int? _threatKey;
@@ -2209,8 +2209,8 @@ public sealed class BattleController
     }
 
     /// <summary>
-    /// The enemies' threat as one block: a translucent fill — yellow where an enemy could stop, red where it could only
-    /// hit — with a bright red line along the block's outer edge and a yellow one around the yellow inside it.
+    /// The enemies' threat as one block: a translucent fill — blue where an enemy could stop, red where it could only
+    /// hit — with a bright red line along the block's outer edge and a light blue one around the blue inside it.
     /// </summary>
     public void DrawThreat(SpriteBatch sb, Rectangle viewport)
     {
@@ -2218,8 +2218,10 @@ public sealed class BattleController
         var (stops, _, tiles) = Threat();
         var fill = new Color(208, 24, 32) * 0.36f;
         var edge = new Color(255, 84, 84) * 0.95f;
-        var moveFill = new Color(255, 190, 0) * 0.5f;   // red well over green, so it reads yellow on grass
-        var moveEdge = new Color(255, 228, 72) * 0.95f;
+        // the movement range's own shades, SYSTEM.BMP's range block 0 (the same in every game here and the RTP): the
+        // darker one fills, the lighter one draws the line
+        var moveFill = new Color(128, 176, 176) * 0.6f;
+        var moveEdge = new Color(176, 216, 248) * 0.95f;
         const int T = MapSession.Tile;
         foreach (var (x, y) in tiles)
         {
@@ -2227,7 +2229,7 @@ public sealed class BattleController
             if (p.X + T <= viewport.X || p.Y + T <= viewport.Y || p.X >= viewport.Right || p.Y >= viewport.Bottom) continue;
             bool move = stops.Contains((x, y));
             _ui.Fill(sb, new Rectangle(p.X, p.Y, T, T), move ? moveFill : fill);
-            // each side: the block's outer edge red; inside it, the yellow's edge where it meets the red
+            // each side: the block's outer edge red; inside it, the blue's edge where it meets the red
             Color? Edge((int X, int Y) n) => !tiles.Contains(n) ? edge : move && !stops.Contains(n) ? moveEdge : null;
             if (Edge((x, y - 1)) is { } top) _ui.Fill(sb, new Rectangle(p.X, p.Y, T, 2), top);
             if (Edge((x, y + 1)) is { } bottom) _ui.Fill(sb, new Rectangle(p.X, p.Y + T - 2, T, 2), bottom);

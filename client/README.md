@@ -108,7 +108,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | Tab / Left Ctrl | fast-forward (hold, or toggle; see Options). When gameplay gives way to an event's story, a fast-forward stops before its first line: let go and press again (toggle again) to skip the story too |
 | Mouse wheel up / L | text backlog (wheel down or click to close). While a spell is aimed, the wheel is the forecast's instead: it opens on the nearest unit the spell is meant for (framed when there are several, with "2/3" between the names), and the wheel steps through all the units it reaches |
 | Space | during an event: skip the rest of it (asks first) |
-| R | enemy ranges: every enemy's reach for its coming phase (moves and attacks, spells included) as one area — yellow where enemies can move to, red around it where they can only hit; press again to hide |
+| R | enemy ranges: every enemy's reach for its coming phase (moves and attacks, spells included) as one area — blue (the movement range's darker shade) where enemies can move to, red around it where they can only hit; press again to hide |
 | F1 | options (anywhere) |
 | Right click during an event | a menu at the pointer: save, load, options (環境設定), in the middle of the cutscene |
 | F4 or Alt+Enter | fullscreen |
