@@ -227,7 +227,20 @@ public sealed class Audio(GameFolder game) : IDisposable
         se?.Play(Math.Clamp(SoundVolume, 0, 1), 0, 0);
     }
 
-    public void Click() { if (MessageSound) PlaySe("CLICK.WAV"); }
+    public void Click() { if (MessageSound) { PlaySe("CLICK.WAV"); _clickAt = Environment.TickCount64; } }
+
+    long _clickAt = long.MinValue / 2;
+
+    /// <summary>
+    /// CLICK.WAV when a game is saved or loaded (modern: the original plays only the pick's click), whatever the confirm
+    /// sound option says — once, when the pick's own click has just played.
+    /// </summary>
+    public void SaveLoadSound()
+    {
+        if (Environment.TickCount64 - _clickAt < 100) return;
+        PlaySe("CLICK.WAV");
+        _clickAt = Environment.TickCount64;
+    }
     public void CancelSound() => PlaySe("CANCEL.WAV");
     public void Buzzer() => PlaySe("BUZZER.WAV");
     /// <summary>The text-advance thunk (CLICK.WAV), unless turned off in the options.</summary>

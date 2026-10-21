@@ -10,4 +10,5 @@ public static class Sfx
     public static void Down() => Audio?.PlaySe("DOWN.WAV");
     public static void LevelUp() => Audio?.PlaySe("LEVELUP.WAV");
     public static void MessageAdvance() => Audio?.MessageAdvance();
+    public static void SaveLoad() => Audio?.SaveLoadSound();
 }

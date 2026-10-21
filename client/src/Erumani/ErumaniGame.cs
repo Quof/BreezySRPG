@@ -272,6 +272,7 @@ public sealed class ErumaniGame : Game
     /// </summary>
     void ApplySave(SaveFile save, int slot)
     {
+        Sfx.SaveLoad();
         save.ApplyTo(_state);
         // the play time EasySRPG95 noted for exactly this save, if it did
         var note = SaveExtras.For(SaveExtras.Read(_folder), slot, save.Raw);
@@ -1011,6 +1012,7 @@ public sealed class ErumaniGame : Game
     /// </summary>
     void NoteSave(int slot, SceneSave? scene)
     {
+        Sfx.SaveLoad();
         try
         {
             string path = SaveFile.PathFor(_folder, slot);
