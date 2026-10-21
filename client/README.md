@@ -85,6 +85,8 @@ Music plays through **GeneralUser GS** (v2.0.3, by S. Christian Collins, [schris
 dotnet publish client/src/Erumani -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o client/publish
 ```
 
+The icon is 昴の騎士's face graphic FACE_003 (its author released the face graphics for reuse), made into `src/Erumani/Icon.ico` by `client/tools/make_icon.py`.
+
 The project keeps its working name (`src/Erumani`, namespace `Erumani`); only the program is called EasySRPG95.
 
 ## Controls
