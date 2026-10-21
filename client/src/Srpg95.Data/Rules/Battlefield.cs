@@ -20,6 +20,13 @@ public sealed class ExchangeResult
 /// Formulas: <see cref="Combat"/> (help "Battle Algorithm"). Everything marked provisional
 /// still needs checking against the original runtime.
 /// </summary>
+/// <summary>Tiles a unit can stop on, plus the full path links (including tiles it may only pass through).</summary>
+public sealed class ReachMap(Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> links)
+    : Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)>
+{
+    public Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> Links { get; } = links;
+}
+
 public sealed partial class Battlefield
 {
     public MapData Map { get; }
@@ -122,16 +129,20 @@ public sealed partial class Battlefield
                 queue.Enqueue((nx, ny), nc);
             }
         }
-        foreach (var k in best.Keys.ToList())
-            if (UnitAt(k.Item1, k.Item2) is { } o && o != u) best.Remove(k);
-        return best;
+        // tiles another unit stands on can be walked through but not stopped on: drop them from the result, but keep
+        // every link so paths through them stay whole (a hole there made units jump and land on allies)
+        var result = new ReachMap(best);
+        foreach (var (k, v) in best)
+            if (UnitAt(k.Item1, k.Item2) is not { } o || o == u) result[k] = v;
+        return result;
     }
 
     public static List<(int X, int Y)> PathTo(Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> reach, (int X, int Y) to)
     {
+        var links = reach is ReachMap rm ? rm.Links : reach;
         var path = new List<(int, int)>();
         var p = to;
-        while (reach.TryGetValue(p, out var e) && e.From != p) { path.Add(p); p = e.From; }
+        while (links.TryGetValue(p, out var e) && e.From != p) { path.Add(p); p = e.From; }
         path.Reverse();
         return path;
     }

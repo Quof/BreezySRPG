@@ -172,4 +172,29 @@ public class RulesTests
         Assert.Equal("ナスビーム", m.Name);
         Assert.NotEmpty(f.SpellTargets(nasu, m, plan.Aim.X, plan.Aim.Y));
     }
+
+    [Fact]
+    public void Paths_through_an_ally_are_whole_and_never_end_on_a_unit()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        var rutee = f.Units.Single(u => u.Unit == 242);
+        (juna.X, juna.Y) = (7, 9);       // the user's screenshot
+        (rutee.X, rutee.Y) = (8, 10);
+        var reach = f.Reachable(rutee);
+        Assert.DoesNotContain((7, 9), reach.Keys);   // can't stop on ジュナ
+        foreach (var dest in reach.Keys)
+        {
+            var path = Battlefield.PathTo(reach, dest);
+            var at = (rutee.X, rutee.Y);
+            foreach (var step in path)
+            {
+                Assert.Equal(1, Math.Abs(step.X - at.Item1) + Math.Abs(step.Y - at.Item2));   // one tile at a time
+                at = step;
+            }
+            Assert.Equal(dest, at);
+        }
+        Assert.Contains((7, 7), reach.Keys);   // reached by walking through ジュナ
+    }
 }
