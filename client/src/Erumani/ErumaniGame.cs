@@ -441,10 +441,11 @@ public sealed class ErumaniGame : Game
 
     protected override void Update(GameTime gameTime)
     {
-        // a scripted run (--screenshot) takes its input from its script alone, never from the real keyboard and mouse
-        var k = _opts.Screenshot is null ? Keyboard.GetState() : default;
+        // a scripted run (--screenshot) takes its input from its script alone, never from the real keyboard and mouse; the
+        // window takes none while it isn't in front (the pointer is still followed, to be drawn where it is)
+        var k = _opts.Screenshot is null && IsActive ? Keyboard.GetState() : default;
         var m = _opts.Screenshot is null ? Mouse.GetState() : default;
-        _controls.Update(IsActive ? k : default);
+        _controls.Update(k);
         // play time (EasySRPG95's own count): while a game is on, a map or a camp, and the window is in front
         if (IsActive && _logo < 0 && _title is null && _gameOver < 0 && (_session is not null || _camp is not null))
             _state.PlaySeconds += gameTime.ElapsedGameTime.TotalSeconds;
@@ -454,11 +455,12 @@ public sealed class ErumaniGame : Game
         // clicks only count inside the window, and not just after it lost or regained focus (clicking another window,
         // or clicking back into this one, used to open the turn menu)
         _activeFrames = IsActive ? _activeFrames + 1 : 0;
-        bool mouseHere = _activeFrames > 6 && Window.ClientBounds is var cb && m.X >= 0 && m.Y >= 0 && m.X < cb.Width && m.Y < cb.Height;
+        _pointerInside = Window.ClientBounds is var cb && m.X >= 0 && m.Y >= 0 && m.X < cb.Width && m.Y < cb.Height;
+        bool mouseHere = _activeFrames > 6 && _pointerInside;
         bool click = mouseHere && m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
         bool rclick = mouseHere && m.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
         int wheel = IsActive && _opts.Screenshot is null ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
-        bool mouseMoved = m.Position != _prevMouse.Position;
+        bool mouseMoved = mouseHere && m.Position != _prevMouse.Position;   // a pointer passing over the window in the background chooses nothing
         if (_warpedTo is { } warped) { if (m.Position == warped) mouseMoved = false; _warpedTo = null; }
 
         // a character choice (FUN_0042523c, FUN_00413100): it opens with the pointer on its first option; the option under
@@ -1204,7 +1206,7 @@ public sealed class ErumaniGame : Game
         else DrawMap();
         // the pointer the exe draws: none on the logos and GAMEOVER.BMP, the arrow on the title and at camp, the map's own
         int pointer = _logo >= 0 || _gameOver >= 0 ? 2 : _title is not null || _camp is not null ? 0 : _battle?.PointerMode ?? 0;
-        if (!overlay && pointer < 2 && _opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, pointer == 1, _frame);
+        if (!overlay && pointer < 2 && _opts.Screenshot is null && _pointerInside) _ui.Cursor(_sb, _mouseVirtual, pointer == 1, _frame);
         _sb.End();
 
         // 2. the palette's brightness and tone, the shake, then the client's own windows (options, skip prompt, backlog)
@@ -1221,7 +1223,7 @@ public sealed class ErumaniGame : Game
             if (_eventFiles is not null) _eventFiles.Draw(_sb, _frame);   // in the menu's place: nothing of it shows through
             else _eventMenu?.Draw(_sb, _ui, true, _frame);
             _options?.Draw(_sb, _frame);
-            if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
+            if (_opts.Screenshot is null && _pointerInside) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
         }
         _sb.End();
 
@@ -1501,6 +1503,12 @@ public sealed class ErumaniGame : Game
 
     /// <summary>Where <see cref="WarpMouse"/> last put the pointer (window pixels), until the next frame has seen it.</summary>
     Point? _warpedTo;
+
+    /// <summary>
+    /// The pointer is over the window's picture: the game's own pointer is drawn there, the window in front or not (it
+    /// hides Windows' over it either way); only in front does it act.
+    /// </summary>
+    bool _pointerInside;
 
     /// <summary>Window pixel -> 640x480 virtual pixel.</summary>
     Point ToVirtual(Point p) => _dest.Width == 0 ? p : new Point(
