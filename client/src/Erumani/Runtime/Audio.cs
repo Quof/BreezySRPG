@@ -45,7 +45,10 @@ public sealed class Audio(GameFolder game) : IDisposable
     readonly float[] _left = new float[Block], _right = new float[Block];
     readonly byte[] _pcm = new byte[Block * 4];
 
-    /// <summary>Use this SoundFont for MIDI (null = Windows MIDI). Takes effect with the next track; restarts the current one.</summary>
+    /// <summary>
+    /// Use this SoundFont for MIDI: a .sf2 path, <see cref="Config.Settings.BuiltIn"/> for the one embedded in the
+    /// executable, or null for Windows MIDI. Restarts the current track with it.
+    /// </summary>
     public void SetSoundFont(string? path)
     {
         if (string.Equals(path, _soundFont, StringComparison.OrdinalIgnoreCase)) return;
@@ -57,7 +60,13 @@ public sealed class Audio(GameFolder game) : IDisposable
         {
             try
             {
-                _synth = new Synthesizer(path, Rate);
+                if (path == Config.Settings.BuiltIn)
+                {
+                    using var s = typeof(Audio).Assembly.GetManifestResourceStream("GeneralUser-GS.sf2")
+                        ?? throw new FileNotFoundException("built-in SoundFont missing");
+                    _synth = new Synthesizer(new SoundFont(s), Rate);
+                }
+                else _synth = new Synthesizer(path, Rate);
                 _sequencer = new MidiFileSequencer(_synth);
             }
             catch (Exception) { _synth = null; _sequencer = null; _soundFont = null; }   // unreadable SoundFont: Windows MIDI

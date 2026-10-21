@@ -17,4 +17,29 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    Built-in SoundFont: GeneralUser GS v2.0.3 by S. Christian Collins (licence: soundfont/GeneralUser-GS-LICENSE.txt,
+    which allows bundling it in software). It is embedded in the executable so every player gets the same music.
+    The 32 MB .sf2 is not kept in git; the first build downloads it from the author's repository and checks its hash.
+  -->
+  <PropertyGroup>
+    <SoundFontFile>$(MSBuildThisFileDirectory)soundfont\GeneralUser-GS.sf2</SoundFontFile>
+    <SoundFontUrl>https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2</SoundFontUrl>
+    <SoundFontSha256>9575028C7A1F589F5770FCCC8CFF2734566AF40CD26ED836944E9A5152688CFE</SoundFontSha256>
+  </PropertyGroup>
+
+  <Target Name="FetchSoundFont" BeforeTargets="PrepareForBuild" Condition="!Exists('$(SoundFontFile)')">
+    <DownloadFile SourceUrl="$(SoundFontUrl)" DestinationFolder="$(MSBuildThisFileDirectory)soundfont" DestinationFileName="GeneralUser-GS.sf2" />
+    <GetFileHash Files="$(SoundFontFile)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_SoundFontHash" />
+    </GetFileHash>
+    <Delete Files="$(SoundFontFile)" Condition="'$(_SoundFontHash)' != '$(SoundFontSha256)'" />
+    <Error Condition="'$(_SoundFontHash)' != '$(SoundFontSha256)'" Text="GeneralUser-GS.sf2 download didn't match the expected SHA-256." />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="soundfont\GeneralUser-GS.sf2" LogicalName="GeneralUser-GS.sf2" />
+    <None Include="soundfont\GeneralUser-GS-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

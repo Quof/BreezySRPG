@@ -42,8 +42,9 @@ public sealed class OptionsScreen
     void BuildMain()
     {
         _keysPage = false;
-        var fonts = Settings.FindSoundFonts(_gameRoot);
-        string FontName() => _s.ResolveSoundFont(_gameRoot) is { } f ? Path.GetFileName(f) : "(none: put a .sf2 in soundfonts/)";
+        var fonts = new List<string> { Settings.BuiltIn };
+        fonts.AddRange(Settings.FindSoundFonts(_gameRoot));
+        string FontName() => _s.ResolveSoundFont(_gameRoot) is var f && f == Settings.BuiltIn ? f : Path.GetFileName(f);
         _rows = new List<Row>
         {
             new("— Display —", () => ""),
@@ -59,9 +60,8 @@ public sealed class OptionsScreen
                 d => _s.Music = Cycle(Enum.GetValues<MusicEngine>(), _s.Music, d)),
             new("SoundFont", FontName, d =>
             {
-                if (fonts.Count == 0) return;
-                var cur = _s.ResolveSoundFont(_gameRoot);
-                _s.SoundFont = Path.GetFileName(Cycle(fonts.ToArray(), cur ?? fonts[0], d));
+                var next = Cycle(fonts.ToArray(), _s.ResolveSoundFont(_gameRoot), d);
+                _s.SoundFont = next == Settings.BuiltIn ? null : Path.GetFileName(next);
             }),
             new("Text advance sound", () => OnOff(_s.MessageSound), _ => _s.MessageSound = !_s.MessageSound),
             new("— Gameplay —", () => ""),

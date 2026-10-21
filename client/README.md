@@ -71,7 +71,7 @@ Set `SRPG95_REQUIRE_DATA=1` to make the tests fail instead of silently passing w
 
 ## Playing
 
-Copy `Erumani.exe`, `SDL2.dll` and `soft_oal.dll` from a published build (see below) into the game folder, next to `SRPGEXEC.EXE`, and run `Erumani.exe`. No .NET install is needed. Settings are kept in `settings.json` beside the exe, or in `%APPDATA%\Erumani` if that folder isn't writable. For SoundFont music, put a General MIDI `.sf2` file into the `soundfonts` folder next to the exe and pick it under Options. FluidR3_GM or GeneralUser GS both work; without one, the game falls back to Windows MIDI, like the original.
+Copy `Erumani.exe`, `SDL2.dll`, `soft_oal.dll` and `GeneralUser-GS-LICENSE.txt` from a published build (see below) into the game folder, next to `SRPGEXEC.EXE`, and run `Erumani.exe`. No .NET install is needed. Settings are kept in `settings.json` beside the exe, or in `%APPDATA%\Erumani` if that folder isn't writable. Music plays through **GeneralUser GS** (v2.0.3, by S. Christian Collins), a GS SoundFont embedded in the exe, so everyone hears the same soundtrack. Its licence allows bundling and is shipped as `GeneralUser-GS-LICENSE.txt`. Under Options you can switch to another `.sf2` from the `soundfonts` folder next to the exe, or to Windows MIDI as in the original. The first build downloads the SoundFont from the author's repository (hash-checked); it isn't kept in git.
 
 ```bash
 dotnet publish client/src/Erumani -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o client/publish

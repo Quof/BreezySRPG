@@ -32,7 +32,7 @@ public sealed class Settings
     public int MusicVolume { get; set; } = 80;            // 0–100
     public int SoundVolume { get; set; } = 80;
     public MusicEngine Music { get; set; } = MusicEngine.SoundFont;
-    public string? SoundFont { get; set; }                // file name in soundfonts/ or a full path
+    public string? SoundFont { get; set; }                // null = the built-in GeneralUser GS; else a file name in soundfonts/ or a full path
     public bool MessageSound { get; set; } = true;        // the CLICK.WAV "thunk" when advancing text (the only sound option)
 
     // gameplay
@@ -116,10 +116,14 @@ public sealed class Settings
         return dirs.Where(Directory.Exists).SelectMany(d => Directory.GetFiles(d, "*.sf2")).Distinct().ToList();
     }
 
-    public string? ResolveSoundFont(string gameRoot)
+    /// <summary>Stands for the SoundFont embedded in the executable (GeneralUser GS).</summary>
+    public const string BuiltIn = "GeneralUser GS (built-in)";
+
+    /// <summary>The chosen SoundFont: a file path, or <see cref="BuiltIn"/> (the default, and the fallback when a chosen file is gone).</summary>
+    public string ResolveSoundFont(string gameRoot)
     {
-        if (SoundFont is { } sf && File.Exists(sf)) return sf;
-        var found = FindSoundFonts(gameRoot);
-        return found.FirstOrDefault(f => System.IO.Path.GetFileName(f).Equals(SoundFont, StringComparison.OrdinalIgnoreCase)) ?? found.FirstOrDefault();
+        if (SoundFont is null || SoundFont == BuiltIn) return BuiltIn;
+        if (File.Exists(SoundFont)) return SoundFont;
+        return FindSoundFonts(gameRoot).FirstOrDefault(f => System.IO.Path.GetFileName(f).Equals(SoundFont, StringComparison.OrdinalIgnoreCase)) ?? BuiltIn;
     }
 }

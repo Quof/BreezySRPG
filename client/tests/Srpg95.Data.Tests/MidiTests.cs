@@ -28,4 +28,21 @@ public class MidiTests
         seq.Render(l, r);
         Assert.True(l.Max(Math.Abs) > 0.01f, "silent render");
     }
+
+    [Fact]
+    public void Built_in_SoundFont_renders_the_soundtrack()
+    {
+        if (Game() is not { } g) return;
+        using var s = typeof(Erumani.Runtime.Audio).Assembly.GetManifestResourceStream("GeneralUser-GS.sf2");
+        Assert.NotNull(s);
+        var seq = new MidiFileSequencer(new Synthesizer(new SoundFont(s!), 44100));
+        foreach (var mid in Directory.GetFiles(Path.Combine(g, "BGM"), "*.mid").Take(5))
+        {
+            seq.Play(new MidiFile(mid), loop: true);
+            var l = new float[44100 * 4];
+            var r = new float[44100 * 4];
+            seq.Render(l, r);
+            Assert.True(l.Max(Math.Abs) > 0.01f, $"silent: {Path.GetFileName(mid)}");
+        }
+    }
 }
