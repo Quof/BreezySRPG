@@ -27,6 +27,8 @@ public sealed class Ui : IDisposable
     public static bool Gilded => Skin == UiSkin.Gilded;
     /// <summary>Any restyled skin: smooth fonts and light text on dark windows.</summary>
     public static bool Restyled => Skin != UiSkin.Original;
+    /// <summary>The restyled skins' smooth font (options).</summary>
+    public static UiFont Font { get; set; }
     /// <summary>
     /// How many render pixels the frame has to a 640 × 480 pixel (the client draws at the window's size): the restyled
     /// skins' text is rendered at that size (<see cref="TextImage"/>), everything else is scaled up whole.
@@ -105,7 +107,7 @@ public sealed class Ui : IDisposable
     }
 
     /// <summary>Where a smooth 12-px string goes to sit in the middle of the 16-px line (a menu row's bar) from <paramref name="y"/>.</summary>
-    public static float Line16Y(TextImage g, int y) => Restyled ? y + (16 - g.Texture.Height / (float)g.Scale) / 2 : y + 2;
+    public static float Line16Y(TextImage g, int y) => Restyled ? y + (16 - g.LayoutHeight) / 2 : y + 2;
 
     /// <summary>The width <see cref="Text12"/> gives a string.</summary>
     public int Measure12(string s) => !Restyled && MenuFont is not null ? ExeFont.Measure(s) : SmallText.Measure(s);
@@ -171,12 +173,12 @@ public sealed class Ui : IDisposable
     readonly Dictionary<(int W, int H, int R, Color Fill, float A), Texture2D> _modern = new();
 
     /// <summary>A soft-shadowed, rounded, translucent box with a faint light edge and a slight top-down gradient.</summary>
-    public void ModernBox(SpriteBatch sb, Rectangle r, Color fill, int radius, float alpha)
+    public void ModernBox(SpriteBatch sb, Rectangle r, Color fill, int radius, float alpha, bool shadow = true)
     {
         if (r.Width <= 0 || r.Height <= 0) return;
         var key = (r.Width, r.Height, radius, fill, alpha);
         if (!_modern.TryGetValue(key, out var tex)) _modern[key] = tex = BuildRounded(r.Width, r.Height, radius, fill, alpha);
-        sb.Draw(tex, new Vector2(r.X + 2, r.Y + 3), Color.Black * 0.45f);    // shadow
+        if (shadow) sb.Draw(tex, new Vector2(r.X + 2, r.Y + 3), Color.Black * 0.45f);
         sb.Draw(tex, r.Location.ToVector2(), Color.White);
     }
 
@@ -324,7 +326,7 @@ public sealed class Ui : IDisposable
         GildedBox(sb, r, NameNavy, 0.95f);
         if (NameText.Get(name) is { } t)
         {
-            var p = new Vector2(r.X + (w - t.Width) / 2, r.Y + (r.Height - t.Height) / 2);
+            var p = new Vector2(r.X + (w - t.Width) / 2, r.Y + (r.Height - t.LayoutHeight) / 2);
             t.Draw(sb, p + new Vector2(1, 1), Color.Black * 0.7f);
             t.Draw(sb, p, Color.White);
         }

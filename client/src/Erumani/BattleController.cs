@@ -80,7 +80,7 @@ public sealed class BattleController
         State.SpellList or State.ItemList or State.EquipList or State.EquipSlots when _menu.Length > 0 => RowRect(_menuIndex),
         State.UseConfirm => _useMenu.Row(_useMenu.Index),
         State.EndTurnConfirm or State.QuitConfirm => _quit.Row(_quit.Index),
-        State.Files => _files.Row(_files.Index),
+        State.Files when _saveMenu is null => _files.Row(_files.Index),
         _ => null,
     };
     /// <summary>
@@ -245,6 +245,9 @@ public sealed class BattleController
     readonly Camp.MenuList _files = new() { ItemWidth = 60 };
     readonly Camp.MenuList _quit = new() { ItemWidth = 36 };
     bool _saving;
+    /// <summary>The extended save / load screen (modern), when the options choose it over the original's file list (null).</summary>
+    public Func<bool, Ui.SaveMenu?>? NewSaveMenu { get; set; }
+    Ui.SaveMenu? _saveMenu;
 
     /// <summary>Event slots that have run (object, slot), for a battle save's fired flags.</summary>
     public IEnumerable<(int Object, int Slot)> FiredSlots =>
@@ -270,6 +273,12 @@ public sealed class BattleController
     void OpenFiles(bool save)
     {
         _saving = save;
+        if (NewSaveMenu?.Invoke(save) is { } menu)
+        {
+            _saveMenu = menu;
+            _state_ = State.Files;
+            return;
+        }
         string title = Word(save ? 53 : 54);   // セーブします / ロードします
         int w = (Math.Max(5, (Bin.Sjis.GetByteCount(title) + 1) / 2) + 2) * 12, h = 11 * 16;
         _files.Rect = new Rectangle(Math.Clamp(_turnMenuAt.X - 32, 16, 624 - w), Math.Clamp(_turnMenuAt.Y, 16, 464 - h), w, h);
@@ -285,9 +294,22 @@ public sealed class BattleController
     /// <summary>FUN_00410728 / FUN_004107a0: after a save, or on a right click, back to the turn menu's セーブする / ロードする.</summary>
     void UpdateFiles(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { ReopenTurnMenu(_saving ? 2 : 3); return; }
-        int pick = _files.Navigate(i, MouseVirtual);
-        if (pick < 0) return;
+        int pick;
+        if (_saveMenu is { } menu)
+        {
+            var (result, slot) = menu.Update(i, MouseVirtual);
+            if (result == Ui.SaveMenu.Result.None) return;
+            menu.Dispose();
+            _saveMenu = null;
+            if (result == Ui.SaveMenu.Result.Cancelled) { ReopenTurnMenu(_saving ? 2 : 3); return; }
+            pick = slot - 1;
+        }
+        else
+        {
+            if (i.Cancel || i.RightClick) { ReopenTurnMenu(_saving ? 2 : 3); return; }
+            pick = _files.Navigate(i, MouseVirtual);
+            if (pick < 0) return;
+        }
         if (_saving) { SaveRequested?.Invoke(pick + 1); ReopenTurnMenu(2); }
         else Leave(() =>
         {
@@ -1951,7 +1973,11 @@ public sealed class BattleController
             DrawForecast(sb, _sel, ft);
         if (_state_ == State.WholeMap)
             _s.DrawWholeMap(sb, _ui, _s.Field.Alive.Where(u => !u.Hidden).Select(u => (u.X, u.Y, u.Side switch { Side.Enemy => 0, Side.Ally => 1, _ => 2 })), frame);
-        if (_state_ == State.Files) _files.Draw(sb, _ui, true, frame);
+        if (_state_ == State.Files)
+        {
+            if (_saveMenu is not null) _saveMenu.Draw(sb, frame);
+            else _files.Draw(sb, _ui, true, frame);
+        }
         if (_state_ is State.QuitConfirm or State.EndTurnConfirm) _quit.Draw(sb, _ui, true, frame);
         if (_state_ is State.SpellList or State.ItemList or State.EquipList or State.EquipSlots) DrawList(sb, frame);
         if (_state_ == State.UseConfirm) _useMenu.Draw(sb, _ui, true, frame);

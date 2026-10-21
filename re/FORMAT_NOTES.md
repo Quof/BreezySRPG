@@ -578,8 +578,8 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 |---|---|---|---|
 | 0x000 | 1 when saved at a camp, 0 on a map | confirmed (exe) | FUN_0040be6c writes (top state == camp); SAVE4/6/7/8/5 at camp = 1, SAVE1/3/5-old mid-battle = 0 |
 | 0x004 | the map being played, or the camp's map, 0-based (what loading opens) | confirmed (exe: FUN_004048ac loads it) | it looked like "camps reached" while every map from 2 on had a camp |
-| 0x008 | 7 / 1 / 2 across saves | unknown | |
-| 0x00C | 0, 6, 4, 5 across saves | unknown | |
+| 0x008 | the camera's left column, in tiles (the view's top-left tile) | confirmed (exe) | FUN_0040dee0 adds it to the pointer's tile (pointer x − 16 over 32); FUN_0040e4ec steps it toward the scroll target; a load turns scrolling off and leaves it as saved (FUN_0040e334). Was "7 / 1 / 2 across saves" |
+| 0x00C | the camera's top row, in tiles | confirmed (exe) | as 0x008. Was "0, 6, 4, 5 across saves" |
 | 0x010 | the next map, 0-based: 0x004 + 1 unless a "Next Map" command set it | confirmed (exe) | equal to the 1-based map number unless a Next Map ran |
 | 0x014 | **switches**: 500 bytes, one per switch, 1 = ON | confirmed | the prologue's switch 79 「ＯＰ」 = byte 0x63 in every save; map 2's switches 0 and 1 = bytes 0x14, 0x15 (T18) |
 | 0x20C | phase counter (ally turn t = 2t−1) | inferred | 1 at start, 7 mid-battle, 13 at the end |
@@ -588,7 +588,7 @@ Written to the game folder, one file per save slot. There are no timestamps: sav
 | 0x534 | gold | confirmed | 20 = in-game gold (T16) |
 | 0x538 | party size | inferred | 2 (ルーティ, ジュナ) |
 | 0x53C | current BGM file name (48 B) | confirmed | コミカル.MID in battle, 安らきﾞ.MID at camp |
-| 0x56C | screen tone R, G, B, vividness | inferred | 100,100,100,100 |
+| 0x56C | screen tone R, G, B, vividness | confirmed (exe) | FUN_0040be6c writes the palette's tone there; FUN_0040bfbc puts it back (FUN_004059b0) |
 | 0x57C | unknown (5, 0, 1 across saves) | unknown | was guessed as the object count, but it's 1 on map 4 |
 | 0x5DC | **variables 0–249**, int16 each | confirmed (exe) | T18c: choosing the option that adds 1 to variable 19 set byte 0x602 = 0x5DC + 19·2, and nothing else in 0x580–0x7CF. The exe reads and writes them as `short` at header + 0x5DC + 2·var (FUN_0040d18c's variable command, FUN_00424ee0's branch), which rules out 8-bit storage at 0x5EF. えるまに uses variables 0–33; 昴の騎士 the most of the other games, up to 199 |
 
@@ -734,6 +734,8 @@ Decompiled with Ghidra 12.1.4 (`re/ghidra_scripts/ExportDecompiled.java`, output
 | Branch conditions | turn "before" is inclusive (≤); unit "alive" = on the map (a fallen unit counts until the checkpoint takes it off), "dead" = taken off after falling, "not present" = no record at all (a fallen unit is still present), "player controlled" = an ally record or in the roster (the roster loop skips its first entry); "party has item" also counts items equipped by player-side units on the map | FUN_00424ee0, FUN_00424e70 |
 | Commands | a message directly followed by a choice doesn't wait: the choice comes at once under it. Variables stay within ±1000; dividing by 0 gives 0. Items: at most 99 each and 100 kinds; gold 0–9,999,999. Move commands give the steps to every unit of that id; scripted steps onto an occupied or impassable tile are skipped (still taking their time). return_to_title erases the screen and goes to the title 2.5 s later | FUN_0040d18c, FUN_0040add8, FUN_00424a68 |
 | Saves | header 0x004 = the map being played / the camp's map (what a load opens), 0x010 = the next map; roster record [13] = 出撃. Battle-save records sit at their record numbers; [14] guest, [15] neutral, [16] unattackable, [45]/[46] poison/sleep | FUN_0040e334, FUN_004048ac |
+| What a save holds | FUN_0040be6c writes the 2,000-byte header (camp flag, map, camera, the music's name, the tone, switches, variables, …), the 100 unit records, the 50 roster records and the object table — no play time and no date (only the file's own). The game's files are SAVE1–8.DAT (WORD.DAT 81–88 name them ファイル１–８). A map's name for a list is MAPNAME.DAT's (100 × 32 bytes, the editor's map list), which matches every map file's own name in all five games | FUN_0040be6c, FUN_0040bfbc |
+| EasySRPG95's additions (not the original's) | the extended save screen: SAVE1–100.DAT (the original sees 1–8), and beside the saves an EasySRPG95 folder with SAVEn.png (the screen when saved) and saves.json (play time, counted by the client, and the save's hash — a slot the original saved over since shows neither) | client |
 | Items in battle | medicine, stat-up and magic items the class may use, and class-change items (level and from → to pair), stat-up and class-change ones on the user itself. Stat-ups add positive values only (max HP/MP to 60, the rest to 30) | FUN_0040f650's list, FUN_0040b074, FUN_0040b8f0 |
 | Spells' targets | an unattackable neutral unit is never affected; target 0 hits everyone in the area (the caster too); target 1 only the other side (Damage/Degrade) or the caster's side (Raise), enemies vs. everyone else | FUN_00411934 |
 | Screen display / erase | effect 0 is instant (the most used: ~320 times), 6 is a brightness fade of 20 ticks (0.67 s; to white goes to 200 %), 1–5 are wipes (FUN_00422a00) taking about 0.66 s: 1 random 8×8 blocks (240 a tick, freshly shuffled), 2 one-pixel rows every 20 px, 3 one-pixel columns every 20 px, 4 8-px bands, the 1st/3rd of every 32 px top-down then the 2nd/4th bottom-up (30 × 22 ms), 5 the same with columns (40 × 16 ms). A display wipe starts from a screen filled with the colour. The script waits for all of them | FUN_00422ecc, FUN_004231c0, FUN_00422a00 |
@@ -1111,7 +1113,7 @@ A recording of the title: TITLE.BMP with a menu 108×64 at (266,320): はじめ�
 ## Open items with no test planned
 
 - Phase 1 leftovers with no known runtime effect: ANIME +0x020, SMAP 0x448 and 0x44C (3–4 maps each). Best chased in the exe.
-- Save header fields 0x008, 0x00C, 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
+- Save header field 0x57C, and unit-record fields [4], [13], [36], [52], [56], [130], [131], [150].
 - Event-side details that need the running game:
   - the order of event-slot condition codes 6–8 and 9–11 (§11.1);
   - picture display methods and screen effects beyond the first two.

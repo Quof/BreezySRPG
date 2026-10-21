@@ -192,6 +192,11 @@ public sealed class CampScreen
 
     public Action? StartNext { get; set; }
     public Action<SaveFile>? Loaded { get; set; }
+    /// <summary>A file was just written (EasySRPG95 notes its play time and picture beside it).</summary>
+    public Action<int>? Saved { get; set; }
+    /// <summary>The extended save / load screen (modern), when the options choose it over the original's file list (null).</summary>
+    public Func<bool, Ui.SaveMenu?>? NewSaveMenu { get; set; }
+    Ui.SaveMenu? _saveMenu;
     public Action? Quit { get; set; }
     /// <summary>Moves the mouse pointer (FUN_00409d24).</summary>
     public Action<Point>? WarpPointer { get; set; }
@@ -278,6 +283,15 @@ public sealed class CampScreen
                 if (back) { BackToMenu(3); break; }
                 if (_list.Navigate(i, mouse) is var s and >= 0) Sell(_rowItems[s]);
                 break;
+            case Mode.Save or Mode.Load when _saveMenu is { } files:
+                var (result, slot) = files.Update(i, mouse);
+                if (result == Ui.SaveMenu.Result.None) break;
+                files.Dispose();
+                _saveMenu = null;
+                if (result == Ui.SaveMenu.Result.Cancelled) BackToMenu(_mode == Mode.Save ? 4 : 5);
+                else if (_mode == Mode.Save) SaveTo(slot);
+                else LoadFrom(slot);
+                break;
             case Mode.Save:
                 if (back) { BackToMenu(4); break; }
                 if (_list.Navigate(i, mouse) is var f and >= 0) SaveTo(f + 1);
@@ -295,6 +309,7 @@ public sealed class CampScreen
         Mode.Menu => _menu.Row(_menu.Index),
         Mode.Confirm => _confirm.Row(_confirm.Index),
         Mode.Units => _commandKeys ? _commands.Row(_commands.Index) : null,
+        Mode.Save or Mode.Load when _saveMenu is not null => null,
         _ when _list.Items.Length > 0 => _list.Row(_list.Index),
         _ => null,
     };
@@ -590,6 +605,12 @@ public sealed class CampScreen
     /// <summary>FUN_0041fd08 / FUN_0041ffe0: 「セーブします」 (「ロードします」), a rule and ファイル１–８ at (16,16), the files 60 px wide in the middle.</summary>
     void OpenFiles(bool save)
     {
+        if (NewSaveMenu?.Invoke(save) is { } menu)
+        {
+            _saveMenu = menu;
+            _mode = save ? Mode.Save : Mode.Load;
+            return;
+        }
         string title = W(save ? 53 : 54);
         int w = (Math.Max(5, (Bin.Sjis.GetByteCount(title) + 1) / 2) + 2) * 12;
         _list.Rect = new Rectangle(16, 16, w, 176);
@@ -608,6 +629,7 @@ public sealed class CampScreen
         string path = SaveFile.PathFor(_folder, slot);
         var template = SaveFile.Load(path)?.Raw ?? _state.LastSave;
         SaveFile.ForCamp(_state, _db, _nextIndex, Bgm, template).Write(path);
+        Saved?.Invoke(slot);
         BackToMenu(4);
     }
 
@@ -632,6 +654,9 @@ public sealed class CampScreen
             case Mode.Confirm:
                 _confirm.Draw(sb, _ui, true, frame);
                 break;
+            case Mode.Save or Mode.Load when _saveMenu is not null:
+                _saveMenu.Draw(sb, frame);
+                break;
             case Mode.Save or Mode.Load:
                 _list.Draw(sb, _ui, true, frame);
                 break;
@@ -652,6 +677,14 @@ public sealed class CampScreen
                 DrawDescription(sb);
                 break;
         }
+    }
+
+    /// <summary>The camp as a save's picture shows it: its background and the menu, nothing chosen.</summary>
+    public void DrawBackdrop(SpriteBatch sb, int frame)
+    {
+        if (_tex.Get($"CAMP_{_next.CampBackground:000}.BMP", transparent: false) is { } back) sb.Draw(back, Vector2.Zero, Color.White);
+        else _ui.Fill(sb, new Rectangle(0, 0, 640, 480), Color.Black);
+        _menu.Draw(sb, _ui, false, frame);
     }
 
     /// <summary>The pointer as the last update saw it (for the commands' bar while the keys work the army).</summary>

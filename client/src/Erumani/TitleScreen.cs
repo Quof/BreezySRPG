@@ -30,21 +30,37 @@ public sealed class TitleScreen
     public Action? Quit { get; set; }
     public Action? Options { get; set; }
     public bool AcceptsCancel => _loading;
+    /// <summary>The extended load screen (modern), when the options choose it over the original's file list (null).</summary>
+    public Func<bool, Ui.SaveMenu?>? NewSaveMenu { get; set; }
+    Ui.SaveMenu? _saveMenu;
 
     public TitleScreen(Database db, GameFolder folder, Textures tex, Ui.Ui ui)
     {
         (_db, _folder, _tex, _ui) = (db, folder, tex, ui);
-        _menu.Set(new[] { W(47), W(22), "オプション", W(23) });
+        _menu.Set(new[] { W(47), W(22), "", W(23) });
     }
 
     string W(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
 
     public void Update(BattleInput i, Point mouse)
     {
+        _menu.Items[2] = Ui.Lang.T("Options", "オプション");   // in the language the options may just have changed
         if (_pointMenu)
         {
             _pointMenu = false;
-            WarpPointer?.Invoke((_loading ? _files : _menu).Row((_loading ? _files : _menu).Index).Center);
+            if (_saveMenu is null) WarpPointer?.Invoke((_loading ? _files : _menu).Row((_loading ? _files : _menu).Index).Center);
+        }
+        if (_loading && _saveMenu is { } files)
+        {
+            var (result, slot) = files.Update(i, mouse);
+            if (result == Ui.SaveMenu.Result.None) return;
+            if (result == Ui.SaveMenu.Result.Picked && SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } picked) { Loaded?.Invoke(picked); return; }
+            files.Dispose();
+            _saveMenu = null;
+            _loading = false;
+            _menu.Index = 1;
+            _pointMenu = true;
+            return;
         }
         if (_loading)
         {
@@ -56,6 +72,7 @@ public sealed class TitleScreen
         {
             case 0: NewGame?.Invoke(); break;
             case 1:
+                if (NewSaveMenu?.Invoke(false) is { } menu) { _saveMenu = menu; _loading = true; break; }
                 _files.Header = new[] { W(54), "-" };   // ロードします
                 _files.Set(Enumerable.Range(81, 8).Select(W).ToArray(),
                     Enumerable.Range(1, 8).Select(n => File.Exists(SaveFile.PathFor(_folder, n))).ToArray());
@@ -70,8 +87,10 @@ public sealed class TitleScreen
 
     public void Draw(SpriteBatch sb, int frame)
     {
+        _menu.Items[2] = Ui.Lang.T("Options", "オプション");
         if (_tex.Get("TITLE.BMP", transparent: false) is { } t) sb.Draw(t, Vector2.Zero, Color.White);
         if (!_loading) _menu.Draw(sb, _ui, true, frame);
-        if (_loading) _files.Draw(sb, _ui, true, frame);
+        else if (_saveMenu is not null) _saveMenu.Draw(sb, frame);
+        else _files.Draw(sb, _ui, true, frame);
     }
 }

@@ -42,6 +42,8 @@ public sealed class SaveFile
     public int MapIndex => I32(0x004);
     /// <summary>The map after it, 0-based (header 0x010): MapIndex + 1 unless a "Next Map" command changed it.</summary>
     public int NextMap => I32(0x010);
+    /// <summary>The camera, in tiles: the view's top-left tile (header 0x008 / 0x00C; FUN_0040dee0 adds them to the pointer's tile, and a load keeps them as they are, FUN_0040e334).</summary>
+    public (int X, int Y) CameraTile => (I32(0x008), I32(0x00C));
     public int Gold => I32(0x534);
     /// <summary>The music playing when the game was saved (header 0x53C, 48 bytes of Shift-JIS).</summary>
     public string Bgm => Encoding.GetEncoding(932).GetString(Raw, 0x53C, 48).Split('\0')[0];
@@ -213,10 +215,12 @@ public sealed class SaveFile
     /// with spawned objects' in-use word cleared and fired event slots flagged (both as in SAVE1/SAVE3).
     /// </summary>
     public static SaveFile ForBattle(GameState s, Database db, int mapIndex, string bgm, int phase, string mapPath,
-        IEnumerable<Srpg95.Rules.BattleUnit> units, IEnumerable<(int Object, int Slot)> fired, byte[]? template, int[]? tone = null)
+        IEnumerable<Srpg95.Rules.BattleUnit> units, IEnumerable<(int Object, int Slot)> fired, byte[]? template, int[]? tone = null,
+        (int X, int Y)? camera = null)
     {
         var f = ForCamp(s, db, mapIndex, bgm, template, s.NextMap, tone);
         f.I32(0x000, 0);
+        if (camera is { } c) { f.I32(0x008, c.X); f.I32(0x00C, c.Y); }
         f.I32(0x20C, phase);
         Array.Clear(f.Raw, UnitOff, MapUnits * UnitSize);
         var all = units.ToList();

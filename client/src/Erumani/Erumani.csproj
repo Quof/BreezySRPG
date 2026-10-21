@@ -51,6 +51,27 @@
     <EmbeddedResource Include="Icon.bmp" LogicalName="Icon.bmp" />
   </ItemGroup>
 
+  <!--
+    The restyled skins' Noto Sans JP and Noto Serif JP (SIL OFL 1.1, fonts/OFL.txt), embedded so every PC has them. They
+    aren't kept in git: the build copies them from Windows' own fonts folder (Windows 11 ships them) and leaves them out
+    when they aren't there (the Font option then falls back to Yu Gothic UI).
+  -->
+  <PropertyGroup>
+    <FontsDir>$(MSBuildThisFileDirectory)fonts\</FontsDir>
+  </PropertyGroup>
+  <Target Name="EmbedFonts" BeforeTargets="PrepareForBuild">
+    <Copy SourceFiles="$(WINDIR)\Fonts\%(FontFile.Identity)" DestinationFolder="$(FontsDir)"
+          Condition="!Exists('$(FontsDir)%(FontFile.Identity)') And Exists('$(WINDIR)\Fonts\%(FontFile.Identity)')" />
+    <ItemGroup>
+      <_EmbeddedFont Include="$(FontsDir)*.ttf" />
+      <EmbeddedResource Include="@(_EmbeddedFont)" LogicalName="fonts/%(_EmbeddedFont.Filename)%(_EmbeddedFont.Extension)" />
+    </ItemGroup>
+  </Target>
+  <ItemGroup>
+    <FontFile Include="NotoSansJP-VF.ttf;NotoSerifJP-VF.ttf" />
+    <EmbeddedResource Include="fonts\OFL.txt" LogicalName="fonts/OFL.txt" />
+  </ItemGroup>
+
   <!-- The grade shader, compiled from Shaders\Grade.fx (see its header for the command). -->
   <ItemGroup>
     <EmbeddedResource Include="Shaders\Grade.ogl.mgfx" LogicalName="Grade.ogl.mgfx" />
@@ -64,6 +85,8 @@
        unpacked to a cache folder on first start, see client/README.md) -->
   <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- compressed inside the exe (the SoundFont and the fonts are most of it): about 35 MB smaller, no slower to start -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
   </PropertyGroup>
 

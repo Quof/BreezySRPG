@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Erumani.Config;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -7,20 +8,24 @@ namespace Erumani.Ui;
 /// <summary>
 /// A string rendered to a texture, <see cref="Scale"/> texture pixels to a pixel of the 640 × 480 screen: 1 for the
 /// original's bitmap text (scaled with the rest of the picture), the render scale for the restyled skins' smooth text, so
-/// that it lands on the window's own pixels and stays crisp however large the window is.
+/// that it lands on the window's own pixels and stays crisp however large the window is. A smooth face is drawn
+/// <see cref="Lift"/> px higher and laid out by <see cref="RefHeight"/>, so that every face sits where Yu Gothic UI —
+/// the face the restyled skins were laid out with — would.
 /// </summary>
-public readonly record struct TextImage(Texture2D Texture, int Scale)
+public readonly record struct TextImage(Texture2D Texture, int Scale, float Lift = 0, float RefHeight = 0)
 {
     /// <summary>Its size in 640 × 480 pixels.</summary>
     public int Width => (Texture.Width + Scale - 1) / Scale;
     public int Height => (Texture.Height + Scale - 1) / Scale;
+    /// <summary>The height to centre it by: the reference face's line for smooth text, its own for the bitmap fonts.</summary>
+    public float LayoutHeight => RefHeight > 0 ? RefHeight : Texture.Height / (float)Scale;
 
     /// <summary>Draws it with its corner at <paramref name="pos"/> (640 × 480 pixels, under the frame's scale transform).</summary>
     public void Draw(SpriteBatch sb, Vector2 pos, Color c)
     {
-        if (Scale == 1) { sb.Draw(Texture, pos, c); return; }
+        if (Scale == 1 && Lift == 0) { sb.Draw(Texture, pos, c); return; }
         // on whole render pixels, so each texel lands on exactly one
-        var p = new Vector2(MathF.Round(pos.X * Scale) / Scale, MathF.Round(pos.Y * Scale) / Scale);
+        var p = new Vector2(MathF.Round(pos.X * Scale) / Scale, MathF.Round((pos.Y - Lift) * Scale) / Scale);
         sb.Draw(Texture, p, null, c, 0, Vector2.Zero, 1f / Scale, SpriteEffects.None, 0);
     }
 }
@@ -28,33 +33,37 @@ public readonly record struct TextImage(Texture2D Texture, int Scale)
 /// <summary>
 /// Text rendered exactly like the original runtime: Windows GDI, MS Gothic 18 px bold
 /// (lfHeight -18, FW_BOLD), no anti-aliasing. Verified pixel-identical against a screenshot. Each distinct
-/// string becomes a white-on-transparent texture, tinted at draw time. The restyled skins use a smooth face instead,
-/// rendered at the frame's render scale (<see cref="Ui.RenderScale"/>); layout still measures at 640 × 480.
+/// string becomes a white-on-transparent texture, tinted at draw time. The restyled skins use a smooth face instead
+/// (the Font setting, <see cref="Ui.Font"/>), rendered at the frame's render scale (<see cref="Ui.RenderScale"/>); layout
+/// still measures at 640 × 480.
 /// </summary>
 public sealed class GdiText : IDisposable
 {
     readonly GraphicsDevice _device;
-    readonly IntPtr _dc, _font, _modernFont;
-    readonly string? _modernFace;
-    readonly int _modernWeight;
-    /// <summary>The smooth face at <see cref="_scaledFontScale"/> times the height (created when the render scale changes).</summary>
-    IntPtr _scaledFont;
-    int _scaledFontScale;
+    readonly IntPtr _dc, _font;
+    /// <summary>Bold text (the original's weight 700): the smooth faces' heavier cut.</summary>
+    readonly bool _strong;
     IntPtr _selected;
-    /// <summary>Rendered strings, all in one mode: the bitmap font or the smooth one, at one scale.</summary>
+    /// <summary>The smooth faces made so far, by font and render scale.</summary>
+    readonly Dictionary<(UiFont Font, int Scale), Smooth> _smooth = new();
+    /// <summary>Rendered strings, all in one mode: the bitmap font, or one smooth face at one scale.</summary>
     readonly Dictionary<string, Texture2D> _cache = new();
-    (bool Smooth, int Scale) _cacheMode = (false, 1);
+    (bool Smooth, int Scale, UiFont Font) _cacheMode = (false, 1, default);
     public string FaceName { get; }
     public int Height { get; }
 
+    /// <summary>A smooth face at one render scale, with what it takes to sit where the reference face does (<see cref="TextImage"/>).</summary>
+    sealed record Smooth(IntPtr Font, string Face, float Lift, float RefHeight);
+
     public GdiText(GraphicsDevice device, int height = 18, int weight = 700, string envOverride = "ERUMANI_FONT")
     {
+        PrivateFonts.Load();
         _device = device;
         // calibration hook: e.g. ERUMANI_FONT="height,weight"
         if (Environment.GetEnvironmentVariable(envOverride) is { } env && env.Split(',') is [var hs, var ws])
             (height, weight) = (int.Parse(hs), int.Parse(ws));
         Height = height;
-        _modernWeight = weight >= 700 ? 600 : weight;
+        _strong = weight >= 700;
         _dc = CreateCompatibleDC(IntPtr.Zero);
         // MS Gothic is what the original used; the others ship with every Windows 10/11.
         foreach (var face in new[] { "ＭＳ ゴシック", "MS Gothic", "Yu Gothic", "Meiryo" })
@@ -67,8 +76,6 @@ public sealed class GdiText : IDisposable
             {
                 _font = _selected = f;
                 FaceName = FaceOf();
-                (_modernFont, _modernFace) = CreateModernFont(height);
-                Select(_font);
                 return;
             }
             SelectObject(_dc, before);
@@ -91,65 +98,139 @@ public sealed class GdiText : IDisposable
         _selected = font;
     }
 
-    IntPtr Smooth(string face, int height) =>
-        CreateFontW(-height, 0, 0, 0, _modernWeight, 0, 0, 0, 128, 0, 0, 4 /*ANTIALIASED_QUALITY*/, 0, face);
-
-    /// <summary>The modern interface's font: a smooth (anti-aliased) UI face at the same pixel height.</summary>
-    (IntPtr, string?) CreateModernFont(int height)
+    /// <summary>
+    /// A smooth face's faces to try (the first one GDI has), its weight and its size against the original's pixel height.
+    /// Noto Sans JP and Noto Serif JP travel inside the executable (<see cref="PrivateFonts"/>); BIZ UDPGothic and Yu
+    /// Gothic UI are Windows'. Yu Gothic UI is what the restyled skins had at first, at the full height.
+    /// </summary>
+    static (string[] Faces, int Weight, float Size) Spec(UiFont f, bool strong) => f switch
     {
-        foreach (var face in new[] { "Yu Gothic UI", "Meiryo UI", "Meiryo" })
+        UiFont.NotoSans => strong ? (new[] { "Noto Sans JP Medium", "Noto Sans JP" }, 500, 0.9f) : (new[] { "Noto Sans JP" }, 400, 0.9f),
+        UiFont.NotoSerif => strong ? (new[] { "Noto Serif JP SemiBold", "Noto Serif JP" }, 600, 0.9f)
+            : (new[] { "Noto Serif JP Medium", "Noto Serif JP" }, 500, 0.9f),
+        UiFont.BizUd => (new[] { "BIZ UDPGothic", "BIZ UDPゴシック" }, strong ? 700 : 400, 0.84f),
+        _ => (new[] { "Yu Gothic UI" }, strong ? 600 : 400, 1f),
+    };
+
+    static readonly Dictionary<UiFont, bool> Present = new();
+
+    /// <summary>Whether one of a font's faces is there — Windows' or the executable's own — for the options to say so.</summary>
+    public static bool Available(UiFont f)
+    {
+        if (Present.TryGetValue(f, out var known)) return known;
+        PrivateFonts.Load();
+        var dc = CreateCompatibleDC(IntPtr.Zero);
+        try
         {
-            var f = Smooth(face, height);
+            foreach (var face in Spec(f, false).Faces)
+            {
+                var font = CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 4, 0, face);
+                var old = SelectObject(dc, font);
+                var got = new System.Text.StringBuilder(64);
+                GetTextFaceW(dc, got.Capacity, got);
+                SelectObject(dc, old);
+                DeleteObject(font);
+                if (got.ToString() == face) return Present[f] = true;
+            }
+            return Present[f] = false;
+        }
+        finally { DeleteDC(dc); }
+    }
+
+    /// <summary>What a face that isn't there falls back to (Yu Gothic UI and Meiryo ship with every Windows 10/11).</summary>
+    static readonly string[] Fallback = { "Yu Gothic UI", "Meiryo UI", "Meiryo" };
+
+    /// <summary>A smooth (anti-aliased) face, the first of <paramref name="faces"/> that GDI has.</summary>
+    (IntPtr Font, string Face) Create(IEnumerable<string> faces, int weight, int px)
+    {
+        string last = "";
+        foreach (var face in faces)
+        {
+            last = face;
+            var f = CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, 1 /*DEFAULT_CHARSET*/, 0, 0, 4 /*ANTIALIASED_QUALITY*/, 0, face);
             if (f == IntPtr.Zero) continue;
             Select(f);
             if (FaceOf() == face) return (f, face);
             Select(_font);
             DeleteObject(f);
         }
-        return (IntPtr.Zero, null);
+        var any = CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 4, 0, last);   // whatever GDI makes of it
+        Select(any);
+        return (any, FaceOf());
     }
 
-    bool UseSmooth => Ui.Restyled && _modernFont != IntPtr.Zero;
+    (int Ascent, int Height) Metrics(IntPtr font)
+    {
+        Select(font);
+        GetTextMetricsW(_dc, out var tm);
+        return (tm.tmAscent, tm.tmHeight);
+    }
+
+    /// <summary>
+    /// A smooth face at render scale <paramref name="k"/>: the middle of its em box (0.38 em above the baseline, for
+    /// Japanese faces) put where Yu Gothic UI's would be at the full height, so a smaller or taller face stays centred
+    /// on the lines and menu rows laid out for that one.
+    /// </summary>
+    Smooth MakeSmooth(UiFont f, int k)
+    {
+        var (faces, weight, size) = Spec(f, _strong);
+        int px = Math.Max(1, (int)MathF.Round(Height * size * k)), refPx = Height * k;
+        var (font, face) = Create(faces.Concat(Fallback), weight, px);
+        var (refFont, _) = Create(Fallback, Spec(UiFont.YuGothic, _strong).Weight, refPx);
+        var (ascent, _) = Metrics(font);
+        var (refAscent, refHeight) = Metrics(refFont);
+        Select(_font);
+        DeleteObject(refFont);
+        float lift = (ascent - 0.38f * px - (refAscent - 0.38f * refPx)) / k;
+        return new Smooth(font, face, lift, refHeight / (float)k);
+    }
 
     /// <summary>The font strings are rendered in now, and at what scale.</summary>
-    (IntPtr Font, bool Smooth, int Scale) Current()
+    (IntPtr Font, bool Smooth, int Scale, Smooth? Face) Current()
     {
-        if (!UseSmooth) return (_font, false, 1);
+        if (!Ui.Restyled) return (_font, false, 1, null);
         int k = Math.Max(1, Ui.RenderScale);
-        if (k == 1) return (_modernFont, true, 1);
-        if (_scaledFontScale != k)
+        var key = (Ui.Font, k);
+        if (!_smooth.TryGetValue(key, out var s))
         {
-            if (_scaledFont != IntPtr.Zero)
-            {
-                if (_selected == _scaledFont) Select(_font);
-                DeleteObject(_scaledFont);
-            }
-            _scaledFont = Smooth(_modernFace!, Height * k);
-            _scaledFontScale = k;
+            if (_smooth.Count >= 6) DropSmooth();
+            _smooth[key] = s = MakeSmooth(Ui.Font, k);
         }
-        return (_scaledFont, true, k);
+        return (s.Font, true, k, s);
     }
+
+    void DropSmooth()
+    {
+        Select(_font);
+        foreach (var s in _smooth.Values) DeleteObject(s.Font);
+        _smooth.Clear();
+    }
+
+    /// <summary>The face smooth text is in now (null with the original skin).</summary>
+    public string? SmoothFace => Current().Face?.Face;
 
     /// <summary>A string's width in 640 × 480 pixels.</summary>
     public int Measure(string s)
     {
         if (s.Length == 0) return 0;
-        Select(UseSmooth ? _modernFont : _font);
+        var (font, _, k, _) = Current();
+        Select(font);
         GetTextExtentPoint32W(_dc, s, s.Length, out var size);
-        return size.cx;
+        return (size.cx + k - 1) / k;
     }
 
     /// <summary>White text on transparent background (null for an empty string).</summary>
     public TextImage? Get(string s)
     {
         if (s.Length == 0) return null;
-        var (font, smooth, k) = Current();
-        if ((smooth, k) != _cacheMode)
+        var (font, smooth, k, face) = Current();
+        if ((smooth, k, Ui.Font) != _cacheMode)
         {
             ClearCache();
-            _cacheMode = (smooth, k);
+            _cacheMode = (smooth, k, Ui.Font);
         }
-        if (_cache.TryGetValue(s, out var t)) return new TextImage(t, k);
+        TextImage Image(Texture2D t) => new(t, k, face?.Lift ?? 0, face?.RefHeight ?? 0);
+        if (_cache.TryGetValue(s, out var t)) return Image(t);
         Select(font);
         GetTextExtentPoint32W(_dc, s, s.Length, out var size);
         int w = Math.Max(1, size.cx), h = Math.Max(1, size.cy);
@@ -176,7 +257,7 @@ public sealed class GdiText : IDisposable
         t.SetData(rgba);
         if (_cache.Count > 2000) ClearCache();
         _cache[s] = t;
-        return new TextImage(t, k);
+        return Image(t);
     }
 
     void ClearCache()
@@ -190,8 +271,7 @@ public sealed class GdiText : IDisposable
         ClearCache();
         DeleteDC(_dc);   // first, so none of the fonts is still selected into it
         DeleteObject(_font);
-        if (_modernFont != IntPtr.Zero) DeleteObject(_modernFont);
-        if (_scaledFont != IntPtr.Zero) DeleteObject(_scaledFont);
+        foreach (var s in _smooth.Values) DeleteObject(s.Font);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -206,12 +286,22 @@ public sealed class GdiText : IDisposable
         public int bmiColors;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct TEXTMETRICW
+    {
+        public int tmHeight, tmAscent, tmDescent, tmInternalLeading, tmExternalLeading, tmAveCharWidth, tmMaxCharWidth,
+            tmWeight, tmOverhang, tmDigitizedAspectX, tmDigitizedAspectY;
+        public char tmFirstChar, tmLastChar, tmDefaultChar, tmBreakChar;
+        public byte tmItalic, tmUnderlined, tmStruckOut, tmPitchAndFamily, tmCharSet;
+    }
+
     [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr hdc);
     [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr hdc);
     [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
     static extern IntPtr CreateFontW(int h, int w, int esc, int orient, int weight, uint italic, uint underline,
         uint strike, uint charset, uint outPrec, uint clipPrec, uint quality, uint pitch, string face);
     [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] static extern int GetTextFaceW(IntPtr hdc, int n, System.Text.StringBuilder face);
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] static extern bool GetTextMetricsW(IntPtr hdc, out TEXTMETRICW tm);
     [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
     [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
     [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] static extern bool GetTextExtentPoint32W(IntPtr hdc, string s, int n, out SIZE size);
@@ -222,4 +312,36 @@ public sealed class GdiText : IDisposable
     [DllImport("gdi32.dll")] static extern bool GdiFlush();
     [DllImport("gdi32.dll")]
     static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+}
+
+/// <summary>
+/// The fonts EasySRPG95 carries inside the executable — Noto Sans JP and Noto Serif JP (SIL Open Font License 1.1, see
+/// fonts/OFL.txt) — handed to GDI for this process only, so the restyled skins look the same on every PC.
+/// </summary>
+static class PrivateFonts
+{
+    static bool _loaded;
+    /// <summary>The fonts' bytes, kept for the process's life (GDI is given them where they lie).</summary>
+    static readonly List<IntPtr> Memory = new();
+
+    public static void Load()
+    {
+        if (_loaded) return;
+        _loaded = true;
+        var asm = typeof(PrivateFonts).Assembly;
+        foreach (var name in asm.GetManifestResourceNames().Where(n => n.StartsWith("fonts/") && n.EndsWith(".ttf")))
+        {
+            using var s = asm.GetManifestResourceStream(name);
+            if (s is null) continue;
+            var bytes = new byte[s.Length];
+            s.ReadExactly(bytes);
+            var p = Marshal.AllocHGlobal(bytes.Length);
+            Marshal.Copy(bytes, 0, p, bytes.Length);
+            uint count = 0;
+            if (AddFontMemResourceEx(p, (uint)bytes.Length, IntPtr.Zero, ref count) != IntPtr.Zero) Memory.Add(p);
+            else Marshal.FreeHGlobal(p);
+        }
+    }
+
+    [DllImport("gdi32.dll")] static extern IntPtr AddFontMemResourceEx(IntPtr font, uint size, IntPtr reserved, ref uint fonts);
 }

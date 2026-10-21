@@ -23,4 +23,5 @@ obj/
 recordings/
 client/publish/
 client/src/Erumani/soundfont/*.sf2
+client/src/Erumani/fonts/*.ttf
 re/exe/

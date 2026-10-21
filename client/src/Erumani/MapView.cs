@@ -224,7 +224,11 @@ public sealed class MapSession : IMapContext
         }
         Field.SetPhase(Math.Max(1, save.Phase));
         RefreshSpawns();   // the exe runs FUN_00409658 after loading too
-        if (FirstPlayerUnit() is { } first) StartCamera(first.X, first.Y);
+        // the camera where the save has it (header 0x008 / 0x00C: a load turns scrolling off and leaves it there, FUN_0040e334)
+        var (cx, cy) = save.CameraTile;
+        Camera = new Point(cx * Tile, cy * Tile);
+        ClampCamera();
+        _panTarget = null;
     }
 
     public bool OtherVisible(MapObject o) => o.SwitchCondition < 0 || SwitchOn(o.SwitchCondition);

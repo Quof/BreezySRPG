@@ -2,17 +2,33 @@ using Erumani.Config;
 using Erumani.Runtime;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using static Erumani.Ui.Lang;
 
 namespace Erumani.Ui;
 
 /// <summary>
-/// The options menu (modern; from the title screen or F1 anywhere). It opens on a list of categories (Display, Audio,
-/// Gameplay, Controls); each opens its own page. Left/right or a click changes a value; on the Controls page Confirm
-/// on an action waits for a key (pressing a key already bound to it removes it; right click cancels).
+/// The options menu (modern; from the title screen, F1 anywhere, or a right click during an event). It opens on a list
+/// of categories (Display, Audio, Gameplay, Controls); each opens its own page. A toggle changes on a click or left /
+/// right; a setting with several values steps through them with left / right and opens a drop-down list of them on a
+/// click or Confirm; on the Controls page Confirm on an action waits for a key (pressing a key already bound to it
+/// removes it; right click cancels). Every word is in the Language setting's language.
 /// </summary>
 public sealed class OptionsScreen
 {
-    sealed record Row(string Label, Func<string> Value, Action<int>? Change = null, Action? Activate = null);
+    /// <summary>
+    /// A row: its label and value. <see cref="Change"/> steps a toggle or a choice (−1 / +1); a choice also lists its values
+    /// (<see cref="Choices"/>, the current one <see cref="Chosen"/>) for the drop-down, which sets one with <see cref="Pick"/>;
+    /// <see cref="Activate"/> opens a page or runs a command.
+    /// </summary>
+    sealed record Row(string Label, Func<string> Value, Action<int>? Change = null, Action? Activate = null,
+        Func<string[]>? Choices = null, Func<int>? Chosen = null, Action<int>? Pick = null);
+
+    static Row Choice(string label, Func<string[]> names, Func<int> chosen, Action<int> pick) =>
+        new(label, () => names().ElementAtOrDefault(chosen()) ?? "",
+            d => { int n = names().Length; pick(((Math.Max(0, chosen()) + d) % n + n) % n); },
+            Choices: names, Chosen: chosen, Pick: pick);
+
+    static Row Toggle(string label, Func<bool> get, Action<bool> set) => new(label, () => OnOff(get()), _ => set(!get()));
 
     enum Page { Main, Display, Audio, Gameplay, Controls }
 
@@ -20,11 +36,14 @@ public sealed class OptionsScreen
     readonly Ui _ui;
     readonly string _gameRoot;
     readonly Action _apply;
-    readonly Camp.MenuList _list = new() { Rect = new Rectangle(96, 40, 448, 400), ColumnX = new[] { 436 }, SkipDisabled = true };
+    readonly Camp.MenuList _list = new() { Rect = new Rectangle(96, 40, 448, 400), ColumnX = new[] { 428 }, SkipDisabled = true };
     List<Row> _rows = new();
     Page _page;
     int _mainIndex;
     GameAction? _waiting;
+    /// <summary>The open drop-down list and the row it belongs to.</summary>
+    Camp.MenuList? _drop;
+    int _dropRow;
 
     public bool Done { get; private set; }
 
@@ -34,15 +53,7 @@ public sealed class OptionsScreen
         Open(Page.Main);
     }
 
-    static string OnOff(bool b) => b ? "On" : "Off";
-
-    static T Cycle<T>(T[] values, T current, int dir)
-    {
-        int i = Array.IndexOf(values, current);
-        return values[((i < 0 ? 0 : i) + dir + values.Length) % values.Length];
-    }
-
-    void Open(Page page)
+    void Open(Page page, int index = 0)
     {
         if (_page == Page.Main && page != Page.Main) _mainIndex = _list.Index;
         _page = page;
@@ -54,79 +65,132 @@ public sealed class OptionsScreen
             Page.Controls => ControlRows(),
             _ => new List<Row>
             {
-                new("Display", () => "", Activate: () => Open(Page.Display)),
-                new("Audio", () => "", Activate: () => Open(Page.Audio)),
-                new("Gameplay", () => "", Activate: () => Open(Page.Gameplay)),
-                new("Controls", () => "", Activate: () => Open(Page.Controls)),
+                new(T("Display", "画面"), () => "", Activate: () => Open(Page.Display)),
+                new(T("Audio", "サウンド"), () => "", Activate: () => Open(Page.Audio)),
+                new(T("Gameplay", "ゲーム"), () => "", Activate: () => Open(Page.Gameplay)),
+                new(T("Controls", "操作"), () => "", Activate: () => Open(Page.Controls)),
                 new("", () => ""),
-                new("Back", () => "", Activate: () => Done = true),
+                new(T("Back", "戻る"), () => "", Activate: () => Done = true),
             },
         };
-        if (page != Page.Main) _rows.AddRange(new[] { new Row("", () => ""), new Row("Back", () => "", Activate: () => Open(Page.Main)) });
-        _list.Index = page == Page.Main ? _mainIndex : 0;
+        if (page != Page.Main) _rows.AddRange(new[] { new Row("", () => ""), new Row(T("Back", "戻る"), () => "", Activate: () => Open(Page.Main)) });
+        _list.Index = page == Page.Main && index == 0 ? _mainIndex : index;
         Refresh();
     }
 
-    List<Row> DisplayRows() => new()
+    string PageTitle => _page switch
     {
-        new("Interface style", () => _s.Skin switch { UiSkin.Modern => "Modern", UiSkin.Gilded => "Gilded", _ => "Original" },
-            d => _s.Skin = Cycle(Enum.GetValues<UiSkin>(), _s.Skin, d)),
-        new("Window size", () => $"{640 * _s.WindowScale}×{480 * _s.WindowScale}", d => _s.WindowScale = Math.Clamp(_s.WindowScale + d, 1, 4)),
-        new("Fullscreen", () => OnOff(_s.Fullscreen), _ => _s.Fullscreen = !_s.Fullscreen),
-        new("Scaling", () => _s.Scaling switch { Scaling.Integer => "Pixel-perfect (whole multiples)", Scaling.Fit => "Fit (keep 4:3)", _ => "Stretch" },
-            d => _s.Scaling = Cycle(Enum.GetValues<Scaling>(), _s.Scaling, d)),
-        new("Filter", () => _s.Smooth ? "Smooth" : "Sharp", _ => _s.Smooth = !_s.Smooth),
+        Page.Display => T("Display", "画面"), Page.Audio => T("Audio", "サウンド"), Page.Gameplay => T("Gameplay", "ゲーム"),
+        Page.Controls => T("Controls", "操作"), _ => T("Options", "オプション"),
     };
+
+    /// <summary>Window sizes to offer: 4:3 sizes the screen can hold (640 × 480 always), the whole multiples marked.</summary>
+    static readonly (int W, int H)[] Sizes =
+    {
+        (640, 480), (800, 600), (960, 720), (1024, 768), (1152, 864), (1280, 960), (1400, 1050), (1440, 1080),
+        (1600, 1200), (1920, 1440), (2048, 1536), (2560, 1920),
+    };
+
+    static List<(int W, int H)> FittingSizes()
+    {
+        var mode = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+        return Sizes.Where(s => s == (640, 480) || (s.W <= mode.Width && s.H <= mode.Height - 48)).ToList();
+    }
+
+    List<Row> DisplayRows()
+    {
+        var sizes = FittingSizes();
+        string[] SizeNames() => sizes.Select(s => s.W % 640 == 0 && s.W / 640 * 480 == s.H ? $"{s.W} × {s.H}  (×{s.W / 640})" : $"{s.W} × {s.H}")
+            .Append(T("Fullscreen", "全画面")).ToArray();
+        int SizeChosen()
+        {
+            if (_s.Fullscreen) return sizes.Count;
+            var now = _s.WindowSize;
+            int i = sizes.IndexOf(now);
+            return i >= 0 ? i : sizes.FindLastIndex(s => s.W <= now.Width);
+        }
+        void SizePick(int i)
+        {
+            if (i >= sizes.Count) { _s.Fullscreen = true; return; }
+            _s.Fullscreen = false;
+            (_s.WindowWidth, _s.WindowHeight) = sizes[i];
+        }
+        return new()
+        {
+            Choice(T("Interface style", "インターフェース"), () => new[] { T("Original", "オリジナル"), T("Modern", "モダン"), T("Gilded", "ゴールド") },
+                () => (int)_s.Skin, i => _s.Skin = (UiSkin)i),
+            Choice(T("Font (Modern / Gilded)", "フォント（モダン・ゴールド）"),
+                () => new[] { "Noto Sans JP", "Noto Serif JP", T("BIZ UDPGothic", "BIZ UDPゴシック"), T("Yu Gothic UI", "游ゴシック UI") }
+                    .Select((name, i) => GdiText.Available((UiFont)i) ? name : name + T(" (not on this PC)", "（このPCにありません）")).ToArray(),
+                () => (int)_s.Font, i => _s.Font = (UiFont)i),
+            Choice(T("Language", "言語"), () => new[] { "English", "日本語" }, () => (int)_s.Language, i => _s.Language = (UiLanguage)i),
+            Choice(T("Window size", "画面解像度"), SizeNames, SizeChosen, SizePick),
+            Choice(T("Scaling", "拡大方式"),
+                () => new[] { T("Pixel-perfect (whole multiples)", "ドット等倍（整数倍）"), T("Fit (keep 4:3)", "画面に合わせる（4:3）"), T("Stretch", "引き伸ばし") },
+                () => (int)_s.Scaling, i => _s.Scaling = (Scaling)i),
+            Choice(T("Filter", "フィルター"), () => new[] { T("Sharp", "シャープ"), T("Smooth", "なめらか") }, () => _s.Smooth ? 1 : 0, i => _s.Smooth = i == 1),
+            Choice(T("Save / load screen", "セーブ・ロード画面"), () => new[] { T("Extended (100 files)", "拡張（100ファイル）"), T("Original (8 files)", "オリジナル（8ファイル）") },
+                () => (int)_s.SaveScreen, i => _s.SaveScreen = (SaveScreen)i),
+        };
+    }
 
     List<Row> AudioRows()
     {
         var fonts = new List<string> { Settings.BuiltIn };
         fonts.AddRange(Settings.FindSoundFonts(_gameRoot));
-        string FontName() => _s.ResolveSoundFont(_gameRoot) is var f && f == Settings.BuiltIn ? f : Path.GetFileName(f);
+        string FontName(string f) => f == Settings.BuiltIn ? T("GeneralUser GS (built-in)", "GeneralUser GS（内蔵）") : Path.GetFileName(f);
         return new()
         {
-            new("Music volume", () => $"{_s.MusicVolume}%", d => _s.MusicVolume = Math.Clamp(_s.MusicVolume + 10 * d, 0, 100)),
-            new("Sound volume", () => $"{_s.SoundVolume}%", d => _s.SoundVolume = Math.Clamp(_s.SoundVolume + 10 * d, 0, 100)),
-            new("MIDI playback", () => _s.Music == MusicEngine.SoundFont ? "SoundFont" : "Windows MIDI (original)",
-                d => _s.Music = Cycle(Enum.GetValues<MusicEngine>(), _s.Music, d)),
-            new("SoundFont", FontName, d =>
-            {
-                var next = Cycle(fonts.ToArray(), _s.ResolveSoundFont(_gameRoot), d);
-                _s.SoundFont = next == Settings.BuiltIn ? null : Path.GetFileName(next);
-            }),
-            new("Confirm sound (thunk)", () => OnOff(_s.MessageSound), _ => _s.MessageSound = !_s.MessageSound),
+            new(T("BGM volume", "BGMの音量"), () => $"{_s.MusicVolume}%", d => _s.MusicVolume = Math.Clamp(_s.MusicVolume + 10 * d, 0, 100)),
+            new(T("SE volume", "SEの音量"), () => $"{_s.SoundVolume}%", d => _s.SoundVolume = Math.Clamp(_s.SoundVolume + 10 * d, 0, 100)),
+            Choice(T("MIDI playback", "MIDI再生"), () => new[] { T("Windows MIDI (original)", "Windows MIDI（オリジナル）"), T("SoundFont", "サウンドフォント") },
+                () => (int)_s.Music, i => _s.Music = (MusicEngine)i),
+            Choice(T("SoundFont", "サウンドフォント"), () => fonts.Select(FontName).ToArray(),
+                () => Math.Max(0, fonts.IndexOf(_s.ResolveSoundFont(_gameRoot))),
+                i => _s.SoundFont = fonts[i] == Settings.BuiltIn ? null : Path.GetFileName(fonts[i])),
+            Toggle(T("Confirm sound (thunk)", "決定音"), () => _s.MessageSound, v => _s.MessageSound = v),
         };
     }
 
     List<Row> GameplayRows() => new()
     {
-        new("Battle animations", () => OnOff(_s.BattleScenes), _ => _s.BattleScenes = !_s.BattleScenes),
-        new("Skip enemy turn", () => OnOff(_s.SkipEnemyTurn), _ => _s.SkipEnemyTurn = !_s.SkipEnemyTurn),
-        new("Fast-forward key", () => _s.FastForwardMode == FastForwardMode.Hold ? "Hold" : "Toggle",
-            d => _s.FastForwardMode = Cycle(Enum.GetValues<FastForwardMode>(), _s.FastForwardMode, d)),
-        new("Hold left click to fast-forward", () => OnOff(_s.FastForwardMouse), _ => _s.FastForwardMouse = !_s.FastForwardMouse),
-        new("Fast-forward speed", () => $"×{_s.FastForwardSpeed}", d => _s.FastForwardSpeed = Cycle(new[] { 2, 3, 4, 6, 8 }, _s.FastForwardSpeed, d)),
-        new("Fast-forward skips battles", () => OnOff(_s.FastForwardSkipsScenes), _ => _s.FastForwardSkipsScenes = !_s.FastForwardSkipsScenes),
-        new("Fast-forward advances text", () => OnOff(_s.FastForwardAdvancesText), _ => _s.FastForwardAdvancesText = !_s.FastForwardAdvancesText),
+        Toggle(T("Battle animations", "戦闘アニメーション"), () => _s.BattleScenes, v => _s.BattleScenes = v),
+        Toggle(T("Skip enemy turn", "敵ターンスキップ"), () => _s.SkipEnemyTurn, v => _s.SkipEnemyTurn = v),
+        Choice(T("Fast-forward key", "早送りキー"), () => new[] { T("Hold", "押している間"), T("Toggle", "切り替え") },
+            () => (int)_s.FastForwardMode, i => _s.FastForwardMode = (FastForwardMode)i),
+        Toggle(T("Hold left click to fast-forward", "左クリック長押しで早送り"), () => _s.FastForwardMouse, v => _s.FastForwardMouse = v),
+        Choice(T("Fast-forward speed", "早送り速度"), () => Speeds.Select(n => $"×{n}").ToArray(),
+            () => Math.Max(0, Array.IndexOf(Speeds, _s.FastForwardSpeed)), i => _s.FastForwardSpeed = Speeds[i]),
+        Toggle(T("Fast-forward skips battles", "早送り中は戦闘をスキップ"), () => _s.FastForwardSkipsScenes, v => _s.FastForwardSkipsScenes = v),
+        Toggle(T("Fast-forward advances text", "早送りでメッセージを送る"), () => _s.FastForwardAdvancesText, v => _s.FastForwardAdvancesText = v),
     };
 
-    static readonly Dictionary<GameAction, string> ActionNames = new()
+    static readonly int[] Speeds = { 2, 3, 4, 6, 8 };
+
+    static string ActionName(GameAction a) => a switch
     {
-        [GameAction.Confirm] = "Confirm", [GameAction.Cancel] = "Cancel / back", [GameAction.Info] = "Unit status",
-        [GameAction.Up] = "Cursor / menu up", [GameAction.Down] = "Cursor / menu down", [GameAction.Left] = "Cursor left", [GameAction.Right] = "Cursor right",
-        [GameAction.CameraUp] = "Camera up (menu up)", [GameAction.CameraDown] = "Camera down (menu down)",
-        [GameAction.CameraLeft] = "Camera left", [GameAction.CameraRight] = "Camera right",
-        [GameAction.FastForward] = "Fast-forward", [GameAction.Backlog] = "Text backlog", [GameAction.Options] = "Options", [GameAction.Fullscreen] = "Fullscreen",
-        [GameAction.SkipCutscene] = "Skip cutscene", [GameAction.EnemyRanges] = "Enemy ranges (all at once)",
+        GameAction.Confirm => T("Confirm", "決定"), GameAction.Cancel => T("Cancel / back", "キャンセル／戻る"),
+        GameAction.Info => T("Unit status", "ユニット情報"),
+        GameAction.Up => T("Cursor / menu up", "カーソル・メニュー上"), GameAction.Down => T("Cursor / menu down", "カーソル・メニュー下"),
+        GameAction.Left => T("Cursor left", "カーソル左"), GameAction.Right => T("Cursor right", "カーソル右"),
+        GameAction.CameraUp => T("Camera up (menu up)", "画面スクロール上（メニュー上）"),
+        GameAction.CameraDown => T("Camera down (menu down)", "画面スクロール下（メニュー下）"),
+        GameAction.CameraLeft => T("Camera left", "画面スクロール左"), GameAction.CameraRight => T("Camera right", "画面スクロール右"),
+        GameAction.FastForward => T("Fast-forward", "早送り"), GameAction.Backlog => T("Text backlog", "メッセージ履歴"),
+        GameAction.Options => T("Options", "オプション"), GameAction.Fullscreen => T("Fullscreen", "全画面切り替え"),
+        GameAction.SkipCutscene => T("Skip cutscene", "イベントスキップ"),
+        GameAction.EnemyRanges => T("Enemy ranges (all at once)", "敵の行動範囲表示"),
+        _ => a.ToString(),
     };
 
     List<Row> ControlRows()
     {
-        var rows = Enum.GetValues<GameAction>().Select(a => new Row(ActionNames[a],
-            () => _waiting == a ? "press a key… (right click: cancel)" : string.Join(", ", _s.Keys.GetValueOrDefault(a, new()).Select(Controls.Name)),
+        var rows = Enum.GetValues<GameAction>().Select(a => new Row(ActionName(a),
+            () => _waiting == a ? T("press a key… (right click: cancel)", "キーを押してください…（右クリックで取消）")
+                : string.Join(", ", _s.Keys.GetValueOrDefault(a, new()).Select(Controls.Name)),
             Activate: () => _waiting = a)).ToList();
         rows.Add(new Row("", () => ""));
-        rows.Add(new Row("Reset to defaults", () => "", Activate: () => { _s.Keys = Settings.DefaultKeys(); Changed(); }));
+        rows.Add(new Row(T("Reset to defaults", "初期設定に戻す"), () => "", Activate: () => { _s.Keys = Settings.DefaultKeys(); Changed(); }));
         return rows;
     }
 
@@ -139,11 +203,27 @@ public sealed class OptionsScreen
         if (_list.Index >= _rows.Count || !_list.Enabled[_list.Index]) _list.Index = Math.Max(0, Array.IndexOf(_list.Enabled, true));
     }
 
+    /// <summary>A setting changed: saved, applied, and the page made again (its words follow the language).</summary>
     void Changed()
     {
         _s.Save();
         _apply();
-        Refresh();
+        Open(_page, _list.Index);
+    }
+
+    /// <summary>Opens row <paramref name="row"/>'s drop-down below it, its right edge at the values' (kept on the screen).</summary>
+    void OpenDrop(int row)
+    {
+        var names = _rows[row].Choices!();
+        int w = Math.Max(96, names.Max(_ui.Measure12) + 36), h = 16 * names.Length + 16;
+        var bar = _list.Row(row);
+        int x = Math.Clamp(_list.Rect.X + _list.ColumnX[0] + 18 - w, 8, 632 - w);
+        int y = bar.Bottom + 2 + h <= 472 ? bar.Bottom + 2 : Math.Max(8, bar.Y - 2 - h);
+        _drop = new Camp.MenuList { Rect = new Rectangle(x, y, w, h), ItemX = 18, ItemWidth = w - 36 };
+        _drop.Set(names);
+        _drop.Index = Math.Clamp(_rows[row].Chosen!(), 0, names.Length - 1);
+        _dropRow = row;
+        Sfx.Click();
     }
 
     public void Update(BattleInput i, Point mouse, Controls controls)
@@ -161,21 +241,47 @@ public sealed class OptionsScreen
             }
             return;
         }
+        if (_drop is { } drop)
+        {
+            if (i.Cancel || i.RightClick || (i.Click && !drop.Rect.Contains(mouse))) { _drop = null; Sfx.Cancel(); return; }
+            int chosen = drop.Navigate(i with { Left = false, Right = false }, mouse);
+            if (chosen < 0) return;
+            _drop = null;
+            _rows[_dropRow].Pick!(chosen);
+            Changed();
+            return;
+        }
         if (i.Cancel || i.RightClick) { if (_page != Page.Main) Open(Page.Main); else Done = true; Sfx.Cancel(); return; }
         var row = _rows.ElementAtOrDefault(_list.Index);
         if ((i.Left || i.Right) && row?.Change is not null) { row.Change(i.Right ? 1 : -1); Sfx.Click(); Changed(); return; }
         int pick = _list.Navigate(i, mouse);
         if (pick < 0) return;
         var r = _rows[pick];
-        if (r.Activate is not null) r.Activate();
+        if (r.Choices is not null) OpenDrop(pick);
+        else if (r.Activate is not null) r.Activate();
         else if (r.Change is not null) { r.Change(1); Changed(); }
     }
 
     public void Draw(SpriteBatch sb, int frame)
     {
         _ui.Fill(sb, new Rectangle(0, 0, 640, 480), Color.Black * 0.6f);
-        _list.Draw(sb, _ui, true, frame);
-        var title = _page == Page.Main ? "Options" : _page.ToString();
-        _ui.SmallText.Get(title)?.Draw(sb, new Vector2(_list.Rect.X + 8, _list.Rect.Y - 16), Ui.Gilded ? Ui.GoldLight : Ui.PanelText);
+        _list.Draw(sb, _ui, _drop is null, frame);
+        // a small ▼ after the values that open a drop-down
+        for (int k = 0; k < _rows.Count; k++)
+        {
+            if (_rows[k].Choices is null) continue;
+            var bar = _list.Row(k);
+            int x = _list.Rect.X + _list.ColumnX[0] + 6, y = bar.Y + 6;
+            var c = Ui.Gilded ? Ui.Gold : Ui.Modern ? Ui.Accent : Ui.PanelText;
+            for (int t = 0; t < 3; t++) _ui.Fill(sb, new Rectangle(x + t, y + t, 7 - 2 * t, 1), c);
+        }
+        _ui.SmallText.Get(PageTitle)?.Draw(sb, new Vector2(_list.Rect.X + 8, _list.Rect.Y - 16), Ui.Gilded ? Ui.GoldLight : Ui.PanelText);
+        if (_drop is { } drop)
+        {
+            // solid under the (translucent) restyled windows, so the rows behind stay hidden; rounded like Modern's window
+            if (Ui.Modern) _ui.ModernBox(sb, drop.Rect, new Color(8, 10, 18), 10, 1f, shadow: false);
+            else _ui.Fill(sb, drop.Rect, new Color(8, 10, 18));
+            drop.Draw(sb, _ui, true, frame);
+        }
     }
 }

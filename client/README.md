@@ -48,6 +48,7 @@ Options:
 - `--screenshot FILE.png`: render one frame at 640×480, save it and exit. It also writes `FILE.txt` with the battle state (units, HP, EXP) and a trace of the scripted input. In this mode the real keyboard and mouse are ignored and the battle RNG is seeded, so runs are reproducible.
 - `--scale N`: used with `--screenshot`, renders and saves the frame at N × 640×480, as a window N times the size draws it.
 - `--fast 1`: used with `--screenshot`, runs frames as fast as the machine allows instead of 60 a second. The game advances by frames, so the outcome is the same, only sooner.
+- Scripted runs take their look from the environment instead of the settings: `ERUMANI_SKIN` (original / modern / gilded), `ERUMANI_UIFONT` (NotoSans / NotoSerif / BizUd / YuGothic), `ERUMANI_LANGUAGE` (english / japanese), `ERUMANI_SAVESCREEN` (extended / original).
 - `--frames N`: used with `--screenshot`, captures at frame N at the latest (default 30000), so a run that never settles still ends. A scripted run also appends map, camp, title and game-over lines to `FILE.log` as they happen, and a crash leaves `FILE.error.txt`.
 - `--choose "a,b,..."`: used with `--advance`, the option each character choice takes in turn (0-based, or `last`); `random` picks every choice from then on at random (seeded, so a run repeats).
 - `--advance N`: used with `--screenshot`, auto-confirms N event messages or choices before capturing. `-1` confirms all of them.
@@ -59,6 +60,7 @@ Options:
   - `telop+N` / `telopK+N` captures N frames after the next caption (any, or `TELOPK.BMP`: 1 PLAYER TURN, 2 ENEMY TURN, 3 COMPLETE!!) appears.
   - `choice+N` / `choiceK+N` captures N frames after the next (the K-th) character choice comes up, leaving it unanswered.
   - `endturn` ends the player's turn, as ターン終了 does.
+  - `rclick` right-clicks as soon as an event shows a message or a choice (the options in the middle of a cutscene); with the options up, the other keys work them.
 
   Example: select ジュナ on map 1 and move her 3 tiles up:
 
@@ -105,6 +107,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | Space | during an event: skip the rest of it (asks first) |
 | R | enemy ranges: every enemy's reach (moves and attacks, spells included) as one red area; press again to hide |
 | F1 | options (anywhere) |
+| Right click during an event | options, in the middle of the cutscene |
 | F4 or Alt+Enter | fullscreen |
 | F5 | switch pixel-perfect / fit scaling |
 | F3 | debug overlay (map, BGM, event log) |
@@ -112,14 +115,24 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 ## Options (modern features)
 
+F1 opens them anywhere; a right click during an event (a cutscene) opens them there too, and the event carries on where it was once they're closed. A setting with several values steps through them with ← / → and opens a drop-down list of them on a click or Enter.
+
 | Section | Settings |
 |---|---|
-| Display | interface style (original / modern / gilded), window size (1×–4×), fullscreen (borderless), scaling (pixel-perfect whole multiples / fit 4:3 / stretch), filter (sharp / smooth) |
+| Display | interface style (original / modern / gilded); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI); language of EasySRPG95's own menus and messages (English / 日本語 — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
+| Audio | BGM and SE volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, confirm sound (the CLICK "thunk") |
+| Gameplay | battle animations on/off, skip enemy turn, fast-forward key (hold / toggle), hold left click to fast-forward, speed (×2–×8), fast-forward skips battle scenes, fast-forward advances text |
+| Controls | rebind every action; reset to defaults |
 
 The frame is drawn at the window's resolution: the pixel art is scaled up whole, and the modern and gilded styles' text and gold are drawn at the window's own pixels, so they stay crisp at any size. The filter only matters when the window isn't a whole multiple of 640×480.
-| Audio | music and sound volume, MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, text advance sound (the CLICK "thunk" when advancing text) |
-| Gameplay | battle animations on/off, fast-forward key (hold / toggle), speed (×2–×8), fast-forward skips battle scenes, fast-forward advances text |
-| Controls | rebind every action; reset to defaults |
+
+Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font License 1.1, [`src/Erumani/fonts/OFL.txt`](src/Erumani/fonts/OFL.txt)); the build copies them from Windows' fonts folder (Windows 11 has them) and they aren't kept in git. BIZ UDPGothic and Yu Gothic UI are Windows' own; a font that isn't there falls back to Yu Gothic UI. Each font is drawn a little smaller than Yu Gothic UI and placed where Yu Gothic UI's glyphs were, so every layout keeps its lines.
+
+### The extended save / load screen
+
+100 files: `SAVE1.DAT`–`SAVE100.DAT` beside the game, in the original's format (the original game sees files 1–8). The list on the left shows each file's name (the game's own 「ファイル１」 naming), the map it was saved on (its number and its name from the game's `MAPNAME.DAT`), the play time, and キャンプ or the turn; the right shows the chosen file's map name, a picture of the screen when it was saved, and its details. Saving over a file or loading one asks first. ↑ ↓ move, ← → and the mouse wheel page through, a click picks.
+
+SRPG Maker 95 keeps no play time and no picture, so EasySRPG95 notes them itself in an `EasySRPG95` folder beside the saves (`SAVEn.png`, `saves.json`), tied to each save file's contents: a save the original game wrote shows `--:--:--` and no picture, and so does a game continued from one. Play time counts while a map or camp is up and the window is in front.
 
 ## Roadmap
 

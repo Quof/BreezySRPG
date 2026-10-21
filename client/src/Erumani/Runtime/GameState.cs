@@ -22,6 +22,12 @@ public sealed class GameState
     public int NextMap { get; set; }
     /// <summary>Bytes of the last save loaded, the template for unknown fields when saving.</summary>
     public byte[]? LastSave { get; set; }
+    /// <summary>
+    /// Time played in this game, counted by EasySRPG95 (SRPG Maker 95 keeps none): known from a new game on, or from a
+    /// save that EasySRPG95 noted (<see cref="SaveExtras"/>); unknown after loading any other save.
+    /// </summary>
+    public double PlaySeconds { get; set; }
+    public bool PlayTimeKnown { get; set; }
 
     public int ItemCount(int item) => Items.TryGetValue(item, out var n) ? n : 0;
 
@@ -36,6 +42,7 @@ public sealed class GameState
         MapIndex = 0;
         NextMap = 1;
         LastSave = null;
+        (PlaySeconds, PlayTimeKnown) = (0, true);
     }
 
     /// <summary>FUN_0040add8 / FUN_0040ae68: at most 99 of an item and 100 different items; −1 is no item.</summary>

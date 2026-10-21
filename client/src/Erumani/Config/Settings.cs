@@ -15,20 +15,38 @@ public enum GameAction
 public enum Scaling { Integer, Fit, Stretch }
 /// <summary>The interface's look: the original's, the modern dark one, or the gilded one (gold-framed dark boxes).</summary>
 public enum UiSkin { Original, Modern, Gilded }
+/// <summary>The restyled skins' smooth font (the original skin keeps the original's bitmap fonts).</summary>
+public enum UiFont { NotoSans, NotoSerif, BizUd, YuGothic }
+/// <summary>The language of EasySRPG95's own menus and messages (the game's text is the game's).</summary>
+public enum UiLanguage { English, Japanese }
+/// <summary>The save and load screens: the extended one (100 files with pictures) or the original's list of 8.</summary>
+public enum SaveScreen { Extended, Original }
 public enum MusicEngine { Windows, SoundFont }
 public enum FastForwardMode { Hold, Toggle }
 
 /// <summary>
-/// Player settings (modern features; none of this exists in the original). Saved as settings.json next to the
-/// executable, or in %APPDATA%\Erumani when that folder isn't writable.
+/// Player settings (modern features; none of this exists in the original), kept in %APPDATA%\EasySRPG95\settings.json
+/// (or a settings.json beside the executable).
 /// </summary>
 public sealed class Settings
 {
     // display
-    public int WindowScale { get; set; } = 2;            // ×640×480
+    /// <summary>The window's size; 0 × 0 from the older <see cref="WindowScale"/>.</summary>
+    public int WindowWidth { get; set; }
+    public int WindowHeight { get; set; }
+    /// <summary>The window as a multiple of 640 × 480, as earlier versions kept it; read when <see cref="WindowWidth"/> is 0.</summary>
+    public int WindowScale { get; set; } = 2;
     public bool Fullscreen { get; set; }
     public Scaling Scaling { get; set; } = Scaling.Integer;
     public bool Smooth { get; set; }
+    public UiFont Font { get; set; } = UiFont.NotoSerif;
+    public UiLanguage Language { get; set; } =
+        System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja" ? UiLanguage.Japanese : UiLanguage.English;
+    public SaveScreen SaveScreen { get; set; } = SaveScreen.Extended;
+
+    /// <summary>The window's size, whichever way it was kept.</summary>
+    [JsonIgnore] public (int Width, int Height) WindowSize =>
+        WindowWidth >= 320 && WindowHeight >= 240 ? (WindowWidth, WindowHeight) : (640 * Math.Clamp(WindowScale, 1, 6), 480 * Math.Clamp(WindowScale, 1, 6));
 
     // audio
     public int MusicVolume { get; set; } = 80;            // 0–100
@@ -80,11 +98,14 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1)
+        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN
             return new Settings
             {
                 Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("ERUMANI_SKIN"), true, out var skin) ? skin
                     : Environment.GetEnvironmentVariable("ERUMANI_MODERN") == "1" ? UiSkin.Modern : UiSkin.Original,
+                Font = Enum.TryParse<UiFont>(Environment.GetEnvironmentVariable("ERUMANI_UIFONT"), true, out var font) ? font : UiFont.NotoSerif,
+                Language = Enum.TryParse<UiLanguage>(Environment.GetEnvironmentVariable("ERUMANI_LANGUAGE"), true, out var lang) ? lang : UiLanguage.English,
+                SaveScreen = Enum.TryParse<SaveScreen>(Environment.GetEnvironmentVariable("ERUMANI_SAVESCREEN"), true, out var saves) ? saves : SaveScreen.Extended,
             };
         foreach (var path in Candidates())
         {

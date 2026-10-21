@@ -211,6 +211,7 @@ public sealed class ErumaniGame : Game
             Options = OpenOptions,
             Quit = () => AfterFade(10, Exit),
             WarpPointer = WarpMouse,
+            NewSaveMenu = MakeSaveMenu,
         };
         Window.Title = GameTitle;
         if (_opts.Screenshot is not null) Trace($"{_frame}: title");
@@ -251,6 +252,8 @@ public sealed class ErumaniGame : Game
             Loaded = save => AfterFade(10, () => ApplySave(save)),
             Quit = () => AfterFade(10, Exit),
             WarpPointer = WarpMouse,
+            NewSaveMenu = MakeSaveMenu,
+            Saved = NoteSave,
         };
         if (fromMap)
         {
@@ -269,6 +272,8 @@ public sealed class ErumaniGame : Game
     void ApplySave(SaveFile save)
     {
         save.ApplyTo(_state);
+        // the play time EasySRPG95 noted for exactly this save, if it did
+        (_state.PlaySeconds, _state.PlayTimeKnown) = SaveExtras.Find(_folder, save.Raw)?.PlaySeconds is { } played ? (played, true) : (0, false);
         _audio.PlayBgm("");
         int pos = Math.Max(0, Array.IndexOf(_mapIndices, save.MapIndex));
         if (save.AtCamp) OpenCamp(pos, fromMap: false);
@@ -337,8 +342,11 @@ public sealed class ErumaniGame : Game
             var tone = _fx.Tone;
             SaveFile.ForBattle(_state, _db, idx, _audio.CurrentBgm ?? map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
                 _session.Field.Units, _battle.FiredSlots, SaveFile.Load(path)?.Raw ?? _state.LastSave,
-                new[] { (int)tone.X, (int)tone.Y, (int)tone.Z, (int)tone.W }).Write(path);
+                new[] { (int)tone.X, (int)tone.Y, (int)tone.Z, (int)tone.W },
+                (_session.Camera.X / MapSession.Tile, _session.Camera.Y / MapSession.Tile)).Write(path);
+            NoteSave(n);
         };
+        _battle.NewSaveMenu = MakeSaveMenu;
         _battle.LoadRequested = n => { if (SaveFile.Load(SaveFile.PathFor(_folder, n)) is not { } f) return false; ApplySave(f); return true; };
         _battle.QuitRequested = Exit;
         if (resume is not null)
@@ -381,6 +389,8 @@ public sealed class ErumaniGame : Game
             _battle.SkipEnemyTurn = _settings.SkipEnemyTurn;
         }
         Ui.Ui.Skin = _settings.Skin;
+        Ui.Ui.Font = _settings.Font;
+        Ui.Lang.Japanese = _settings.Language == UiLanguage.Japanese;
     }
 
     void ApplyDisplay()
@@ -397,8 +407,7 @@ public sealed class ErumaniGame : Game
         else
         {
             _gfx.IsFullScreen = false;
-            _gfx.PreferredBackBufferWidth = VirtualWidth * _settings.WindowScale;
-            _gfx.PreferredBackBufferHeight = VirtualHeight * _settings.WindowScale;
+            (_gfx.PreferredBackBufferWidth, _gfx.PreferredBackBufferHeight) = _settings.WindowSize;
         }
         _gfx.ApplyChanges();
     }
@@ -416,6 +425,9 @@ public sealed class ErumaniGame : Game
         var k = _opts.Screenshot is null ? Keyboard.GetState() : default;
         var m = _opts.Screenshot is null ? Mouse.GetState() : default;
         _controls.Update(IsActive ? k : default);
+        // play time (EasySRPG95's own count): while a game is on, a map or a camp, and the window is in front
+        if (IsActive && _logo < 0 && _title is null && _gameOver < 0 && (_session is not null || _camp is not null))
+            _state.PlaySeconds += gameTime.ElapsedGameTime.TotalSeconds;
         _mouseVirtual = ToVirtual(m.Position);
         bool Pressed(Keys key) => k.IsKeyDown(key) && !_prevKeys.IsKeyDown(key);
         bool alt = k.IsKeyDown(Keys.LeftAlt) || k.IsKeyDown(Keys.RightAlt);
@@ -492,7 +504,7 @@ public sealed class ErumaniGame : Game
             _shotAt = _frame + int.Parse(cm.Groups[2].Value);
             _shotAdvance = 0;
         }
-        if (_opts.Screenshot is not null && _shotAdvance != 0 && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null } or { WaitingForButton: true }))
+        if (_opts.Screenshot is not null && _shotAdvance != 0 && _options is null && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null } or { WaitingForButton: true }))
         {
             if (_runner is { Choice: { } options } && _choose.TryDequeue(out var pick))
             {
@@ -512,6 +524,16 @@ public sealed class ErumaniGame : Game
         if (_battle is not null) _battle.MouseVirtual = _mouseVirtual;
         if (_opts.Screenshot is not null)   // ignore the real mouse while scripted
             battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, false));
+
+        // a right click during an event on the map opens the options there (modern; in the original it does nothing then):
+        // the event waits while they're open and carries on where it was. The click is used up here.
+        if (_options is null && battleInput.RightClick && EventShowing)
+        {
+            OpenOptions();
+            Sfx.Click();
+            EndUpdate(gameTime, k, m);
+            return;
+        }
 
         // the CANCEL sound, wherever cancel does something (the options screen plays its own)
         if (battleInput.Cancel || battleInput.RightClick)
@@ -654,6 +676,13 @@ public sealed class ErumaniGame : Game
         // cutscene skip: "skip" opens the prompt on the next message, "skipyes" answers はい
         if (_script.TryPeek(out var sk) && sk == "skip" && _runner is { Running: true, Message: not null }) { _script.Dequeue(); OpenSkipPrompt(); }
         if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _skipPrompt = null; _runner?.Skip(); }
+        // "rclick": a right click as soon as an event shows (the options in the middle of a cutscene)
+        if (_script.TryPeek(out sk) && sk == "rclick" && EventShowing && _options is null && _runner is { Message: not null } or { Choice: not null })
+        {
+            _script.Dequeue();
+            Trace($"{_frame}: rclick in an event ({_runner?.Name})");
+            return bi with { RightClick = true };
+        }
         // "wipe+N": the shot N frames into the next screen wipe; "fx+N" into the next blocking effect of any kind
         var wipeTok = _script.FirstOrDefault(s => s.StartsWith("wipe+"));
         if (wipeTok is not null && _fx.Transition != 0)
@@ -686,7 +715,7 @@ public sealed class ErumaniGame : Game
             _shotAt = _frame + int.Parse(stateTok[(stateTok.LastIndexOf('+') + 1)..]);
             _shotAdvance = 0;
         }
-        bool idle = (_camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null })
+        bool idle = (_options is not null || _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null })
             && !_fx.Holding && _afterFade is null;   // a loaded save's black hold and a choice's fade-out take no input
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
@@ -823,22 +852,86 @@ public sealed class ErumaniGame : Game
 
     Camp.MenuList? _skipPrompt;
 
+    /// <summary>An event is playing on the map (a cutscene, a choice included), not a battle scene nor one of the client's own boxes.</summary>
+    bool EventShowing => _session is not null && _title is null && _camp is null && _gameOver < 0 && _runner is { Running: true }
+        && _battle?.SceneShowing != true && _skipPrompt is null && _missingBox is null;
+
     /// <summary>An event is playing on a map and isn't waiting for a choice.</summary>
     bool CanSkipCutscene => _session is not null && _title is null && _camp is null && _runner is { Running: true, Choice: null }
         && _battle?.SceneShowing != true;
 
     void OpenSkipPrompt()
     {
-        // laid out like the original's questions (FUN_00418824): the question, a rule, はい / いいえ (WORD.DAT 45, 46) in the
-        // middle, defaulting to はい
-        const string question = "イベントをスキップしますか？";
-        int w = ((Bin.Sjis.GetByteCount(question) + 1) / 2 + 2) * 12;
+        // laid out like the original's questions (FUN_00418824): the question, a rule, はい / いいえ (WORD.DAT 45, 46; Yes / No
+        // in English) in the middle, defaulting to はい
+        string question = Ui.Lang.T("Skip this event?", "イベントをスキップしますか？");
+        int w = Math.Max(120, _ui.Measure12(question) + 36);
         _skipPrompt = new Camp.MenuList
         {
             Rect = new Rectangle(320 - w / 2, 200, w, 80), Header = new[] { question, "-" }, ItemX = w / 2 - 18, ItemWidth = 36,
         };
-        _skipPrompt.Set(new[] { _db.Words[45], _db.Words[46] });
+        _skipPrompt.Set(Ui.Lang.YesNo(_db));
         Sfx.Click();
+    }
+
+    // ---------------- saves: the extended screen, play time and pictures ----------------
+
+    /// <summary>The extended save / load screen, or null for the original's file lists (the "Save / load screen" option).</summary>
+    Ui.SaveMenu? MakeSaveMenu(bool saving) =>
+        _settings.SaveScreen == SaveScreen.Extended ? new Ui.SaveMenu(saving, _ui, GraphicsDevice, _folder, _db) : null;
+
+    /// <summary>A save just written to <paramref name="slot"/>: EasySRPG95 notes its play time and a picture of the screen beside it.</summary>
+    void NoteSave(int slot)
+    {
+        try
+        {
+            string path = SaveFile.PathFor(_folder, slot);
+            if (File.Exists(path))
+                SaveExtras.Write(_folder, slot, File.ReadAllBytes(path), _state.PlayTimeKnown ? _state.PlaySeconds : null, CapturePicture());
+        }
+        catch (Exception e) { Trace($"{_frame}: no note for save {slot} ({e.Message})"); }   // the save itself stands without it
+    }
+
+    bool _capturing;
+
+    /// <summary>
+    /// A save's picture: the map or the camp as it stands, drawn again without the menus, the pointer or the client's
+    /// windows, through the screen's brightness and tone, as a 640 × 480 PNG.
+    /// </summary>
+    byte[]? CapturePicture()
+    {
+        if (_camp is null && _session is null) return null;
+        int k = Math.Max(1, _scale);
+        var targets = GraphicsDevice.GetRenderTargets();
+        using var shot = new RenderTarget2D(GraphicsDevice, VirtualWidth * k, VirtualHeight * k);
+        using var graded = new RenderTarget2D(GraphicsDevice, VirtualWidth * k, VirtualHeight * k);
+        using var picture = new RenderTarget2D(GraphicsDevice, VirtualWidth, VirtualHeight);
+        GraphicsDevice.SetRenderTarget(shot);
+        GraphicsDevice.Clear(Color.Black);
+        _sb.Begin(samplerState: SamplerState.PointClamp, transformMatrix: _view);
+        _capturing = true;
+        try
+        {
+            if (_camp is not null) _camp.DrawBackdrop(_sb, _frame);
+            else DrawMap();
+        }
+        finally
+        {
+            _capturing = false;
+            _sb.End();
+        }
+        GraphicsDevice.SetRenderTarget(graded);
+        GraphicsDevice.Clear(Color.Black);
+        DrawGraded(new Rectangle(0, 0, VirtualWidth, VirtualHeight), shot);
+        GraphicsDevice.SetRenderTarget(picture);
+        GraphicsDevice.Clear(Color.Black);
+        _sb.Begin(samplerState: SamplerState.LinearClamp);
+        _sb.Draw(graded, new Rectangle(0, 0, VirtualWidth, VirtualHeight), Color.White);
+        _sb.End();
+        GraphicsDevice.SetRenderTargets(targets);
+        using var png = new MemoryStream();
+        picture.SaveAsPng(png, VirtualWidth, VirtualHeight);
+        return png.ToArray();
     }
 
     // ---------------- missing files ----------------
@@ -866,8 +959,8 @@ public sealed class ErumaniGame : Game
     void OpenMissingBox()
     {
         var (file, then) = _missingQueue.Dequeue();
-        const string title = "Error: Missing Game File";
-        int w = (Math.Max(Bin.Sjis.GetByteCount(title), Bin.Sjis.GetByteCount(file)) / 2 + 3) * 12;
+        string title = Ui.Lang.T("Error: Missing Game File", "エラー：ゲームファイルが見つかりません");
+        int w = Math.Max(_ui.Measure12(title), _ui.Measure12(file)) + 36;
         _missingBox = new Camp.MenuList
         {
             Rect = new Rectangle(320 - w / 2, 200, w, 80), Header = new[] { title, file, "-" }, ItemX = w / 2 - 12, ItemWidth = 24,
@@ -999,8 +1092,11 @@ public sealed class ErumaniGame : Game
         if (_session is not null)
         {
             _session.DrawTiles(_sb, view);
-            _battle?.DrawThreat(_sb, view);
-            _battle?.DrawOverlays(_sb, view, _frame);
+            if (!_capturing)
+            {
+                _battle?.DrawThreat(_sb, view);
+                _battle?.DrawOverlays(_sb, view, _frame);
+            }
         }
         // the frame's red arrows point where the view can scroll, only in the player's phase while nothing else goes on,
         // blinking: 18 ticks on, 6 off (FUN_00413768)
@@ -1012,6 +1108,7 @@ public sealed class ErumaniGame : Game
             _session.DrawUnits(_sb, view, _frame, _battle?.FacingUnit);
         }
         DrawPicture();
+        if (_capturing) return;   // a save's picture: the map alone
         _battle?.DrawUi(_sb, view, _frame);
         DrawMessage();
         DrawChoice();
@@ -1027,11 +1124,12 @@ public sealed class ErumaniGame : Game
     /// 100 towards white). Black — palette entry 0 and the other fixed entries, which no game picture uses for anything
     /// else — stays black. On the GPU (Shaders/Grade.fx), or pixel by pixel on the CPU where the shader can't run.
     /// </summary>
-    void DrawGraded(Rectangle at)
+    void DrawGraded(Rectangle at, RenderTarget2D? source = null)
     {
         var tone = _fx.FlashTone ?? _fx.Tone;
         int bright = Math.Clamp(_fx.Brightness, 0, 200), tr = (int)tone.X, tg = (int)tone.Y, tb = (int)tone.Z, v = (int)tone.W;
-        Texture2D shown = _screen;
+        var from = source ?? _screen;
+        Texture2D shown = from;
         Effect? effect = null;
         if (bright != 100 || tr != 100 || tg != 100 || tb != 100 || v < 100)
         {
@@ -1047,7 +1145,7 @@ public sealed class ErumaniGame : Game
                 _gradeFx.Parameters["Vivid"].SetValue((float)v);
                 effect = _gradeFx;
             }
-            else shown = GradeOnCpu(v);
+            else shown = GradeOnCpu(from, v);
         }
         _sb.Begin(samplerState: SamplerState.PointClamp, effect: effect, transformMatrix: _view);
         _sb.Draw(shown, at, Color.White);
@@ -1085,11 +1183,12 @@ public sealed class ErumaniGame : Game
         }
     }
 
-    Texture2D GradeOnCpu(int v)
+    Texture2D GradeOnCpu(RenderTarget2D from, int v)
     {
-        if (_gradePixels.Length != _screen.Width * _screen.Height) _gradePixels = new Color[_screen.Width * _screen.Height];
-        _graded ??= new Texture2D(GraphicsDevice, _screen.Width, _screen.Height, false, SurfaceFormat.Color);
-        _screen.GetData(_gradePixels);
+        if (_gradePixels.Length != from.Width * from.Height) _gradePixels = new Color[from.Width * from.Height];
+        if (_graded is not null && (_graded.Width, _graded.Height) != (from.Width, from.Height)) { _graded.Dispose(); _graded = null; }
+        _graded ??= new Texture2D(GraphicsDevice, from.Width, from.Height, false, SurfaceFormat.Color);
+        from.GetData(_gradePixels);
         GradePixels(_gradePixels, _gradeTableData, v);
         _graded.SetData(_gradePixels);
         return _graded;
@@ -1161,8 +1260,8 @@ public sealed class ErumaniGame : Game
         _scale = k;
         _view = Matrix.CreateScale(k);
         Ui.Ui.RenderScale = k;
+        var oldSnapshot = _snapshot;
         _screen?.Dispose();
-        _snapshot?.Dispose();
         _final?.Dispose();
         _graded?.Dispose();
         _graded = null;
@@ -1170,6 +1269,16 @@ public sealed class ErumaniGame : Game
         _screen = Frame();
         _snapshot = Frame();
         _final = Frame();
+        // a wipe still running keeps the picture it takes away (the window's size changed under it, from the options)
+        if (oldSnapshot is not null && _fx.Transition != 0)
+        {
+            GraphicsDevice.SetRenderTarget(_snapshot);
+            _sb.Begin(samplerState: SamplerState.LinearClamp);
+            _sb.Draw(oldSnapshot, new Rectangle(0, 0, _snapshot.Width, _snapshot.Height), Color.White);
+            _sb.End();
+            GraphicsDevice.SetRenderTarget(null);
+        }
+        oldSnapshot?.Dispose();
     }
 
     /// <summary>The render scale for a frame shown at <paramref name="dest"/>: the smallest whole scale at least as large, so the frame is only ever scaled down to the window, or not at all.</summary>
