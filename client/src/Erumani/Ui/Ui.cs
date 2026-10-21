@@ -278,6 +278,8 @@ public sealed class Ui : IDisposable
     }
 
     public static readonly Color PanelText = new(248, 248, 248);
+    /// <summary>Stat numbers added on panels (item summaries, terrain): a soft yellow, readable on both skins.</summary>
+    public static readonly Color StatText = new(248, 232, 152);
 
     public void Dispose()
     {

@@ -888,6 +888,40 @@ public sealed class BattleController
     BattleUnit? _forecastArmed;
 
     /// <summary>
+    /// Terrain window (modern addition, Fire Emblem style) in the map's bottom-right corner for the tile under the
+    /// cursor: its name, 地形効果 (hit chance taken off attacks on a unit there), the damage it takes off (effect/10)
+    /// and the HP recovered each turn. Moves to the bottom-left while the cursor is in that corner.
+    /// </summary>
+    void DrawTerrainInfo(SpriteBatch sb)
+    {
+        var ter = _s.Field.TerrainAt(_cursor.X, _cursor.Y);
+        // signed from the point of view of a unit standing there: 地形効果 +20% = attacks on it 20% less likely to hit
+        string Signed(int v) => v > 0 ? $"+{v}" : $"{v}";
+        var lines = new List<(string Label, string Value)> { (Word(75), $"{Signed(ter.DefenseBonus)}%") };
+        if (ter.DefenseBonus / 10 != 0) lines.Add(("被ダメージ", Signed(-(ter.DefenseBonus / 10))));
+        if (ter.HpRecovery != 0) lines.Add(("HP回復", $"{ter.HpRecovery}"));
+        const int w = 136;
+        int h = 30 + lines.Count * 16 + 4;
+        var p = _s.ScreenPos(_cursor.X, _cursor.Y, ViewportRect);
+        int right = ErumaniGame.ViewX + ErumaniGame.ViewWidth - 8, bottom = ErumaniGame.ViewY + ErumaniGame.ViewHeight - 8;
+        bool inCorner = p.X + MapSession.Tile > right - w - 8 && p.Y + MapSession.Tile > bottom - h - 8;
+        var r = new Rectangle(inCorner ? ErumaniGame.ViewX + 8 : right - w, bottom - h, w, h);
+        _ui.Panel(sb, r);
+        void T(string s, int x, int y, Color c, bool alignRight = false)
+        {
+            if (_ui.SmallText.Get(s) is not { } t) return;
+            sb.Draw(t, new Vector2(alignRight ? x - t.Width : x, y), c);
+        }
+        T(ter.Name, r.X + 10, r.Y + 8, Ui.Ui.PanelText);
+        _ui.Fill(sb, new Rectangle(r.X + 8, r.Y + 25, w - 16, 1), Ui.Ui.Modern ? Ui.Ui.ModernBorder : Ui.Ui.PanelText * 0.6f);
+        for (int k = 0; k < lines.Count; k++)
+        {
+            T(lines[k].Label, r.X + 10, r.Y + 30 + k * 16, Ui.Ui.PanelText);
+            T(lines[k].Value, r.Right - 10, r.Y + 30 + k * 16, Ui.Ui.StatText, alignRight: true);
+        }
+    }
+
+    /// <summary>
     /// Battle forecast (modern addition, Fire Emblem style) while choosing a target: both sides' HP before → after
     /// if every strike hits, damage per hit (×n for several strikes), hit and critical chances; "－" where there's no counter.
     /// </summary>
@@ -1173,6 +1207,7 @@ public sealed class BattleController
             _ui.Frame(sb, new Rectangle(p.X, p.Y, 32, 32), Color.Black);
             _ui.Frame(sb, new Rectangle(p.X + 1, p.Y + 1, 30, 30), Color.White, 2);
             if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
+            if (_state_ != State.Targeting) DrawTerrainInfo(sb);
         }
         if (_state_ is State.ActionMenu or State.TurnMenu or State.Files or State.QuitConfirm) DrawMenu(sb, frame);
         if (_state_ == State.Targeting && _sel is not null && _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y) is { } ft)
@@ -1293,6 +1328,7 @@ public sealed class BattleController
             var d = new Rectangle(80, 32, 480, 48);
             _ui.Panel(sb, d);
             T($"{_menu[_menuIndex]}：", d.X + 16, d.Y + 10, Ui.Ui.PanelText);
+            if (items) T(Ui.ItemInfo.Summary(_items[_menuIndex], _db), d.Right - 16, d.Y + 10, Ui.Ui.StatText, right: true);
             T(desc, d.X + 16, d.Y + 26, Ui.Ui.PanelText);
         }
     }

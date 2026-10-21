@@ -528,6 +528,8 @@ public sealed class CampScreen
             (name, desc) = (_db.Items[_rowItems[_list.Index]].Name, _db.Items[_rowItems[_list.Index]].Desc);
         if (name is null) return;
         if (_ui.SmallText.Get($"{name}：") is { } a) sb.Draw(a, new Vector2(d.X + 16, d.Y + 10), Ui.Ui.PanelText);
+        if (_mode != Mode.Skills && _ui.SmallText.Get(Ui.ItemInfo.Summary(_db.Items[_rowItems[_list.Index]], _db)) is { } st)
+            sb.Draw(st, new Vector2(d.Right - 16 - st.Width, d.Y + 10), Ui.Ui.StatText);
         if (_ui.SmallText.Get(desc!) is { } b) sb.Draw(b, new Vector2(d.X + 16, d.Y + 26), Ui.Ui.PanelText);
     }
 
