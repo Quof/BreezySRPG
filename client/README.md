@@ -199,4 +199,8 @@ Should the save file change (the original game saving over it), its note no long
    - drawing at the window's resolution, with crisp text;
    - self-contained build.
 
+### Pinned (decided later)
+
+- **RPG Maker loop markers in MIDIs.** Some games' music comes from RPG Maker 2000/2003 and carries a loop marker (controller 111): ＯtoＺ's `2003繰り返される戦い.mid` loops from 13.9 s there, `001-Battle01.mid` from 0.9 s, `戦闘.MID` from 0.1 s. SRPG Maker 95 ignores the marker and plays such a file again from its very start, silent lead-in and intro included (1.5 s of silence in the first one), and EasySRPG95 does the same for now. An option to loop at the marker could come later.
+
 Faithfulness rule: replicate the original's behaviour, including its bugs (see FORMAT_NOTES §11.4), by default. Any fixes are opt-in.
