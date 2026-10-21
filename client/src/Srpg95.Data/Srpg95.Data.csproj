@@ -4,6 +4,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- nothing beside the published single-file exe -->
+    <DebugType Condition="'$(PublishSingleFile)' == 'true'">none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>

@@ -124,7 +124,6 @@ public sealed class ErumaniGame : Game
         _settings = Settings.Load(persistent: _opts.Screenshot is null);
         _controls = new Controls(_settings);
         _backlog = new Ui.Backlog(_ui);
-        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "soundfonts"));
         ApplySettings();
         _sb = new SpriteBatch(GraphicsDevice);
         _gradeTable = new Texture2D(GraphicsDevice, 256, 1, false, SurfaceFormat.Color);

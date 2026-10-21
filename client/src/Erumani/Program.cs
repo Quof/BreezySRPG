@@ -8,6 +8,11 @@ public static class Program
     public static int Main(string[] args)
     {
         Options? opts = null;
+        // A published EasySRPG95.exe carries SDL2 and OpenAL inside it, unpacked by the runtime to its cache folder on the
+        // first start; MonoGame only looks next to the exe. Loading them first, by the runtime's rules (which know that
+        // folder), makes them the ones MonoGame gets. In a development build they're next to the exe anyway.
+        foreach (var lib in new[] { "SDL2.dll", "soft_oal.dll" })
+            System.Runtime.InteropServices.NativeLibrary.TryLoad(lib, typeof(Program).Assembly, null, out _);
         try
         {
             opts = Options.Parse(args);

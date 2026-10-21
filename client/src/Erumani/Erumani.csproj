@@ -11,7 +11,12 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <AssemblyTitle>Erumani</AssemblyTitle>
+    <!-- the player's name for the client; the project and namespaces keep the name it was started under -->
+    <AssemblyName>EasySRPG95</AssemblyName>
+    <AssemblyTitle>EasySRPG95</AssemblyTitle>
+    <Product>EasySRPG95</Product>
+    <Company>EasySRPG95</Company>
+    <RootNamespace>Erumani</RootNamespace>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -44,7 +49,13 @@
 
   <ItemGroup>
     <EmbeddedResource Include="soundfont\GeneralUser-GS.sf2" LogicalName="GeneralUser-GS.sf2" />
-    <None Include="soundfont\GeneralUser-GS-LICENSE.txt" Link="GeneralUser-GS-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- Publishing: one EasySRPG95.exe and nothing else — the runtime, SDL2 and OpenAL go inside it (the native ones are
+       unpacked to a cache folder on first start, see client/README.md) -->
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
 
 </Project>

@@ -1,6 +1,6 @@
-# Erumani client
+# EasySRPG95
 
-A modern replacement client for えるまに, a game made with Sim RPG Maker 95 (シミュレーションRPGツクール95). It reads the original game folder directly (`SRPGEXEC.EXE`'s data files, BMP graphics, MIDI/WAV audio) and never modifies it. Format documentation lives in [`../re/FORMAT_NOTES.md`](../re/FORMAT_NOTES.md).
+A modern replacement client for games made with Sim RPG Maker 95 (シミュレーションRPGツクール95), started for えるまに and checked against ＯtoＺ, 昴の騎士 and 闇鍋企画 as well. It reads the original game folder directly (`SRPGEXEC.EXE`'s data files, BMP graphics, MIDI/WAV audio) and never modifies it. Format documentation lives in [`../re/FORMAT_NOTES.md`](../re/FORMAT_NOTES.md).
 
 ## Stack
 
@@ -77,11 +77,15 @@ Set `SRPG95_REQUIRE_DATA=1` to make the tests fail instead of silently passing w
 
 ## Playing
 
-Copy `Erumani.exe`, `SDL2.dll`, `soft_oal.dll` and `GeneralUser-GS-LICENSE.txt` from a published build (see below) into the game folder, next to `SRPGEXEC.EXE`, and run `Erumani.exe`. No .NET install is needed. Settings are kept in `settings.json` beside the exe, or in `%APPDATA%\Erumani` if that folder isn't writable. Music plays through **GeneralUser GS** (v2.0.3, by S. Christian Collins), a GS SoundFont embedded in the exe, so everyone hears the same soundtrack. Its licence allows bundling and is shipped as `GeneralUser-GS-LICENSE.txt`. Under Options you can switch to another `.sf2` from the `soundfonts` folder next to the exe, or to Windows MIDI as in the original. The first build downloads the SoundFont from the author's repository (hash-checked); it isn't kept in git.
+Put `EasySRPG95.exe` (one file, from a published build) in the game folder, next to `SRPGEXEC.EXE`, and run it; or run it from anywhere with `--game "<game folder>"`. No .NET install is needed: the runtime, SDL2 and OpenAL are inside the exe (the two native libraries are unpacked to `%TEMP%\.net\EasySRPG95` on the first start). Nothing is written next to the exe: settings live in `%APPDATA%\EasySRPG95\settings.json`, shared by every game, and saves go where the original keeps them (the game folder). A `settings.json` placed beside the exe is used instead, for a setup that keeps its own.
+
+Music plays through **GeneralUser GS** (v2.0.3, by S. Christian Collins, [schristiancollins.com](http://www.schristiancollins.com)), a GS SoundFont embedded in the exe, so everyone hears the same soundtrack; its licence ([`src/Erumani/soundfont/GeneralUser-GS-LICENSE.txt`](src/Erumani/soundfont/GeneralUser-GS-LICENSE.txt)) allows bundling it. Under Options you can switch to another `.sf2` put in a `soundfonts` folder next to the exe or in the game folder, or to Windows MIDI as in the original. The first build downloads the SoundFont from the author's repository (hash-checked); it isn't kept in git.
 
 ```bash
-dotnet publish client/src/Erumani -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o client/publish
+dotnet publish client/src/Erumani -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o client/publish
 ```
+
+The project keeps its working name (`src/Erumani`, namespace `Erumani`); only the program is called EasySRPG95.
 
 ## Controls
 

@@ -97,19 +97,29 @@ public sealed class Settings
                     ok.Remove(Microsoft.Xna.Framework.Input.Keys.Space);
                 foreach (var (a, keys) in DefaultKeys()) s.Keys.TryAdd(a, keys);   // actions added later
                 if (s.ModernUi) { s.Skin = UiSkin.Modern; s.ModernUi = false; }   // the old on/off look setting
-                s.Path = path;
+                s.Path = path == OldSettings ? UserSettings : path;   // saved to the new place from now on
                 return s;
             }
             catch (Exception) { /* unreadable: fall back to defaults */ }
         }
-        return new Settings { Path = Candidates().First() };
+        return new Settings { Path = UserSettings };
     }
 
+    /// <summary>Where settings live: the user's AppData, shared by every game the client is dropped into.</summary>
+    static string UserSettings => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "EasySRPG95", "settings.json");
+
+    /// <summary>
+    /// Read in this order: a settings.json next to the executable (a portable setup that keeps its own), the user's,
+    /// then the one from before the client was named EasySRPG95.
+    /// </summary>
     static IEnumerable<string> Candidates()
     {
         yield return System.IO.Path.Combine(AppContext.BaseDirectory, "settings.json");
-        yield return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Erumani", "settings.json");
+        yield return UserSettings;
+        yield return OldSettings;
     }
+
+    static string OldSettings => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Erumani", "settings.json");
 
     public void Save()
     {
