@@ -253,6 +253,7 @@ public sealed class ErumaniGame : Game
             StartNext = () => AfterFade(10, () => LoadMap(pos, fromCamp: true)),
             Loaded = (save, slot) => AfterFade(10, () => ApplySave(save, slot)),
             Quit = () => AfterFade(10, Exit),
+            OptionsRequested = OpenOptions,
             WarpPointer = WarpMouse,
             NewSaveMenu = MakeSaveMenu,
             Saved = slot => NoteSave(slot, null),

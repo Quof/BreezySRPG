@@ -42,8 +42,7 @@ public sealed class Settings
     public Scaling Scaling { get; set; } = Scaling.Integer;
     public bool Smooth { get; set; }
     public UiFont Font { get; set; } = UiFont.NotoSerif;
-    public UiLanguage Language { get; set; } =
-        System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja" ? UiLanguage.Japanese : UiLanguage.English;
+    public UiLanguage Language { get; set; } = UiLanguage.Japanese;   // EasySRPG95's own menus and messages
     public SaveScreen SaveScreen { get; set; } = SaveScreen.Extended;
 
     /// <summary>The window's size, whichever way it was kept.</summary>

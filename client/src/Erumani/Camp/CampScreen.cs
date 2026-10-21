@@ -139,7 +139,8 @@ public sealed class MenuList
 /// The camp between maps (SMAP camp_before_battle) as the exe's camp states run it (FUN_0041f6d4 and the rest; GDI
 /// positions). CAMP_nnn full screen with the camp BGM, and:
 /// - the menu at (16,16), 96 × 128: 次のステージ (once a unit is set to 出撃) / ユニット編成 (once there is an army) /
-///   アイテム購入 / アイテム売却 / セーブする / ロードする / ゲーム終了. Its questions and file lists take its place.
+///   アイテム購入 / アイテム売却 / セーブする / ロードする / ゲーム終了 — and the client's 環境設定 (Options) before
+///   ゲーム終了, a row more (96 × 144). Its questions and file lists take its place.
 /// - ユニット編成 (FUN_004202dc, FUN_00420564, FUN_004208cc): the army at (88,40), 180 × 400, 22 a page — names at x 100,
 ///   出撃 / ―― at x 232 — beside the commands at (288,40), 108 × 96 (武器 / 防具 / 装飾品を替える, 道具を使う, 技を見る), the
 ///   chosen unit's status window at (288,152) and 「出撃ユニット数」 at (432,40), 120 × 48. The army and the commands
@@ -169,7 +170,7 @@ public sealed class CampScreen
     readonly int _nextIndex;
     readonly Battlefield _field;   // for stats (terrain unused)
     Mode _mode = Mode.Menu;
-    readonly MenuList _menu = new() { Rect = new Rectangle(16, 16, 96, 128), ItemWidth = 72 };
+    readonly MenuList _menu = new() { Rect = new Rectangle(16, 16, 96, 144), ItemWidth = 72 };
     readonly MenuList _commands = new() { Rect = new Rectangle(288, 40, 108, 96), ItemWidth = 84 };
     readonly MenuList _list = new();
     readonly MenuList _confirm = new() { ItemWidth = 36 };
@@ -199,6 +200,8 @@ public sealed class CampScreen
     public Func<bool, Ui.SaveMenu?>? NewSaveMenu { get; set; }
     Ui.SaveMenu? _saveMenu;
     public Action? Quit { get; set; }
+    /// <summary>The menu's 環境設定 (modern): the game opens the options; the menu stays up under them.</summary>
+    public Action? OptionsRequested { get; set; }
     /// <summary>Moves the mouse pointer (FUN_00409d24).</summary>
     public Action<Point>? WarpPointer { get; set; }
     public string Bgm => _next.Bgm[0];
@@ -253,7 +256,8 @@ public sealed class CampScreen
                     case 3: OpenShop(sell: true); break;
                     case 4: OpenFiles(save: true); break;
                     case 5: OpenFiles(save: false); break;
-                    case 6: Confirm(6, new[] { W(57) }, () => Quit?.Invoke()); break;                 // ゲームを終了します
+                    case OptionsRow: OptionsRequested?.Invoke(); break;
+                    case 7: Confirm(7, new[] { W(57) }, () => Quit?.Invoke()); break;                 // ゲームを終了します
                 }
                 break;
             case Mode.Confirm:
@@ -317,8 +321,12 @@ public sealed class CampScreen
 
     /// <summary>FUN_0041f6d4: 次のステージ once a unit is set to 出撃, ユニット編成 once there is an army, the rest always.</summary>
     void RefreshMenu() =>
-        _menu.Set(new[] { W(24), W(25), W(26), W(27), W(21), W(22), W(23) },   // WORD.DAT 24-27, 21-23
-            new[] { _state.Roster.Values.Any(e => e.Sortie), _state.Roster.Count > 0, true, true, true, true, true });
+        _menu.Set(new[] { W(24), W(25), W(26), W(27), W(21), W(22), OptionsLabel, W(23) },   // WORD.DAT 24-27, 21-22, the client's, 23
+            new[] { _state.Roster.Values.Any(e => e.Sortie), _state.Roster.Count > 0, true, true, true, true, true, true });
+
+    /// <summary>The menu's 環境設定 row, and its label in the language the options may just have changed.</summary>
+    const int OptionsRow = 6;
+    static string OptionsLabel => Ui.Lang.T("Options", "環境設定");
 
     void BackToMenu(int row)
     {
@@ -645,6 +653,7 @@ public sealed class CampScreen
 
     public void Draw(SpriteBatch sb, int frame)
     {
+        _menu.Items[OptionsRow] = OptionsLabel;
         if (_tex.Get($"CAMP_{_next.CampBackground:000}.BMP", transparent: false) is { } back) sb.Draw(back, Vector2.Zero, Color.White);
         else _ui.Fill(sb, new Rectangle(0, 0, 640, 480), Color.Black);
         switch (_mode)

@@ -56,6 +56,15 @@ public class ClientFeatureTests
         Assert.Equal((1024, 768), new Settings { WindowWidth = 1024, WindowHeight = 768 }.WindowSize);
     }
 
+    [Fact]
+    public void EasySRPG95_speaks_Japanese_until_told_otherwise()
+    {
+        Assert.Equal(UiLanguage.Japanese, new Settings().Language);   // a first start, whatever the system's language
+        var kept = System.Text.Json.JsonSerializer.Deserialize<Settings>("{\"Language\":\"English\"}",
+            new System.Text.Json.JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } });
+        Assert.Equal(UiLanguage.English, kept!.Language);              // a settings.json that chose English keeps it
+    }
+
     static MessageNode Say(string s) => new(2, new List<string> { s });
 
     /// <summary>What a runner shows now: a message's lines, a choice and its option, "…" while it waits, "end".</summary>
