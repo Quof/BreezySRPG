@@ -459,9 +459,16 @@ public sealed class ErumaniGame : Game
         // cutscene skip: "skip" opens the prompt on the next message, "skipyes" answers はい
         if (_script.TryPeek(out var sk) && sk == "skip" && _runner is { Running: true, Message: not null }) { _script.Dequeue(); OpenSkipPrompt(); }
         if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _skipPrompt = null; _runner?.Skip(); }
+        // "wipe+N": the shot N frames into the next screen wipe
+        var wipeTok = _script.FirstOrDefault(s => s.StartsWith("wipe+"));
+        if (wipeTok is not null && _fx.Transition != 0)
+        {
+            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, wipeTok)));
+            _shotAt = _frame + int.Parse(wipeTok[5..]);
+        }
         bool idle = _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null };
         _idleFrames = idle ? _idleFrames + 1 : 0;
-        if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || ++_scriptWait < 10) return bi;
+        if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
