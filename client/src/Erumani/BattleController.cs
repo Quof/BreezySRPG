@@ -1944,6 +1944,14 @@ public sealed class BattleController
         }
     }
 
+    /// <summary>Scripted runs ("turnmenu"): the turn menu, as a click on an empty tile opens it, when the player's phase waits on the map.</summary>
+    public bool ScriptTurnMenu()
+    {
+        if (_state_ != State.Idle || !_s.Field.AllyPhase) return false;
+        OpenTurnMenu();
+        return true;
+    }
+
     /// <summary>Scripted runs ("endturn"): ターン終了 as the turn menu gives it, when the player's phase waits on the map.</summary>
     public bool ScriptEndTurn()
     {

@@ -10,6 +10,7 @@ Run these in order for a new game:
 client\tools\scan.ps1   -Out C:\temp\check "D:\Games\SomeGame"
 client\tools\smoke.ps1  -Game "D:\Games\SomeGame" -Out C:\temp\check\smoke
 client\tools\events.ps1 -Game "D:\Games\SomeGame" -Out C:\temp\check\events
+client\tools\loads.ps1  -Game "D:\Games\SomeGame" -Out C:\temp\check\loads
 ```
 
 ## scan.ps1: read everything, run nothing
@@ -46,9 +47,30 @@ Each map loads on its own. Its opening plays, with messages confirmed and choice
 Each event runs on its map in place of the opening. This reaches cutscenes, recruitments, endings and hub
 menus without playing up to them.
 
+## loads.ps1: every way of loading, every kind of save
+
+This one checks the client rather than the game. It finds the game's first camp save, battle save, and save made
+in the middle of an event (read from the save files and the EasySRPG95 notes beside them). It then loads each of
+them every way there is:
+
+- `--load`;
+- the title and a camp, with the 100-file save screen and with the original's 8-file list;
+- a map's turn menu, both screens again;
+- the right-click menu during an event.
+
+Each run has to end in that camp, on that map with the player's phase waiting, or back in that event. Every run
+works on its own copy of the saves (`-Saves` picks another folder than the game's), so the game's own saves are
+never written. Runs that need something the saves don't have are skipped and said so: the turn menu needs a
+battle save to start from, the camp a camp save, the right-click menu a save made in an event. The 8-file lists
+reach files 1–8 only.
+
+It prints a line per run, `ok` or `FAIL` with what went wrong (`ended in Title, not Camp`, `went to map SMAP_003`,
+`the event didn't go on`, a crash), then the counts. A failed run keeps its folder: its saves, screenshot, `.txt`
+and `.log`. Run it after any change to saving, loading or the screens between them.
+
 ## Reading the results
 
-Each run gets one line in `results.json`, and the console shows a summary. Runs that went fine leave no files
+For smoke and events: each run gets one line in `results.json`, and the console shows a summary. Runs that went fine leave no files
 behind; the others keep a screenshot, `.txt` (the state when it stopped), `.log` (map and camp changes) and
 `.error.txt` (a crash).
 

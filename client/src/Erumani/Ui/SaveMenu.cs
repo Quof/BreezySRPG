@@ -113,7 +113,15 @@ public sealed class SaveMenu : IDisposable
             return answer == 0 ? (Result.Picked, _index + 1) : (Result.None, 0);
         }
         if (i.Cancel || i.RightClick) { Sfx.Cancel(); return (Result.Cancelled, 0); }
-        int move = (i.Down ? 1 : 0) - (i.Up ? 1 : 0) + (i.Right ? Visible : 0) - (i.Left ? Visible : 0) - i.Wheel * Visible;   // the wheel pages, five files a notch
+        // the wheel scrolls the list a file a notch, not the choice: the file that comes under the pointer is the one
+        // chosen, as if the pointer had moved onto it (none under it: the choice stays, perhaps out of sight)
+        if (i.Wheel != 0)
+        {
+            _top = Math.Clamp(_top - i.Wheel, 0, Slots - Visible);
+            if (Hover(mouse) is var under and >= 0) _index = under;
+            return (Result.None, 0);
+        }
+        int move = (i.Down ? 1 : 0) - (i.Up ? 1 : 0) + (i.Right ? Visible : 0) - (i.Left ? Visible : 0);
         if (i.Click && UpArrow.Contains(mouse)) move -= Visible;
         if (i.Click && DownArrow.Contains(mouse)) move += Visible;
         if (move != 0)

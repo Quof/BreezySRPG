@@ -1,12 +1,13 @@
-# Shared by smoke.ps1 and events.ps1: the client (Debug build) and the scanner, built on first use.
+# Shared by smoke.ps1, events.ps1 and loads.ps1: the client (Debug build) and the scanner, built on first use.
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $client = Join-Path $repo "client\src\Erumani\bin\Debug\net8.0\EasySRPG95.exe"
 $scanner = Join-Path $PSScriptRoot "Srpg95Scan\bin\Release\net8.0\Srpg95Scan.exe"
 if (-not (Test-Path $client)) { dotnet build (Join-Path $repo "client\src\Erumani") -c Debug -v q --nologo | Out-Null }
 if (-not (Test-Path $scanner)) { dotnet build (Join-Path $PSScriptRoot "Srpg95Scan") -c Release -v q --nologo | Out-Null }
 
-# Runs jobs (hashtables with Args, Png, Key) through the client, $Parallel at a time; returns one result per job.
-function Invoke-ClientRuns($Jobs, [int]$Parallel, [int]$TimeoutS, [int]$Frames) {
+# Runs jobs (hashtables with Args, Png, Key, and optionally Env: environment variables for that run) through the
+# client, $Parallel at a time; returns one result per job. Runs that settle leave no files behind, unless -Keep.
+function Invoke-ClientRuns($Jobs, [int]$Parallel, [int]$TimeoutS, [int]$Frames, [switch]$Keep) {
     $queue = [System.Collections.Generic.Queue[object]]::new(); $Jobs | ForEach-Object { $queue.Enqueue($_) }
     $running = @{}; $results = [System.Collections.Generic.List[object]]::new(); $id = 0
     while ($queue.Count -gt 0 -or $running.Count -gt 0) {
@@ -14,7 +15,11 @@ function Invoke-ClientRuns($Jobs, [int]$Parallel, [int]$TimeoutS, [int]$Frames) 
             $j = $queue.Dequeue(); $id++
             foreach ($ext in ".png", ".txt", ".log", ".error.txt") { $f = [IO.Path]::ChangeExtension($j.Png, $ext); if (Test-Path $f) { Remove-Item $f } }
             $a = $j.Args + @('--frames', "$Frames", '--screenshot', "`"$($j.Png)`"")
+            # a started process copies the environment as it is: set the run's own variables around the start only
+            $saved = @{}
+            if ($j.Env) { foreach ($e in $j.Env.GetEnumerator()) { $saved[$e.Key] = [Environment]::GetEnvironmentVariable($e.Key); [Environment]::SetEnvironmentVariable($e.Key, $e.Value) } }
             $running[$id] = @{ P = (Start-Process -FilePath $client -ArgumentList $a -PassThru -WindowStyle Minimized); Start = Get-Date; Job = $j }
+            foreach ($e in $saved.GetEnumerator()) { [Environment]::SetEnvironmentVariable($e.Key, $e.Value) }
         }
         Start-Sleep -Milliseconds 200
         foreach ($k in @($running.Keys)) {
@@ -36,7 +41,7 @@ function Invoke-ClientRuns($Jobs, [int]$Parallel, [int]$TimeoutS, [int]$Frames) 
                        else { "?" }
             }
             $results.Add([pscustomobject]@{ Key = $r.Job.Key; Status = $status; Why = $why; Frames = $frame; Secs = [int]((Get-Date) - $r.Start).TotalSeconds; Error = $e; State = $state.Substring(0, [Math]::Min(220, $state.Length)) })
-            if ($status -eq "ok") { foreach ($f in $png, $txt, $log) { if (Test-Path $f) { Remove-Item $f } } }
+            if ($status -eq "ok" -and -not $Keep) { foreach ($f in $png, $txt, $log) { if (Test-Path $f) { Remove-Item $f } } }
             $running.Remove($k)
         }
     }

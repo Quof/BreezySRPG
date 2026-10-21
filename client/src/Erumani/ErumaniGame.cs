@@ -610,10 +610,11 @@ public sealed class ErumaniGame : Game
         // the enemy ranges key (modern aid): on a map, toggles the enemies' combined reach
         if (_session is not null && _opts.Screenshot is null && _controls.Pressed(GameAction.EnemyRanges)) ToggleThreat();
 
-        // text backlog: mouse wheel (or its key) on a map, outside battle scenes
+        // text backlog: mouse wheel (or its key) on a map, outside battle scenes; with one of the map's menus up (the turn
+        // menu's save screen...) the wheel is the menu's
         if (_session is not null && _battle?.SceneShowing != true)
         {
-            if (wheel != 0) _backlog.Scroll(wheel);
+            if (wheel != 0 && _battle?.MenuOpen != true) _backlog.Scroll(wheel);
             if (_controls.Pressed(GameAction.Backlog)) _backlog.Toggle();
             if (_backlog.Open)
             {
@@ -769,6 +770,9 @@ public sealed class ErumaniGame : Game
             "threat" => Do(ToggleThreat, bi),
             "options" => Do(OpenOptions, bi),
             "endturn" => Do(() => _battle?.ScriptEndTurn(), bi),
+            "turnmenu" => Do(() => _battle?.ScriptTurnMenu(), bi),
+            "wheelup" => bi with { Wheel = 1 },
+            "wheeldown" => bi with { Wheel = -1 },
             _ when tok.StartsWith("at:") && tok[3..].Split('.') is [var x, var y] =>
                 bi with { MouseTile = new Point(int.Parse(x), int.Parse(y)), MouseMoved = true },
             _ => bi,
