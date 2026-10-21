@@ -128,7 +128,7 @@ F1 opens them anywhere; during an event (a cutscene), a right click's menu has t
 
 The frame is drawn at the window's resolution: the pixel art is scaled up whole, and the modern and gilded styles' text and gold are drawn at the window's own pixels, so they stay crisp at any size. The filter only matters when the window isn't a whole multiple of 640×480.
 
-Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font License 1.1, [`src/Erumani/fonts/OFL.txt`](src/Erumani/fonts/OFL.txt)); the build copies them from Windows' fonts folder (Windows 11 has them) and they aren't kept in git. BIZ UDPGothic, Yu Gothic UI and MS Gothic are Windows' own (MS Gothic's licence doesn't let it be bundled); a font that isn't there falls back to Yu Gothic UI. Each font is drawn a little smaller than Yu Gothic UI and placed where Yu Gothic UI's glyphs were, so every layout keeps its lines.
+Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font License 1.1, [`src/Erumani/fonts/OFL.txt`](src/Erumani/fonts/OFL.txt)); the build copies them from Windows' fonts folder (Windows 11 has them) and they aren't kept in git. BIZ UDPGothic, Yu Gothic UI and MS Gothic are Windows' own (MS Gothic's licence doesn't let it be bundled); a font that isn't there falls back to Yu Gothic UI. Each font is drawn a little smaller than Yu Gothic UI and placed where Yu Gothic UI's glyphs were, so every layout keeps its lines. The modern and gilded message boxes fit the font: as wide as a full line in it (20 full-width characters, the editor's limit; a longer line in a game widens it again), narrowed on the side away from the face, centred when there is none.
 
 ### The extended save / load screen
 

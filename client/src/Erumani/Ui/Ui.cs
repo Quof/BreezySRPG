@@ -355,7 +355,8 @@ public sealed class Ui : IDisposable
     /// with one on the right, its tail toward the face, the text 18 px into it from 28 px below the area's top, 22-px lines.
     /// The gilded skin: a text box beside the face with a small pointer toward it (across the area without a face), and a
     /// first line that is just 「name：」 in a name box over the text box's top-left corner. The modern skin: the balloon's
-    /// place, that name in a box of its own above the text box, apart from it.
+    /// place, that name in a box of its own above the text box, apart from it. Both fit the box to the text
+    /// (<see cref="TextWidth"/>): never wider than before, narrower on the side away from the face, centred without one.
     /// </summary>
     public void Message(SpriteBatch sb, Texture2D? face, int windowY, bool faceRight, bool faceFlip, IReadOnlyList<string> lines,
         bool tailLeft = false)
@@ -370,16 +371,18 @@ public sealed class Ui : IDisposable
             // so the text is level either way
             var (who, said) = SplitSpeaker(lines);
             int mx = left ? 192 : right ? 32 : 112, top = windowY + 16;
+            int bw = Math.Min(BalloonWidth - 2, 17 + TextWidth(said) + 17);
+            int bx = left ? mx + 1 : right ? mx + BalloonWidth - 1 - bw : 320 - bw / 2;
             if (who is not null)
             {
                 int w = Math.Max(96, NameText.Measure(who) + 32);
-                var nr = new Rectangle(mx + 1, top, w, 24);
+                var nr = new Rectangle(bx, top, w, 24);
                 ModernBox(sb, nr, ModernBase, 8, 0.92f);
                 if (NameText.Get(who) is { } t) ShadowText(sb, NameText, who, new Vector2(nr.X + (w - t.Width) / 2, nr.Y + (nr.Height - t.LayoutHeight) / 2), Color.White);
             }
             if (who is not null || said.Count <= 4) top += 28;   // five lines without a name need the room
-            ModernBox(sb, new Rectangle(mx + 1, top, BalloonWidth - 2, windowY + 143 - top), ModernBase, 12, 0.92f);
-            for (int i = 0; i < said.Count; i++) DrawText(sb, said[i], new Vector2(mx + 18, top + 11 + i * LineHeight), TextColor);
+            ModernBox(sb, new Rectangle(bx, top, bw, windowY + 143 - top), ModernBase, 12, 0.92f);
+            for (int i = 0; i < said.Count; i++) DrawText(sb, said[i], new Vector2(bx + 17, top + 11 + i * LineHeight), TextColor);
             return;
         }
         if (!Gilded)
@@ -390,7 +393,13 @@ public sealed class Ui : IDisposable
             return;
         }
         var (name, text) = SplitSpeaker(lines);
-        int x0 = left ? 172 : 24, x1 = right ? 468 : 616;
+        int x0 = left ? 172 : 24, x1 = right ? 468 : 616, need = 20 + TextWidth(text) + 20;
+        if (x1 - x0 > need)
+        {
+            if (left) x1 = x0 + need;
+            else if (right) x0 = x1 - need;
+            else (x0, x1) = (320 - need / 2, 320 - need / 2 + need);
+        }
         var box = new Rectangle(x0, windowY + 22, x1 - x0, 128);
         GildedBox(sb, box, GildedNavy, 0.84f, left ? -1 : right ? 1 : 0, windowY + 80 - box.Y);
         if (name is not null) NameBox(sb, name, box.X + 14, box.Y - 13);
@@ -399,6 +408,15 @@ public sealed class Ui : IDisposable
     }
 
     public void DrawText(SpriteBatch sb, string s, Vector2 pos, Color c) => Text.Get(s)?.Draw(sb, pos, c);
+
+    /// <summary>A line as long as a message line gets: 20 full-width characters, the editor's 40 bytes (thousands of lines in the five games fill it, none goes past).</summary>
+    static readonly string FullLine = new('国', 20);
+
+    /// <summary>
+    /// How wide a message's text is to be taken in the restyled skins: a full line in the font chosen — a kanji, the
+    /// widest full-width glyph, 20 times — or this message's widest line, should a game have longer ones.
+    /// </summary>
+    int TextWidth(IReadOnlyList<string> lines) => Math.Max(Text.Measure(FullLine), lines.Count == 0 ? 0 : lines.Max(Text.Measure));
 
     /// <summary>
     /// Screen frame from SFRAME_H/V.BMP: 16-px strips around the 608x448 map viewport, copied opaque over the tiles
