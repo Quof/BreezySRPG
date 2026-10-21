@@ -21,7 +21,7 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
-        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList }
+        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList, WholeMap }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -69,10 +69,10 @@ public sealed class BattleController
     BattleScene? _scene;
     public bool SceneShowing => _scene is not null;
     /// <summary>Cancel would do something now (for the CANCEL sound).</summary>
-    public bool AcceptsCancel => _state_ is State.Selected or State.ActionMenu or State.Targeting or State.TurnMenu or State.Status
+    public bool AcceptsCancel => _state_ is State.WholeMap or State.Selected or State.ActionMenu or State.Targeting or State.TurnMenu or State.Status
         or State.SpellList or State.ItemList or State.Aiming or State.MedicineTarget or State.Files or State.QuitConfirm or State.EquipList;
     /// <summary>A menu has keyboard focus (W/S move in it instead of the camera).</summary>
-    public bool MenuOpen => _state_ is State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
+    public bool MenuOpen => _state_ is State.WholeMap or State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
         or State.QuitConfirm or State.EquipList;
     public bool WaitingForClick => _scene?.WaitingForClick == true;
     /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
@@ -396,6 +396,7 @@ public sealed class BattleController
             case State.Scene: UpdateScene(input); break;
             case State.Files: UpdateFiles(input); break;
             case State.QuitConfirm: UpdateQuit(input); break;
+            case State.WholeMap: if (input.Confirm || input.Cancel || input.Click || input.RightClick) { Sfx.Cancel(); _state_ = State.Idle; } break;
         }
     }
 
@@ -815,12 +816,16 @@ public sealed class BattleController
                 Popup($"{u.Name}は{m.Name}{Word(73)}");         // "を習得した"
     }
 
+    Point _turnMenuAt;
+
     Rectangle MenuRect()
     {
         int w = _menu.Max(m => _ui.SmallText.Measure(m)) + 24, h = _menu.Length * 16 + 16;
-        var p = _sel is null ? new Point(ErumaniGame.ViewX + 8, ErumaniGame.ViewY + 8)
+        // the turn menu opens with its corner on the clicked tile (original screenshot); the action menu beside the unit
+        var p = _sel is null ? _turnMenuAt
             : _s.ScreenPos(_sel.X + 1, _sel.Y, ViewportRect).ToPoint() + new Point(8, 0);
-        if (p.X + w > ErumaniGame.ViewX + ErumaniGame.ViewWidth) p.X -= w + MapSession.Tile + 16;
+        if (_sel is null) p.X = Math.Min(p.X, ErumaniGame.ViewX + ErumaniGame.ViewWidth - w);
+        else if (p.X + w > ErumaniGame.ViewX + ErumaniGame.ViewWidth) p.X -= w + MapSession.Tile + 16;
         p.Y = Math.Clamp(p.Y, ErumaniGame.ViewY, ErumaniGame.ViewY + ErumaniGame.ViewHeight - h);
         return new Rectangle(p.X, p.Y, w, h);
     }
@@ -854,7 +859,7 @@ public sealed class BattleController
             return;
         }
         int pick = MenuNavigate(i, MouseVirtual);
-        if (pick == 0) { _state_ = State.Targeting; _cursor = new Point(_targets[0].X, _targets[0].Y); }
+        if (pick == 0) { _state_ = State.Targeting; _forecastArmed = null; _cursor = new Point(_targets[0].X, _targets[0].Y); }
         else if (pick == 1) OpenSpellList();
         else if (pick == 2) OpenEquipList();
         else if (pick == 3) OpenItemList();
@@ -873,8 +878,59 @@ public sealed class BattleController
         if (!Pick(i)) return;
         var target = _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y);
         if (target is null) return;
+        // a click first brings up that target's forecast, a second click attacks (keys: the forecast is already up)
+        if (i.Click && !i.Confirm && _forecastArmed != target) { _forecastArmed = target; Sfx.Click(); return; }
+        _forecastArmed = null;
         Sfx.Click();
         DoAttack(_sel!, target);
+    }
+
+    BattleUnit? _forecastArmed;
+
+    /// <summary>
+    /// Battle forecast (modern addition, Fire Emblem style) while choosing a target: both sides' HP before → after
+    /// if every strike hits, damage per hit (×n for several strikes), hit and critical chances; "－" where there's no counter.
+    /// </summary>
+    void DrawForecast(SpriteBatch sb, BattleUnit atk, BattleUnit def)
+    {
+        var (fa, fd) = _s.Field.Forecast(atk, def);
+        int defAfter = Math.Max(0, def.Hp - fa.Damage * fa.Strikes);
+        int atkAfter = defAfter == 0 ? atk.Hp : Math.Max(0, atk.Hp - fd.Damage * fd.Strikes);
+        const int w = 264, h = 122;
+        var tile = _s.ScreenPos(def.X, def.Y, ViewportRect);
+        int x = tile.X < 320 ? ErumaniGame.ViewX + ErumaniGame.ViewWidth - w - 8 : ErumaniGame.ViewX + 8;
+        var r = new Rectangle(x, ErumaniGame.ViewY + 8, w, h);
+        _ui.Panel(sb, r);
+        var white = Ui.Ui.PanelText;
+        var dim = new Color(200, 210, 200);
+        void T(string s, int cx, int y, Color c, int align)   // align: -1 left, 0 centre, 1 right
+        {
+            if (_ui.SmallText.Get(s) is not { } t) return;
+            float px = align < 0 ? cx : align > 0 ? cx - t.Width : cx - t.Width / 2f;
+            sb.Draw(t, new Vector2(r.X + px, r.Y + y), c);
+        }
+        Color SideColor(BattleUnit u) => u.Side == Side.Ally ? new Color(64, 120, 248) : u.Side == Side.Enemy ? new Color(232, 56, 56) : new Color(232, 192, 48);
+        // names over coloured strips
+        _ui.Fill(sb, new Rectangle(r.X + 8, r.Y + 26, 108, 2), SideColor(atk));
+        _ui.Fill(sb, new Rectangle(r.Right - 116, r.Y + 26, 108, 2), SideColor(def));
+        T(atk.Name, 10, 8, white, -1);
+        T(def.Name, w - 10, 8, white, 1);
+        string Strikes(Battlefield.StrikeForecast f) => f.Strikes == 0 ? "－" : f.Strikes > 1 ? $"{f.Damage} ×{f.Strikes}" : $"{f.Damage}";
+        string Pct(int v, Battlefield.StrikeForecast f) => f.Strikes == 0 ? "－" : $"{v}%";
+        var rows = new (string Label, string Left, string Right)[]
+        {
+            (Word(2), $"{atk.Hp} → {atkAfter}", $"{def.Hp} → {defAfter}"),
+            ("威力", Strikes(fa), Strikes(fd)),
+            ("命中", Pct(fa.Hit, fa), Pct(fd.Hit, fd)),
+            ("必殺", Pct(fa.Crit, fa), Pct(fd.Crit, fd)),
+        };
+        for (int k = 0; k < rows.Length; k++)
+        {
+            int y = 36 + k * 20;
+            T(rows[k].Label, w / 2, y, dim, 0);
+            T(rows[k].Left, 92, y, white, 1);
+            T(rows[k].Right, w - 92, y, white, -1);
+        }
     }
 
     void OpenActionMenuAgain()
@@ -953,11 +1009,12 @@ public sealed class BattleController
 
     void OpenTurnMenu()
     {
-        // WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了
-        // ゲーム終了 removed by request (quit from the title or the window instead)
-        _menu = new[] { Word(19), Word(20), Word(21), Word(22) };
-        _menuEnabled = new[] { true, false, true, true };   // 全体マップ: not yet
+        // WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了 (the original's test play
+        // adds デバッグ, which isn't part of the game)
+        _menu = new[] { Word(19), Word(20), Word(21), Word(22), Word(23) };
+        _menuEnabled = new[] { true, true, true, true, true };
         _menuIndex = 0;
+        _turnMenuAt = _s.ScreenPos(_cursor.X, _cursor.Y, ViewportRect).ToPoint();
         _sel = null;
         _state_ = State.TurnMenu;
     }
@@ -968,6 +1025,7 @@ public sealed class BattleController
         switch (MenuNavigate(i, MouseVirtual))
         {
             case 0: EndPlayerTurn(); break;
+            case 1: _state_ = State.WholeMap; break;
             case 2: OpenFiles(save: true); break;
             case 3: OpenFiles(save: false); break;
             case 4:
@@ -1111,6 +1169,13 @@ public sealed class BattleController
             if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
         }
         if (_state_ is State.ActionMenu or State.TurnMenu or State.Files or State.QuitConfirm) DrawMenu(sb, frame);
+        if (_state_ == State.Targeting && _sel is not null && _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y) is { } ft)
+            DrawForecast(sb, _sel, ft);
+        if (_state_ == State.WholeMap)
+            _s.DrawWholeMap(sb, _ui, _s.Field.Alive.Select(u => (u.X, u.Y, u.Side switch
+            {
+                Side.Ally => new Color(48, 96, 248), Side.Enemy => new Color(232, 40, 40), _ => new Color(240, 200, 40),
+            })));
         if (_state_ == State.Files) _files.Draw(sb, _ui, true, frame);
         if (_state_ == State.QuitConfirm)
         {
@@ -1158,9 +1223,15 @@ public sealed class BattleController
         bool modern = Ui.Ui.Modern;
         for (int i = 0; i < _menu.Length; i++)
         {
-            if (modern && i == _menuIndex) _ui.ModernHighlight(sb, new Rectangle(r.X + 4, r.Y + 9 + i * 16, r.Width - 8, 16), frame);
+            // the selected row: the flashing green bar of the original's menus (screenshot), or the modern accent bar
+            var row = new Rectangle(r.X + 4, r.Y + 8 + i * 16, r.Width - 8, 17);
+            if (i == _menuIndex)
+            {
+                if (modern) _ui.ModernHighlight(sb, row, frame);
+                else _ui.Fill(sb, row, frame / 8 % 2 == 0 ? new Color(160, 248, 96) : new Color(248, 248, 248));
+            }
             var c = !_menuEnabled[i] ? (modern ? (i == _menuIndex ? new Color(196, 204, 222) : new Color(110, 116, 132)) : new Color(120, 140, 120))
-                : i == _menuIndex ? (modern ? Color.White : new Color(255, 255, 120)) : Ui.Ui.PanelText;
+                : i == _menuIndex ? (modern ? Color.White : new Color(0, 32, 0)) : Ui.Ui.PanelText;
             if (_ui.SmallText.Get(_menu[i]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + i * 16), c);
         }
     }

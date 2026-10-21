@@ -116,7 +116,6 @@ public sealed class Ui : IDisposable
         if (Modern)
         {
             ModernBox(sb, new Rectangle(topLeft.X, topLeft.Y, MessageWidth, MessageHeight), ModernBase, 12, 0.92f);
-            Fill(sb, new Rectangle(topLeft.X + 14, topLeft.Y + 1, MessageWidth - 28, 2), Accent * 0.8f);
             return;
         }
         sb.Draw(_messageWindow, topLeft.ToVector2(), Color.White);

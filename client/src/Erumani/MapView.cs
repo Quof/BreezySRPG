@@ -290,6 +290,31 @@ public sealed class MapSession : IMapContext
             if (o.Graphic >= 0 && OtherVisible(o)) sb.Draw(_chips, ScreenPos(o.X, o.Y, viewport), ChipRect(o.Graphic), Color.White);
     }
 
+    /// <summary>
+    /// 全体マップ (original screenshot): a 352×352 green panel in the middle of the screen, the whole map shrunk
+    /// (8 px a tile, smaller if it wouldn't fit) with a white grid, units as coloured squares.
+    /// </summary>
+    public void DrawWholeMap(SpriteBatch sb, Ui.Ui ui, IEnumerable<(int X, int Y, Color C)> units)
+    {
+        ui.Panel(sb, new Rectangle(144, 64, 352, 352));
+        if (_chips is null) return;
+        int s = Math.Max(2, Math.Min(8, 336 / Math.Max(Map.Width, Map.Height)));
+        int w = Map.Width * s, h = Map.Height * s;
+        int ox = 320 - w / 2, oy = 240 - h / 2;
+        for (int y = 0; y < Map.Height; y++)
+            for (int x = 0; x < Map.Width; x++)
+                sb.Draw(_chips, new Rectangle(ox + x * s, oy + y * s, s, s), ChipRect(Map.Tiles[y, x]), Color.White);
+        foreach (var o in Others)
+            if (o.Graphic >= 0 && OtherVisible(o)) sb.Draw(_chips, new Rectangle(ox + o.X * s, oy + o.Y * s, s, s), ChipRect(o.Graphic), Color.White);
+        foreach (var (x, y, c) in units) ui.Fill(sb, new Rectangle(ox + x * s + 1, oy + y * s + 1, s - 1, s - 1), c);
+        if (s >= 4)
+        {
+            for (int x = 0; x <= Map.Width; x++) ui.Fill(sb, new Rectangle(ox + x * s, oy, 1, h + 1), Color.White);
+            for (int y = 0; y <= Map.Height; y++) ui.Fill(sb, new Rectangle(ox, oy + y * s, w + 1, 1), Color.White);
+        }
+        else ui.Frame(sb, new Rectangle(ox - 1, oy - 1, w + 2, h + 2), Color.White);
+    }
+
     /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan = move, 1 salmon = attack /
     /// medicine, 2 orange = attack spells, 3 blue = own-side spells. The original draws only the tile's odd pixel
     /// rows, opaque, leaving the map visible in between (T19c, pixel-matched); "solid" tiles (units a spell will

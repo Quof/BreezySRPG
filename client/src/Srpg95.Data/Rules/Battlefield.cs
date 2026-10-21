@@ -170,6 +170,30 @@ public sealed partial class Battlefield
 
     // ---------------- combat ----------------
 
+    /// <summary>One side of a battle forecast: damage per hit (before a critical), hit and critical chances (0–100), strikes.</summary>
+    public readonly record struct StrikeForecast(int Damage, int Hit, int Crit, int Strikes);
+
+    /// <summary>What <see cref="Attack"/> would do, without rolling: the attacker's side and the counter (Strikes 0 if none).</summary>
+    public (StrikeForecast Attacker, StrikeForecast Defender) Forecast(BattleUnit atk, BattleUnit def)
+    {
+        StrikeForecast One(BattleUnit a, BattleUnit d, int strikes)
+        {
+            var sa = Stats(a);
+            var sd = Stats(d);
+            var w = Item(a.Weapon);
+            var arm = Item(d.Armor);
+            int terrain = TerrainAt(d.X, d.Y).DefenseBonus;
+            int hit = d.SleepTurns > 0 ? 100 : Combat.HitChance(sa.Skl, w, sd.Skl, arm, terrain);
+            int attack = w is null ? sa.Attack : Combat.ApplyAttributes(sa.Attack, w.S.WpnAttackAttr, Class(d).Weakness, arm?.S.ArmDefenseAttr);
+            int dmg = Combat.PhysicalDamage(attack, sd.Defense, terrain);
+            int crit = dmg == 0 ? 0 : Combat.CritChance(sa.Skl, w, sd.Skl, arm);
+            return new(dmg, Math.Clamp(hit, 0, 100), Math.Clamp(crit, 0, 100), strikes);
+        }
+        bool doubles = Db.DoubleAttacks && Combat.Doubles(Stats(atk).Speed, Stats(def).Speed);
+        bool counters = Db.Counterattacks && def.SleepTurns == 0 && InRange(def, def.X, def.Y, atk);
+        return (One(atk, def, doubles ? 2 : 1), One(def, atk, counters ? 1 : 0));
+    }
+
     Strike StrikeOnce(BattleUnit atk, BattleUnit def)
     {
         var sa = Stats(atk);
