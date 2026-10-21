@@ -24,7 +24,7 @@ public class CombatTests
     [Fact]
     public void Status_window_values_match_the_original_runtime()
     {
-        if (SaveDir is null) return;
+        if (SaveDir is null) { Assert.True(Environment.GetEnvironmentVariable("SRPG95_REQUIRE_DATA") != "1", "save data missing"); return; }
         var items = new GameFolder(SaveDir).ReadData("ITEM.DAT");
         var db = Bin.Records(items, 640, 100, "ITEM.DAT").Select((r, i) => Item.Parse(i, r.Span)).ToArray();
         Item? It(int i) => i >= 0 && i < db.Length ? db[i] : null;

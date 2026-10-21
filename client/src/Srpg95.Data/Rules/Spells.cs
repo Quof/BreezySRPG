@@ -81,18 +81,20 @@ public sealed partial class Battlefield
         return Item(t.Accessory) is { Type: ItemType.Accessory } acc && acc.S.AccSafe[effect] != 0;
     }
 
+    /// <summary>FUN_0041ba0c: damage spells roll Skl×2 + accuracy − (dSkl×3 − weight) − terrain; status spells roll accuracy alone.</summary>
     int MagicHit(BattleUnit caster, Magic m, BattleUnit t)
     {
+        if (m.Type == 1) return m.Accuracy;
         if (t.SleepTurns > 0) return 100;   // provisional, like physical attacks
         return Combat.MagicHitChance(Stats(caster).Skl, m, Stats(t).Skl, Item(t.Armor), TerrainAt(t.X, t.Y).DefenseBonus);
     }
 
-    /// <summary>Predicted spell damage (no roll), for the AI.</summary>
+    /// <summary>Spell damage (no roll): (Mag + damage, attributes applied) − magic defense − terrain/10, 0–99. No criticals.</summary>
     public int PredictSpellDamage(BattleUnit caster, Magic m, BattleUnit t)
     {
         var arm = Item(t.Armor);
-        bool eff = Combat.Effective(m.AttackAttr, Class(t).Weakness, arm?.S.ArmDefenseAttr);
-        return Combat.MagicDamage(Stats(caster).Mag, m, Stats(t).MagicDefense, eff);
+        int power = Combat.ApplyAttributes(Stats(caster).Mag + m.Damage, m.AttackAttr, Class(t).Weakness, arm?.S.ArmDefenseAttr);
+        return Combat.MagicDamage(power, Stats(t).MagicDefense, TerrainAt(t.X, t.Y).DefenseBonus);
     }
 
     /// <summary>
@@ -110,14 +112,15 @@ public sealed partial class Battlefield
         caster.Acted = true;
         if (caster.Side != Side.Ally || fromItem || caster.Dead) return r;
 
+        // damage spells: EXP summed over every enemy damaged (unlike attacks, which take the largest), kills collect
+        // rewards; status / raise spells: the spell's Exp Value (FUN_0041ba0c, FUN_0041b6ec)
         int exp = 0;
         if (m.Type == 0)
-        {
-            var killed = r.Effects.Where(e => e.Killed).Select(e => e.Target).ToList();
-            var hit = r.Effects.Where(e => e.Kind == EffectKind.Damage).Select(e => e.Target).ToList();
-            if (killed.Count > 0) exp = Combat.Exp(caster.Level, killed.Max(t => t.Level), true);
-            else if (hit.Count > 0) exp = Combat.Exp(caster.Level, hit.Max(t => t.Level), false);
-        }
+            foreach (var e in r.Effects.Where(e => e.Kind == EffectKind.Damage && e.Amount > 0 && e.Target.Side != Side.Ally))
+            {
+                exp += Combat.Exp(caster.Level, e.Target.Level, e.Killed);
+                if (e.Killed) CollectReward(r, e.Target);
+            }
         else exp = m.ExpValue;
         if (exp > 0) AwardExp(r, caster, exp);
         return r;

@@ -795,6 +795,17 @@ public sealed class BattleController
 
     void ShowGrowth(ExchangeResult r)
     {
+        // kill rewards (the original adds them after the battle): gold 「n,肉を獲得」 (WORD 61), items 「〜を獲得」 (62)
+        if (r.RewardGold > 0)
+        {
+            _state.Gold += r.RewardGold;
+            Popup($"{Wide(r.RewardGold)}{Word(61)}");
+        }
+        foreach (var item in r.RewardItems)
+        {
+            _state.AddItem(item, 1);
+            if (item >= 0 && item < _db.Items.Length) Popup($"{_db.Items[item].Name}{Word(62)}");
+        }
         foreach (var (u, exp) in r.ExpGained)
             Popup($"{Wide(exp)}{Word(60)}");             // 「１７の経験値を獲得」: no name, full-width digits (T22)
         foreach (var (u, _) in r.LevelUps)

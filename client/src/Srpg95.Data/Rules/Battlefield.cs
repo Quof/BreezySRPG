@@ -12,6 +12,9 @@ public sealed class ExchangeResult
     public Dictionary<BattleUnit, int> ExpGained { get; } = new();
     public Dictionary<BattleUnit, int[]> LevelUps { get; } = new();   // stat increases (6) per unit
     public List<Effect> Effects { get; } = new();
+    /// <summary>Kill rewards (the defeated object's reward gold / item), for the player's side.</summary>
+    public int RewardGold { get; set; }
+    public List<int> RewardItems { get; } = new();
     public Dictionary<BattleUnit, List<Magic>> Learned { get; } = new();
 }
 
@@ -168,41 +171,56 @@ public sealed partial class Battlefield
         var w = Item(atk.Weapon);
         var arm = Item(def.Armor);
         int terrain = TerrainAt(def.X, def.Y).DefenseBonus;
+        // FUN_0041a9c4: hit roll, crit roll only after a hit, integer damage, crit ×5/2 unless the damage is 0
         int hit = Combat.HitChance(sa.Skl, w, sd.Skl, arm, terrain);
-        if (def.SleepTurns > 0) hit = 100;   // provisional
+        if (def.SleepTurns > 0) hit = 100;   // provisional (sleep isn't in the strike routine itself)
         bool hits = Rng.Next(100) < hit;
         if (!hits) return new Strike(atk, def, false, false, 0, false);
         bool crit = Rng.Next(100) < Combat.CritChance(sa.Skl, w, sd.Skl, arm);
-        bool eff = w is not null && Combat.Effective(w.S.WpnAttackAttr, Class(def).Weakness, arm?.S.ArmDefenseAttr);
-        int dmg = Combat.PhysicalDamage(sa.Attack, sd.Defense, terrain, eff, crit);
+        int attack = w is null ? sa.Attack : Combat.ApplyAttributes(sa.Attack, w.S.WpnAttackAttr, Class(def).Weakness, arm?.S.ArmDefenseAttr);
+        int dmg = Combat.PhysicalDamage(attack, sd.Defense, terrain);
+        if (dmg == 0) crit = false;
+        if (crit) dmg = Combat.Critical(dmg);
         def.Hp = Math.Max(0, def.Hp - dmg);
         if (def.Hp == 0) def.Dead = true;
         return new Strike(atk, def, true, crit, dmg, def.Dead);
     }
 
     /// <summary>
-    /// Attacker strikes; the defender counterattacks if the attacker is in its range and it isn't
-    /// asleep; the attacker strikes again if 3+ points faster. EXP and level-ups for ally units.
+    /// FUN_0041b4b0: the attacker strikes; the defender counters (GAME.DAT [2]) if it survived, isn't asleep and
+    /// the attacker is in its range; the attacker strikes again (GAME.DAT [3], off in えるまに) if the last strike's
+    /// target survived and it is 3+ speed faster. A player unit's EXP for the exchange is the largest value of its
+    /// damaging strikes (a 0-damage hit gives none); a kill also collects the defeated object's rewards.
     /// </summary>
     public ExchangeResult Attack(BattleUnit atk, BattleUnit def)
     {
         var r = new ExchangeResult();
         r.Strikes.Add(StrikeOnce(atk, def));
-        if (!def.Dead && def.SleepTurns == 0 && InRange(def, def.X, def.Y, atk))
+        if (Db.Counterattacks && !def.Dead && def.SleepTurns == 0 && InRange(def, def.X, def.Y, atk))
             r.Strikes.Add(StrikeOnce(def, atk));
-        if (!def.Dead && !atk.Dead && Combat.Doubles(Stats(atk).Speed, Stats(def).Speed))
+        if (Db.DoubleAttacks && !def.Dead && !atk.Dead && Combat.Doubles(Stats(atk).Speed, Stats(def).Speed))
             r.Strikes.Add(StrikeOnce(atk, def));
         foreach (var u in new[] { atk, def })
         {
-            if (u.Dead || u.Side != Side.Ally) continue;
-            var other = u == atk ? def : atk;
-            bool hitSomething = r.Strikes.Any(s => s.Attacker == u && s.Hit);
-            bool killed = r.Strikes.Any(s => s.Attacker == u && s.Killed);
-            if (!hitSomething && !killed) continue;      // provisional: no EXP for misses
-            AwardExp(r, u, Combat.Exp(u.Level, other.Level, killed));
+            if (u.Side != Side.Ally) continue;
+            int best = 0;
+            foreach (var s in r.Strikes.Where(s => s.Attacker == u && s.Damage > 0))
+            {
+                best = Math.Max(best, Combat.Exp(u.Level, s.Target.Level, s.Killed));
+                if (s.Killed) CollectReward(r, s.Target);
+            }
+            if (best > 0 && !u.Dead) AwardExp(r, u, best);
         }
         atk.Acted = true;
         return r;
+    }
+
+    /// <summary>A defeated map object's reward gold and item (SMAP object +0x50 / +0x4C).</summary>
+    void CollectReward(ExchangeResult r, BattleUnit dead)
+    {
+        if (dead.MapObject < 0 || Map.Objects.FirstOrDefault(o => o.Index == dead.MapObject) is not { } o) return;
+        r.RewardGold += o.RewardGold;
+        if (o.RewardItem >= 0) r.RewardItems.Add(o.RewardItem);
     }
 
     /// <summary>EXP into the result, with any level-up and the spells that level teaches (WORD 73 を習得した).</summary>
@@ -216,26 +234,38 @@ public sealed partial class Battlefield
         if (learned.Count > 0) r.Learned[u] = learned;
     }
 
-    /// <summary>Adds EXP; on reaching 100 levels up (max 20) with growth-rate rolls. Returns the stat gains.</summary>
+    static readonly int[] StatCaps = { 60, 60, 30, 30, 30, 30 };   // HP, MP, Str, Mag, Skl, Sta (FUN at 0x0040ab.., level-up)
+
+    /// <summary>
+    /// Adds EXP; every 100 is a level (several at once if need be), max 20 where EXP becomes 0. Each stat gains
+    /// growth/100 plus one more with (growth % 100)% chance (growth = UNIT.DAT growth + accessory bonus), capped
+    /// at HP/MP 60 and the rest 30; current HP/MP rise with their maximums. Returns the summed gains.
+    /// </summary>
     public int[]? GainExp(BattleUnit u, int exp)
     {
         if (u.Level >= Combat.MaxLevel) return null;
         u.Exp += exp;
-        if (u.Exp < Combat.ExpPerLevel) return null;
-        u.Exp -= Combat.ExpPerLevel;
-        u.Level++;
-        int bonus = Item(u.Accessory) is { Type: ItemType.Accessory } acc ? acc.S.AccGrowthBonus : 0;
-        var gains = new int[6];
-        for (int i = 0; i < 6; i++)
+        int[]? total = null;
+        while (u.Exp >= Combat.ExpPerLevel)
         {
-            int g = u.Growth[i] + bonus;   // provisional: >100 % gives a sure point plus a chance at another
-            gains[i] = g / 100 + (Rng.Next(100) < g % 100 ? 1 : 0);
-            u.Base[i] += gains[i];
+            if (u.Level >= Combat.MaxLevel) { u.Level = Combat.MaxLevel; u.Exp = 0; break; }
+            u.Exp -= Combat.ExpPerLevel;
+            u.Level++;
+            total ??= new int[6];
+            int bonus = Item(u.Accessory) is { Type: ItemType.Accessory } acc ? acc.S.AccGrowthBonus : 0;
+            for (int i = 0; i < 6; i++)
+            {
+                int g = u.Growth[i] + bonus;
+                int gain = g / 100 + (Rng.Next(100) < g % 100 ? 1 : 0);
+                if (u.Base[i] + gain > StatCaps[i]) gain = Math.Max(0, StatCaps[i] - u.Base[i]);
+                u.Base[i] += gain;
+                total[i] += gain;
+                if (i == 0) u.Hp += gain;
+                if (i == 1) u.Mp += gain;
+            }
+            if (u.Level >= Combat.MaxLevel) u.Exp = 0;
         }
-        u.Hp += gains[0];
-        u.Mp += gains[1];
-        if (u.Level >= Combat.MaxLevel) u.Exp = 0;
-        return gains;
+        return total;
     }
 
     // ---------------- turns ----------------

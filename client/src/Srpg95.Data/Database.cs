@@ -124,8 +124,14 @@ public sealed class Database
     public required string[] MapNames { get; init; }
     public required string[] VariableNames { get; init; }
     public required string[] SwitchNames { get; init; }
-    /// <summary>GAME.DAT [0]: 0-based index of the first map (inferred).</summary>
+    /// <summary>GAME.DAT [0]: 0-based index of the first map (confirmed by SRPGEXEC.EXE).</summary>
     public required int StartMap { get; init; }
+    /// <summary>GAME.DAT [1]: battle background from both combatants' terrain (else the defender's).</summary>
+    public bool SplitBackgrounds { get; init; }
+    /// <summary>GAME.DAT [2]: defenders counter-attack.</summary>
+    public bool Counterattacks { get; init; } = true;
+    /// <summary>GAME.DAT [3]: an attacker 3+ speed faster strikes twice (off in えるまに).</summary>
+    public bool DoubleAttacks { get; init; }
 
     delegate T RecordParser<T>(int index, ReadOnlySpan<byte> record);
 
@@ -153,6 +159,9 @@ public sealed class Database
             VariableNames = Names(g.ReadData("VARNAME.DAT")),
             SwitchNames = Names(g.ReadData("SWNAME.DAT")),
             StartMap = Bin.I32(g.ReadData("GAME.DAT"), 0),
+            SplitBackgrounds = Bin.I32(g.ReadData("GAME.DAT"), 4) == 1,
+            Counterattacks = Bin.I32(g.ReadData("GAME.DAT"), 8) != 0,
+            DoubleAttacks = Bin.I32(g.ReadData("GAME.DAT"), 12) != 0,
         };
     }
 }

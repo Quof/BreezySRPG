@@ -697,6 +697,22 @@ What the client does on a battle map (`client/src/Srpg95.Data/Rules/`, `client/s
 
 Every scripted run is reproducible: in screenshot mode the client seeds the battle RNG with 1, ignores the real keyboard and mouse, and `--keys` feeds input. The client writes the state and a token trace next to the PNG as `.txt`.
 
+## 16. From the executable (SRPGEXEC.EXE disassembly)
+
+Decompiled with Ghidra 12.1.4 (`re/ghidra_scripts/ExportDecompiled.java`, output in `re/exe/`, not committed: it is derived from the game's executable). The program is Win32, probably Borland C++, 904 functions. It uses DirectDraw for graphics, `Harmony.dll` for MIDI/WAV, and MCI. Function names below are Ghidra's addresses. Unit records in memory have the same layout as the save files (§14, 640 B).
+
+| Topic | What the code does | Where |
+|---|---|---|
+| GAME.DAT | the 200 bytes are game options: [0] start map; [1] = 1 → battle background from both sides' terrain; [2] counter-attacks on; [3] double attacks on; [4] a brightness level during battle scenes (×33/100 + 33); [5] a per-turn feature for player units. えるまに: 98, 0, 1, 0, 0, 0 → **counters on, double attacks off** | FUN_00403758 loads it; uses in FUN_0041b4b0, FUN_0041a5b0, FUN_00419574, FUN_0041d5e4 |
+| Derived stats | Attack = Str(+acc) + weapon power + buff; Speed = Skl + usability/3 − armor weight; Defense = Sta + armor def + buff; MDef = Mag/2 + armor mdef + buff. **Each clamped to 0–99** | FUN_0040a68c |
+| Physical strike | hit = 70 + 2·Skl + usability − (3·dSkl − weight) − terrain def; hit if rand()%100 < hit. Crit (only after a hit) = Skl + critical − (dSkl/2 + crit avoid). Attack ×3/2 if an attribute hits an unguarded weakness, else ×4/5 if the armor guards every attribute (help says 50 %). Damage = attack − Defense − terrain/10 (integer, truncating), clamped 0–99. Crit: damage×5/2, cap 99; no crit when damage is 0 | FUN_0041a9c4 |
+| Exchange | strike; counter if GAME.DAT[2], defender alive and not disabled (record [46]/[47] = 0), attacker within the defender's range; double strike if GAME.DAT[3] and defender speed + 3 ≤ attacker speed | FUN_0041b4b0 |
+| EXP / rewards | only for a player unit's strikes that did > 0 damage: kill 40 + 2·(dLv − Lv), else 15 + dLv − Lv, min 1; the exchange keeps the **largest** value. Damage spells **sum** it over targets. A kill adds the defeated object's reward gold (+0x50) and item (+0x4C) | FUN_0041a9c4, FUN_0041ba0c |
+| Spells | damage: hit = 2·Skl + accuracy − (3·dSkl − weight) − terrain; damage = (Mag + damage, attributes as above) − MDef − terrain/10, 0–99, no criticals. Status spells hit on accuracy alone, blocked by class resist or accessory "safe" flags; power = value + relation·Mag/10. Raise/heal spells give their Exp Value | FUN_0041ba0c, FUN_0041b6ec |
+| Level-up | while EXP ≥ 100: −100, level +1 (at 20: EXP 0). Each stat gains growth/100 + (rand()%100 < growth%100), growth = UNIT.DAT growth + accessory bonus; caps HP/MP 60, Str/Mag/Skl/Sta 30; current HP/MP rise too; a class skill whose level equals the new level is learned | FUN_0040a8.. (level-up loop) |
+| Boss music | battle BGM 5 when either combatant is a computer unit whose object is a leader | FUN_0041a9c4 (0x6122) |
+| Battle scene timing | the animation starts at tick 15 of the scene; sounds at hit/miss frame + 15 | FUN_00419574 |
+
 ## Test log (completed, oldest first)
 
 All tests are done in `えるまに - Copy/` and diffed byte-for-byte against the untouched `えるまに/`. Unit/item/etc. numbers in instructions are the editor's 1-based numbers.

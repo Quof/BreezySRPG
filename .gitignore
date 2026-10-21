@@ -16,3 +16,4 @@ obj/
 recordings/
 client/publish/
 client/src/Erumani/soundfont/*.sf2
+re/exe/

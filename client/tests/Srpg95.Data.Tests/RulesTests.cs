@@ -116,7 +116,7 @@ public class RulesTests
         Assert.Same(enemy, e.Target);
         if (e.Kind == EffectKind.Damage)
         {
-            Assert.Equal(f.PredictSpellDamage(rutee, ion, enemy), hpBefore - enemy.Hp);
+            Assert.Equal(Math.Min(hpBefore, f.PredictSpellDamage(rutee, ion, enemy)), hpBefore - enemy.Hp);
             Assert.True(r.ExpGained.ContainsKey(rutee));
         }
         Assert.True(rutee.Acted);
