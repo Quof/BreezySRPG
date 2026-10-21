@@ -403,6 +403,7 @@ public sealed class ErumaniGame : Game
             _battle.FastForwardSkipsScenes = _settings.FastForwardSkipsScenes;
             _battle.SkipEnemyTurn = _settings.SkipEnemyTurn;
             _battle.CombatMusic = _settings.CombatBgm;
+            _battle.ActionMenuFromTop = _settings.ActionMenuFromTop;
         }
         Ui.Ui.Skin = _settings.Skin;
         Ui.Ui.Font = _settings.Font;

@@ -973,12 +973,18 @@ public sealed class BattleController
         _s.ShowTile(u.X, u.Y);
         _targets = _s.Field.TargetsFrom(u, u.X, u.Y).ToList();
         if (_targets.Count > 0) { _forecastArmed = null; _state_ = State.Targeting; }
-        else OpenActionMenu(4);
+        else OpenActionMenu(OpeningRow);
     }
+
+    /// <summary>Option (modern): the action menu opens on its first entry (攻撃) instead of 行動終了 (the original's).</summary>
+    public bool ActionMenuFromTop { get; set; } = true;
+
+    /// <summary>Where the pointer starts when the action menu first opens after a move: 行動終了 for a sleeping unit, which can do nothing else.</summary>
+    int OpeningRow => ActionMenuFromTop && _sel is { SleepTurns: 0 } ? 0 : 4;
 
     /// <summary>
     /// The action menu (FUN_004171e0), the view first bringing the unit into its middle box, the pointer on
-    /// <paramref name="row"/>: 行動終了 when it opens, the entry it came back from otherwise. WORD.DAT: 16 攻撃, 17 必殺技,
+    /// <paramref name="row"/>: 行動終了 when it opens (攻撃 with the option for it), the entry it came back from otherwise. WORD.DAT: 16 攻撃, 17 必殺技,
     /// 89 装備, 18 アイテム, 15 行動終了 — the original's order is 行動終了 / 攻撃 / 必殺技 / 装備 / アイテム; 行動終了 is moved to
     /// the bottom here (player request). A sleeping unit can only end its action; otherwise 必殺技 needs a known spell and
     /// アイテム something in the inventory, while 攻撃 and 装備 are always there (攻撃 shows the weapon's reach even with
@@ -1650,7 +1656,7 @@ public sealed class BattleController
     /// <summary>A right click goes back to the action menu (FUN_00410190): to 攻撃 if that's where the targets came from, else 行動終了.</summary>
     void UpdateTargeting(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { OpenActionMenu(_attackFromMenu ? 0 : 4); return; }
+        if (i.Cancel || i.RightClick) { OpenActionMenu(_attackFromMenu ? 0 : OpeningRow); return; }
         if ((i.Left || i.Up || i.Right || i.Down) && _targets.Count > 0)
         {
             int k = _targets.FindIndex(t => t.X == _cursor.X && t.Y == _cursor.Y);
@@ -1707,19 +1713,61 @@ public sealed class BattleController
     /// <summary>
     /// Battle forecast (modern addition, Fire Emblem style) while choosing a target: both sides' HP before → after
     /// if every strike hits, damage per hit (×n for several strikes), hit and critical chances; "－" where there's no counter.
+    /// The attacker is on the right, as the battle scenes put it.
     /// </summary>
     void DrawForecast(SpriteBatch sb, BattleUnit atk, BattleUnit def)
     {
         var (fa, fd) = _s.Field.Forecast(atk, def);
         int defAfter = Math.Max(0, def.Hp - fa.Damage * fa.Strikes);
         int atkAfter = defAfter == 0 ? atk.Hp : Math.Max(0, atk.Hp - fd.Damage * fd.Strikes);
+        string Strikes(Battlefield.StrikeForecast f) => f.Strikes == 0 ? "－" : f.Strikes > 1 ? $"{f.Damage} ×{f.Strikes}" : $"{f.Damage}";
+        string Pct(int v, Battlefield.StrikeForecast f) => f.Strikes == 0 ? "－" : $"{v}%";
+        ForecastPanel(sb, def, atk, new[]
+        {
+            (Word(2), $"{def.Hp} → {defAfter}", $"{atk.Hp} → {atkAfter}"),
+            ("威力", Strikes(fd), Strikes(fa)),
+            ("命中", Pct(fd.Hit, fd), Pct(fa.Hit, fa)),
+            ("必殺", Pct(fd.Crit, fd), Pct(fa.Crit, fa)),
+        });
+    }
+
+    /// <summary>
+    /// The forecast for a spell (modern) on the unit under the pointer, one of those it reaches: the unit's HP before →
+    /// after, what the spell does to it and its chance to land; the caster's TP before → after (no counter to spells).
+    /// </summary>
+    void DrawSpellForecast(SpriteBatch sb, BattleUnit caster, Magic m, BattleUnit t, bool fromItem)
+    {
+        var (kind, amount, hit) = _s.Field.SpellForecast(caster, m, t);
+        int after = kind switch { EffectKind.Damage => Math.Max(0, t.Hp - amount), EffectKind.Heal => t.Hp + amount, _ => t.Hp };
+        string effect = kind switch
+        {
+            EffectKind.Damage => $"{amount}", EffectKind.Heal => $"{amount}",
+            EffectKind.Poison => "毒", EffectKind.Sleep => "睡眠",
+            EffectKind.AttackDown => $"{Word(4)}－{amount}", EffectKind.DefenseDown => $"{Word(6)}－{amount}",
+            EffectKind.PowerUp => $"{Word(4)}＋{amount}", EffectKind.DefUp => $"{Word(6)}＋{amount}",
+            EffectKind.CurePoison => "解毒", EffectKind.Cleanse => "状態回復", EffectKind.ExtraTurn => "再行動",
+            _ => "無効",
+        };
+        int mpAfter = fromItem ? caster.Mp : Math.Max(0, caster.Mp - m.MpCost);
+        ForecastPanel(sb, t, caster, new[]
+        {
+            (Word(2), $"{t.Hp} → {after}", $"{caster.Hp}"),
+            (Word(3), $"{t.Mp}", $"{caster.Mp} → {mpAfter}"),
+            (kind == EffectKind.Heal ? "回復" : kind == EffectKind.Damage ? "威力" : "効果", effect, "－"),
+            ("命中", kind == EffectKind.Resisted ? "－" : $"{hit}%", "－"),
+        });
+    }
+
+    /// <summary>The forecast's panel: <paramref name="left"/> (the one acted on) and <paramref name="right"/> (who acts), named over strips in their sides' colours, then the rows.</summary>
+    void ForecastPanel(SpriteBatch sb, BattleUnit left, BattleUnit right, (string Label, string Left, string Right)[] rows)
+    {
         const int w = 264, h = 122;
-        // up and to the right of the two combatants' tiles; up-left when that would run off the right edge
-        var a = _s.ScreenPos(atk.X, atk.Y, ViewportRect).ToPoint();
-        var d = _s.ScreenPos(def.X, def.Y, ViewportRect).ToPoint();
-        int left = Math.Min(a.X, d.X), right = Math.Max(a.X, d.X) + MapSession.Tile, top = Math.Min(a.Y, d.Y);
+        // up and to the right of the two units' tiles; up-left when that would run off the right edge
+        var a = _s.ScreenPos(right.X, right.Y, ViewportRect).ToPoint();
+        var d = _s.ScreenPos(left.X, left.Y, ViewportRect).ToPoint();
+        int lx = Math.Min(a.X, d.X), rx = Math.Max(a.X, d.X) + MapSession.Tile, top = Math.Min(a.Y, d.Y);
         int viewRight = ErumaniGame.ViewX + ErumaniGame.ViewWidth;
-        int x = right + 8 + w <= viewRight - 4 ? right + 8 : left - 8 - w;
+        int x = rx + 8 + w <= viewRight - 4 ? rx + 8 : lx - 8 - w;
         x = Math.Clamp(x, ErumaniGame.ViewX + 4, viewRight - w - 4);
         int py = Math.Clamp(top - h - 8, ErumaniGame.ViewY + 4, ErumaniGame.ViewY + ErumaniGame.ViewHeight - h - 4);
         var r = new Rectangle(x, py, w, h);
@@ -1734,19 +1782,10 @@ public sealed class BattleController
         }
         Color SideColor(BattleUnit u) => u.Side == Side.Ally ? new Color(64, 120, 248) : u.Side == Side.Enemy ? new Color(232, 56, 56) : new Color(232, 192, 48);
         // names over coloured strips
-        _ui.Fill(sb, new Rectangle(r.X + 8, r.Y + 26, 108, 2), SideColor(atk));
-        _ui.Fill(sb, new Rectangle(r.Right - 116, r.Y + 26, 108, 2), SideColor(def));
-        T(atk.Name, 10, 8, white, -1);
-        T(def.Name, w - 10, 8, white, 1);
-        string Strikes(Battlefield.StrikeForecast f) => f.Strikes == 0 ? "－" : f.Strikes > 1 ? $"{f.Damage} ×{f.Strikes}" : $"{f.Damage}";
-        string Pct(int v, Battlefield.StrikeForecast f) => f.Strikes == 0 ? "－" : $"{v}%";
-        var rows = new (string Label, string Left, string Right)[]
-        {
-            (Word(2), $"{atk.Hp} → {atkAfter}", $"{def.Hp} → {defAfter}"),
-            ("威力", Strikes(fa), Strikes(fd)),
-            ("命中", Pct(fa.Hit, fa), Pct(fd.Hit, fd)),
-            ("必殺", Pct(fa.Crit, fa), Pct(fd.Crit, fd)),
-        };
+        _ui.Fill(sb, new Rectangle(r.X + 8, r.Y + 26, 108, 2), SideColor(left));
+        _ui.Fill(sb, new Rectangle(r.Right - 116, r.Y + 26, 108, 2), SideColor(right));
+        T(left.Name, 10, 8, white, -1);
+        T(right.Name, w - 10, 8, white, 1);
         for (int k = 0; k < rows.Length; k++)
         {
             int y = 36 + k * 20;
@@ -2125,6 +2164,10 @@ public sealed class BattleController
         if (_state_ is State.ActionMenu or State.TurnMenu && !_s.Panning) DrawMenu(sb, frame);
         if (_state_ == State.Targeting && _sel is not null && _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y) is { } ft)
             DrawForecast(sb, _sel, ft);
+        // a spell's aim: the forecast for the unit under the pointer among those the spell would reach from there
+        if (_state_ == State.Aiming && _sel is not null && _aimSpell is { } spell && _s.Field.UnitAt(_cursor.X, _cursor.Y) is { } st
+            && (spell.EffectWholeMap || _aimRange.Contains((_cursor.X, _cursor.Y))) && _s.Field.SpellTargets(_sel, spell, _cursor.X, _cursor.Y).Contains(st))
+            DrawSpellForecast(sb, _sel, spell, st, _aimItem is not null);
         if (_state_ == State.WholeMap)
             _s.DrawWholeMap(sb, _ui, _s.Field.Alive.Where(u => !u.Hidden).Select(u => (u.X, u.Y, u.Side switch { Side.Enemy => 0, Side.Ally => 1, _ => 2 })), frame);
         if (_state_ == State.Files)

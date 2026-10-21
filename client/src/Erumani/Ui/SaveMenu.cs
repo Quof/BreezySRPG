@@ -113,7 +113,7 @@ public sealed class SaveMenu : IDisposable
             return answer == 0 ? (Result.Picked, _index + 1) : (Result.None, 0);
         }
         if (i.Cancel || i.RightClick) { Sfx.Cancel(); return (Result.Cancelled, 0); }
-        int move = (i.Down ? 1 : 0) - (i.Up ? 1 : 0) + (i.Right ? Visible : 0) - (i.Left ? Visible : 0) - i.Wheel;
+        int move = (i.Down ? 1 : 0) - (i.Up ? 1 : 0) + (i.Right ? Visible : 0) - (i.Left ? Visible : 0) - i.Wheel * Visible;   // the wheel pages, five files a notch
         if (i.Click && UpArrow.Contains(mouse)) move -= Visible;
         if (i.Click && DownArrow.Contains(mouse)) move += Visible;
         if (move != 0)

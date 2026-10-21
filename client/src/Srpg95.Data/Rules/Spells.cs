@@ -130,6 +130,39 @@ public sealed partial class Battlefield
         return r;
     }
 
+    /// <summary>
+    /// What a spell would do to one unit, without rolling (the battle forecast, a modern aid): <see cref="Roll"/>'s effect
+    /// for a hit — damage, healing as far as the HP goes, a status, a buff's size — and the chance it lands (0 resisted).
+    /// </summary>
+    public (EffectKind Kind, int Amount, int Hit) SpellForecast(BattleUnit caster, Magic m, BattleUnit t)
+    {
+        int power = Combat.SpellEffect(m, Stats(caster).Mag);
+        switch (m.Type)
+        {
+            case 0: return (EffectKind.Damage, PredictSpellDamage(caster, m, t), Math.Clamp(MagicHit(caster, m, t), 0, 100));
+            case 1:
+                if (Resists(t, m.DegradeEffect)) return (EffectKind.Resisted, 0, 0);
+                int hit = Math.Clamp(MagicHit(caster, m, t), 0, 100);
+                return m.DegradeEffect switch
+                {
+                    0 => (EffectKind.Poison, 0, hit),
+                    1 => (EffectKind.Sleep, 0, hit),
+                    2 => (EffectKind.AttackDown, power, hit),
+                    _ => (EffectKind.DefenseDown, power, hit),
+                };
+            default:
+                return m.RaiseEffect switch
+                {
+                    0 => (EffectKind.Heal, Math.Max(0, Math.Min(power, t.MaxHp - t.Hp)), 100),
+                    1 => (EffectKind.PowerUp, power, 100),
+                    2 => (EffectKind.DefUp, power, 100),
+                    3 => (EffectKind.CurePoison, 0, 100),
+                    4 => (EffectKind.Cleanse, 0, 100),
+                    _ => (EffectKind.ExtraTurn, 0, 100),
+                };
+        }
+    }
+
     /// <summary>One unit's share of a spell, rolled (FUN_0041ba0c).</summary>
     Effect Roll(BattleUnit caster, Magic m, BattleUnit t, int power)
     {
