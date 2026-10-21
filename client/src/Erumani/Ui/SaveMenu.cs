@@ -9,11 +9,12 @@ namespace Erumani.Ui;
 /// <summary>
 /// The extended save / load screen (modern; the "Save / load screen" option, in place of the original's ファイル１–８ in
 /// a small panel). 100 files — SAVE1–100.DAT, of which the original game knows 1–8 — listed on the left five at a time:
-/// the file's name, the map it was saved on (its number and its MAPNAME.DAT name), the play time, and キャンプ or the
-/// turn; on the right the chosen file's map name, its picture of the screen and its details. Saving over a file and
-/// loading one ask first. The map, its name and キャンプ / the turn are the save's and the game's own data; the play
-/// time and the picture are EasySRPG95's notes beside the saves (<see cref="SaveExtras"/>): "--:--:--" and no picture
-/// for a save it didn't write. A save made in the middle of an event (<see cref="SceneSave"/>) says so after its turn.
+/// the file's name, the turn (or キャンプ), the play time, the map's number and when it was saved; on the right the
+/// chosen file's picture of the screen and its details. Saving over a file and loading one ask first. The map and
+/// キャンプ / the turn are the save's own data (MAPNAME.DAT's names are left out: they're the author's working names, not
+/// meant for players); the play time and the picture are EasySRPG95's notes beside the saves (<see cref="SaveExtras"/>):
+/// "--:--:--" and no picture for a save it didn't write. A save made in the middle of an event (<see cref="SceneSave"/>)
+/// says so after its turn.
 /// </summary>
 public sealed class SaveMenu : IDisposable
 {
@@ -24,7 +25,7 @@ public sealed class SaveMenu : IDisposable
     /// A file's details: its map (1-based) and that map's name, camp or turn, the play time, when it was written, whether
     /// it has a picture, and whether it was saved in the middle of an event.
     /// </summary>
-    sealed record Info(int Map, string MapName, bool Camp, int Turn, double? Play, DateTime Saved, bool Picture, bool Scene);
+    sealed record Info(int Map, bool Camp, int Turn, double? Play, DateTime Saved, bool Picture, bool Scene);
 
     const int Visible = 5;
     static Rectangle EntryRect(int row) => new(16, 32 + row * 84, 252, 80);
@@ -61,7 +62,7 @@ public sealed class SaveMenu : IDisposable
             if (!File.Exists(path) || SaveFile.Load(path) is not { } save) continue;
             var note = SaveExtras.For(notes, n, save.Raw);
             var saved = File.GetLastWriteTime(path);
-            _slots[n - 1] = new Info(save.MapIndex + 1, MapName(save.MapIndex), save.AtCamp, (save.Phase + 1) / 2, note?.PlaySeconds, saved,
+            _slots[n - 1] = new Info(save.MapIndex + 1, save.AtCamp, (save.Phase + 1) / 2, note?.PlaySeconds, saved,
                 note is not null && File.Exists(SaveExtras.PicturePath(folder, n)), note?.Scene is not null && !save.AtCamp);
             if (saved > newest) (newest, _index) = (saved, n - 1);   // it opens on the file written last
         }
@@ -71,8 +72,6 @@ public sealed class SaveMenu : IDisposable
 
     string W(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
 
-    /// <summary>A map's name as the game's MAPNAME.DAT has it (empty when it has none).</summary>
-    string MapName(int index) => index >= 0 && index < _db.MapNames.Length ? _db.MapNames[index].Trim() : "";
 
     /// <summary>File <paramref name="n"/>'s name, as the game names its first ones (「ファイル１」…).</summary>
     public string SlotName(int n) => _slotPrefix + (_wideDigits ? new string(n.ToString().Select(c => (char)('０' + (c - '0'))).ToArray()) : n.ToString());
@@ -200,24 +199,25 @@ public sealed class SaveMenu : IDisposable
     void DrawEntry(SpriteBatch sb, int slot, Rectangle r, bool chosen, int frame)
     {
         _ui.Panel(sb, r, chosen ? Ui.PanelColor.Blue : Ui.PanelColor.Green);
-        var top = chosen ? _ui.MenuRow(sb, new Rectangle(r.X + 6, r.Y + 6, r.Width - 12, 16), true, true, frame) : Ui.PanelText;
-        Small(sb, SlotName(slot + 1), r.X + 12, r.Y + 6, top);
+        // three rows in the larger type: the file, its turn (or キャンプ), its play time; the map's number and the date small
+        var top = chosen ? _ui.MenuRow(sb, new Rectangle(r.X + 6, r.Y + 5, r.Width - 12, 22), true, true, frame) : Ui.PanelText;
+        Big(sb, SlotName(slot + 1), r.X + 12, r.Y + 8, top);
         if (_slots[slot] is not { } info)
         {
-            Small(sb, T("―― Empty ――", "―― 空き ――"), r.X + 12, r.Y + 34, Dim);   // ― is in the game's own (Shift-JIS) font
+            Small(sb, T("―― Empty ――", "―― 空き ――"), r.X + 12, r.Y + 42, Dim);   // ― is in the game's own (Shift-JIS) font
             return;
         }
-        SmallRight(sb, $"{T("Map", "マップ")} {info.Map}", r.Right - 12, r.Y + 6, chosen ? top : Dim);
-        Big(sb, info.MapName, r.X + 12, r.Y + 28, Bright);
-        Small(sb, PlayTime(info.Play), r.X + 12, r.Y + 56, Ui.PanelText);
-        SmallRight(sb, Where(info), r.Right - 12, r.Y + 56, Ui.PanelText);
+        SmallRight(sb, $"{T("Map", "マップ")} {info.Map}", r.Right - 12, r.Y + 10, chosen ? top : Dim);
+        Big(sb, Where(info), r.X + 12, r.Y + 32, Bright);
+        Big(sb, PlayTime(info.Play), r.X + 12, r.Y + 55, Ui.PanelText);
+        SmallRight(sb, info.Saved.ToString("yyyy/MM/dd HH:mm"), r.Right - 12, r.Y + 59, Dim);
     }
 
     void DrawDetails(SpriteBatch sb)
     {
         var info = _slots[_index];
         _ui.Panel(sb, HeaderRect, Ui.PanelColor.Blue);
-        string head = info is null ? SlotName(_index + 1) : info.MapName.Length > 0 ? info.MapName : $"{T("Map", "マップ")} {info.Map}";
+        string head = SlotName(_index + 1);
         if (_ui.NameText.Get(head) is { } ht)
             Big(sb, head, HeaderRect.X + (HeaderRect.Width - ht.Width) / 2, HeaderRect.Y + (int)((HeaderRect.Height - ht.LayoutHeight) / 2), Bright);
 
@@ -241,7 +241,7 @@ public sealed class SaveMenu : IDisposable
         }
         Line(T("File", "ファイル"), SlotName(_index + 1));
         if (info is null) { Line(T("Status", "状況"), T("Empty", "空き")); return; }
-        Line(T("Map", "マップ"), info.MapName.Length > 0 ? $"{info.Map}　{info.MapName}" : $"{info.Map}");
+        Line(T("Map", "マップ"), $"{info.Map}");
         Line(T("Status", "状況"), Where(info));
         Line(T("Play time", "プレイ時間"), PlayTime(info.Play));
         Line(T("Saved", "保存日時"), info.Saved.ToString("yyyy/MM/dd HH:mm"));

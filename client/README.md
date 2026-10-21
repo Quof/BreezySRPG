@@ -130,7 +130,7 @@ Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font Licen
 
 ### The extended save / load screen
 
-100 files: `SAVE1.DAT`–`SAVE100.DAT` beside the game, in the original's format (the original game sees files 1–8). The list on the left shows each file's name (the game's own 「ファイル１」 naming), the map it was saved on (its number and its name from the game's `MAPNAME.DAT`), the play time, and キャンプ or the turn; the right shows the chosen file's map name, a picture of the screen when it was saved, and its details. Saving over a file or loading one asks first. ↑ ↓ move, ← → and the mouse wheel page through, a click picks.
+100 files: `SAVE1.DAT`–`SAVE100.DAT` beside the game, in the original's format (the original game sees files 1–8). The list on the left shows each file's name (the game's own 「ファイル１」 naming), キャンプ or the turn, the play time, the map's number and when it was saved; the right shows a picture of the screen when it was saved and the details. Map names are left out: the game's `MAPNAME.DAT` holds the author's working names, not ones meant for players. Saving over a file or loading one asks first. ↑ ↓ move, ← → and the mouse wheel page through, a click picks.
 
 SRPG Maker 95 keeps no play time and no picture, so EasySRPG95 notes them itself in an `EasySRPG95` folder beside the saves (`SAVEn.png`, `saves.json`), tied to each save file's contents: a save the original game wrote shows `--:--:--` and no picture, and so does a game continued from one. Play time counts while a map or camp is up and the window is in front.
 
