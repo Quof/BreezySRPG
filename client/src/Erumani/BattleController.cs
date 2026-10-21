@@ -148,11 +148,14 @@ public sealed class BattleController
     public bool ShowScenes { get; set; } = true;
     public bool FastForwardSkipsScenes { get; set; } = true;
 
-    /// <summary>Battle music while a scene plays: map BGM slot 3 (player attacks), 4 (enemy attacks), 5 (a leader is involved).</summary>
+    /// <summary>
+    /// Battle music while a scene plays (FUN_00419574 at each step's start): map BGM slot 5 when a leader of the computer's
+    /// takes part, else 3 in the player's phase and 4 in the computer's.
+    /// </summary>
     void BattleMusic(BattleUnit actor, BattleUnit other)
     {
         bool boss = (actor.Leader && actor.Side == Side.Enemy) || (other.Leader && other.Side == Side.Enemy);
-        PlayMapBgm?.Invoke(boss ? 5 : actor.Side == Side.Ally ? 3 : 4);
+        PlayMapBgm?.Invoke(boss ? 5 : _s.Field.AllyPhase ? 3 : 4);
     }
 
     void RunScenes()
@@ -168,12 +171,13 @@ public sealed class BattleController
         // skipping (modern): cancel / right click, or fast-forward when that option is on
         if (i.Cancel || i.RightClick || (i.FastForward && FastForwardSkipsScenes)) _scene!.Skip();
         _scene!.Update(i.FastForward, i.Confirm || i.Click);
-        // the scene's animation runs at 33 ms a tick (slowed by GAME.DAT [4]), and the map stays at 33 ms afterwards
-        // (FUN_00419574 → FUN_00408530): only a new map or camp brings back 30 ms
-        if (_scene.Animating) GameClock.SetTick(33 + 33 * _db.SceneSlowdown / 100);
+        // the steps set the palette's brightness (FUN_00419574); the tick is 33 ms, slowed by GAME.DAT [4] while an
+        // animation plays, and the map stays at 33 ms afterwards (FUN_00408530): only a new map or camp brings back 30 ms
+        if (_scene.Brightness is int b) _fx.SetBrightness(b);
+        GameClock.SetTick(_scene.Animating ? 33 + 33 * _db.SceneSlowdown / 100 : 33);
         if (!_scene.Done) return;
-        GameClock.SetTick(33);
         _scene = null;
+        _fx.FadeIn(0, 20);   // the scene leaves the palette black with the fade-in flag: the map comes back 20 % a tick
         if (_scenes.Count > 0) { RunScenes(); return; }
         PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);   // back to the phase music
         NextPopup();
@@ -1177,12 +1181,13 @@ public sealed class BattleController
         RunScenes();
     }
 
+    bool HasDeathMessage(BattleUnit u) => u.Unit >= 0 && u.Unit < _db.Units.Length && _db.Units[u.Unit].DeathMessage.Length > 0;
+
     /// <summary>
-    /// Spell scene (T22 heal and spell recordings): one scene per cast. First the caster alone on its side plays
-    /// its class cast animation (magic-to-ally / magic-to-enemy) and goes straight into the wipe; then each
-    /// affected unit alone on its side in turn: pause, the spell animation (ANIME 80 + Magic.Animation),
-    /// flash, number, drain, and a death message if it dies. Pauses: cast 11 ticks (heal) / 7 (attack spell);
-    /// each target 10, hold 10.
+    /// A spell's scene (FUN_0041c8c0): the caster alone plays its class's cast animation — magic-to-enemy for damage and
+    /// status spells, magic-to-ally for the rest (FUN_0041b6ec) — then each unit it lands on alone in turn plays the spell's
+    /// animation (ANIME 80 + its animation, FUN_0041ba0c): damage and recovery with a number and the bar (the damage as
+    /// rolled, a recovery as far as the HP goes), other spells without.
     /// </summary>
     void QueueSpellScenes(BattleUnit caster, Magic m, ExchangeResult r, Dictionary<BattleUnit, int> before)
     {
@@ -1190,21 +1195,34 @@ public sealed class BattleController
         bool harmful = m.Type is 0 or 1;
         var cast = _db.Animations[Math.Clamp(harmful ? cls.AnimMagicEnemy : cls.AnimMagicAlly, 0, _db.Animations.Length - 1)];
         var spell = _db.Animations[Math.Clamp(m.AnimeIndex, 0, _db.Animations.Length - 1)];
-        var first = r.Effects[0].Target;
+        string spellSheet = BattleScene.SheetFor(_db, _s.Field, caster, spell);
         var steps = new List<BattleScene.Step>
         {
-            new(caster, first, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true, 0, false,
-                Caption: "", Solo: caster, Pause: harmful ? 7 : 11, Hold: 0),
+            new(BattleScene.StepKind.Cast, caster, null, cast, BattleScene.SheetFor(_db, _s.Field, caster, cast), true) { MpAfter = caster.Mp },
         };
         foreach (var e in r.Effects)
         {
-            bool numeric = e.Kind is EffectKind.Damage or EffectKind.Heal or EffectKind.Miss;
-            steps.Add(new(caster, e.Target, spell, BattleScene.SheetFor(_db, _s.Field, caster, spell),
-                e.Kind != EffectKind.Miss && e.Kind != EffectKind.Resisted, e.Amount, e.Kind == EffectKind.Heal,
-                Caption: numeric ? null : "", Solo: e.Target, Pause: 10, Hold: 10));
+            var t = e.Target;
+            int from = before.TryGetValue(t, out var h) ? h : t.Hp;
+            var step = new BattleScene.Step(BattleScene.StepKind.Spell, null, t, spell, spellSheet, e.Kind is not (EffectKind.Miss or EffectKind.Resisted));
+            steps.Add(e.Kind switch
+            {
+                EffectKind.Damage => step with
+                {
+                    Numbered = true, Amount = e.Amount, Moved = Math.Min(e.Amount, from), HpAfter = from - Math.Min(e.Amount, from),
+                    DeathMessage = e.Amount >= from && HasDeathMessage(t),
+                },
+                EffectKind.Miss => step with { Numbered = true, HpAfter = from },
+                EffectKind.Heal => step with
+                {
+                    Numbered = true, Recovery = true, Amount = Math.Min(e.Amount, t.MaxHp - from), Moved = Math.Min(e.Amount, t.MaxHp - from),
+                    HpAfter = from + Math.Min(e.Amount, t.MaxHp - from),
+                },
+                _ => step,
+            });
         }
-        _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, caster, first, steps, before));
-        BattleMusic(caster, first);
+        _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before));
+        BattleMusic(caster, r.Effects[0].Target);
     }
 
     /// <summary>
@@ -1476,12 +1494,22 @@ public sealed class BattleController
         if (Quiet) { }
         else if (ShowScenes)
         {
-            var steps = r.Strikes.Select(st =>
+            // a strike a step (FUN_0041b4b0 → FUN_0041a9c4): the damage as rolled for the number, the bar moving as far
+            // as the HP left
+            var hp = new Dictionary<BattleUnit, int>(before);
+            var steps = new List<BattleScene.Step>();
+            foreach (var st in r.Strikes)
             {
                 var a = BattleScene.WeaponAnim(_db, _s.Field, st.Attacker);
-                return new BattleScene.Step(st.Attacker, st.Target, a, BattleScene.SheetFor(_db, _s.Field, st.Attacker, a), st.Hit, st.Damage, false);
-            }).ToList();
-            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, atk, def, steps, before));
+                int from = hp.TryGetValue(st.Target, out var h) ? h : st.Target.Hp, moved = st.Hit ? Math.Min(st.Damage, from) : 0;
+                hp[st.Target] = from - moved;
+                steps.Add(new(BattleScene.StepKind.Strike, st.Attacker, st.Target, a, BattleScene.SheetFor(_db, _s.Field, st.Attacker, a), st.Hit)
+                {
+                    Critical = st.Hit && st.Critical, Numbered = true, Amount = st.Hit ? st.Damage : 0, Moved = moved, HpAfter = from - moved,
+                    DeathMessage = from - moved == 0 && HasDeathMessage(st.Target),
+                });
+            }
+            _scenes.Enqueue(new BattleScene(_db, _tex, _ui, _s.Field, steps, before));
             BattleMusic(atk, def);
         }
         else

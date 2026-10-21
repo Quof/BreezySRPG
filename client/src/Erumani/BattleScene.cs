@@ -7,83 +7,105 @@ using Srpg95.Rules;
 namespace Erumani;
 
 /// <summary>
-/// The full-screen battle scene played for each attack or spell (FORMAT_NOTES §7, §15, T22).
+/// The full-screen battle scene for an attack or a spell (FUN_00419574, its steps built by FUN_0041a9c4, FUN_0041b6ec and
+/// FUN_0041ba0c). Data: ANIME.DAT frames hold up to 4 layers of (x, y, cell), the cell's centre, of 192 × 192 cells in a
+/// strip bitmap — CA{animation + 1:00}_{class graphic:000}.BMP for weapon and cast animations, MAGA_{animation −
+/// 79:000}.BMP for spells. The computer's units stand on the left, everyone else's on the right; animations are
+/// authored with the actor on the right (spells landing on the left) and mirrored about the stage's middle.
 ///
-/// Data (confirmed): ANIME.DAT frames hold up to 4 layers of (x, y, cell); cells are 192x192 tiles
-/// of a horizontal strip bitmap: CA{animation index + 1:00}_{class unit graphic:000}.BMP for weapon/cast
-/// animations (the same animation drawn with each class's sprite), MAGA_{index - 79:000}.BMP for spells
-/// (record 80+). Checked against every file name the game's classes and spells need.
-///
-/// Measured from a recording of the original (T22, 60 fps capture; the game updates at 30 Hz, so one
-/// "tick" here = 2 frames of ours):
-/// - Allies stand on the right, enemies on the left, whoever attacks. Animations are authored with the
-///   actor on the right facing left; an actor on the left plays them mirrored. One animation frame per tick.
-/// - Stage = BACK_nnn (640x320) at the top; two 320x160 info panels below (enemy red left, ally blue right).
-/// - Timeline: map darkens in 4 steps and holds; screen black; panels fade in (4 ticks); the stage wipes in
-///   left to right (5 ticks x 128 px); 10-tick pause; the animation; 15-tick hold. Between strikes the stage
-///   wipes out, stays black 12 ticks and wipes in again (panels stay). At the end the stage wipes out, the
-///   panels stay 13 ticks, and the map brightens back in 4 steps. A defeated unit's death message (UNIT.DAT)
-///   replaces the panels 30 ticks after the animation and waits for a click.
-/// - The target flickers as a white silhouette for flash_time frames centred on hit_frame; the damage number
-///   (SYSTEM.BMP purple digits, y 128, 24 px apart, centred on the target) appears at hit_frame, drops onto
-///   the ground line (cell top y 268) and bounces once. The actor keeps its last frame after the animation.
+/// A scene is a list of steps — a strike (the attacker and its target), a cast (the caster alone) or a spell landing on
+/// one unit (that unit alone) — each run on a counter c from 0 to its length, a game tick each:
+/// - the palette's brightness 0 for c 0–1, then 50, 75, 100, and down 25 a tick over the last 4 ticks;
+/// - the background (BACK_nnn of the target's terrain, the caster's for a cast) and the units slide in from the acting
+///   side's end, 106 px a tick over the first 10 ticks, and out the other way over the last 15;
+/// - the animation runs from c 15, a frame a tick, then holds its last frame;
+/// - from 15 ticks after its hit frame a unit that's hit flashes white every other tick for the animation's flash time
+///   and, if damaged, shakes 8 px away every other pair of ticks; one missed sidesteps 4, 8, 8, 4 px;
+/// - from 19 ticks after it the damage (purple) or recovery (red) number stands at the unit's feet, bouncing for 11
+///   ticks, until 20 ticks before the end, and the HP bar moves linearly over amount × 37 / max HP ticks; a cast's TP
+///   drops at 16 ticks after;
+/// - a unit brought to 0 blinks out between 40 and 30 ticks before the end; its death message, if it has one, takes
+///   the panels' place for the last 80 ticks (the DOWN sound at 58 before the end). The scene never waits for a click.
+/// Lengths: a strike the animation + 45 ticks, a spell's damage or recovery + 35 — both plus the drain beyond 5 ticks,
+/// 25 more when the unit falls and 30 more for its death message — a cast + 20, any other spell + 25.
 /// </summary>
 public sealed class BattleScene
 {
     const int Cell = 192, StageWidth = 640, StageHeight = 320, TickFrames = 2;
 
-    /// <summary>
-    /// One animation to play: who acts, on whom, and what the rules decided. <paramref name="Solo"/> puts a
-    /// single unit on the stage, on its own side with only its panel: a spell plays as the caster alone, then
-    /// each target alone in turn (T22 heal and spell recordings). Pause / Hold are the ticks before and after it.
-    /// </summary>
-    public sealed record Step(BattleUnit Actor, BattleUnit Target, Animation Anim, string Sheet,
-        bool Hit, int Amount, bool Recovery, string? Caption = null, BattleUnit? Solo = null, int Pause = 10, int Hold = 15);
+    public enum StepKind { Strike, Cast, Spell }
 
-    enum Phase { DimMap, PanelsIn, WipeIn, Pause, Anim, Hold, WipeOut, Gap, Death, Vanish, EndHold, MapIn, Done }
+    /// <summary>
+    /// One step. <paramref name="Actor"/> acts (none for a spell's landing), <paramref name="Target"/> is acted on (none
+    /// for a cast); <paramref name="Anim"/> and <paramref name="Sheet"/> are the actor's animation, or the spell's.
+    /// </summary>
+    public sealed record Step(StepKind Kind, BattleUnit? Actor, BattleUnit? Target, Animation Anim, string Sheet, bool Hit)
+    {
+        public bool Critical { get; init; }
+        /// <summary>A number and an HP bar that moves (+0x611e): strikes, damage and recovery spells.</summary>
+        public bool Numbered { get; init; }
+        public bool Recovery { get; init; }
+        /// <summary>The number shown (+0x6134): the damage as rolled, the HP actually restored.</summary>
+        public int Amount { get; init; }
+        /// <summary>How far the HP bar moves (+0x6138): the damage up to the HP left, or the recovery.</summary>
+        public int Moved { get; init; }
+        /// <summary>The target's HP afterwards (+0x6140); 0 for a spell without a number (so the exe's DOWN sound plays for those too).</summary>
+        public int HpAfter { get; init; }
+        /// <summary>A cast's TP afterwards (+0x6144).</summary>
+        public int MpAfter { get; init; }
+        public bool DeathMessage { get; init; }
+
+        public int Drain => Target is { MaxHp: > 0 } t ? Moved * 37 / t.MaxHp : 0;
+        /// <summary>15 ticks after the hit frame (the flash, the shake, the TP); the number and the bar start 4 later.</summary>
+        public int HitTick => Anim.HitFrame + 15;
+
+        public int Length
+        {
+            get
+            {
+                int frames = Anim.FrameCount;
+                if (Kind == StepKind.Cast) return frames + 20;
+                if (Kind == StepKind.Spell && !Numbered) return frames + 25;
+                int len = frames + (Kind == StepKind.Strike ? 45 : 35);
+                if (Drain > 4) len += Drain - 5;
+                if (HpAfter == 0) len += 25 + (DeathMessage ? 30 : 0);
+                return len;
+            }
+        }
+
+        /// <summary>The stage's mirrored side flag of the exe (+0x60f0): the acting unit is the computer's (or, for a spell's landing, the target isn't).</summary>
+        public bool Flag => Kind == StepKind.Spell ? Target!.Side != Side.Enemy : Actor!.Side == Side.Enemy;
+    }
+
+    enum Phase { DimMap, Steps, Done }
 
     readonly Database _db;
     readonly Textures _tex;
     readonly Ui.Ui _ui;
     readonly Battlefield _field;
     readonly List<Step> _steps;
-    readonly Dictionary<BattleUnit, int> _hp = new();
-    /// <summary>TP shown before the caster's animation starts (the cost comes off when it begins, T22 heal).</summary>
-    readonly Dictionary<BattleUnit, int> _mp = new();
-    public void ShowMpBefore(BattleUnit u, int mp) => _mp[u] = mp;
-    readonly BattleUnit _right, _left;
-    readonly Texture2D? _back;
-    int _stepIndex = -1, _frame, _sub, _phaseTicks;
+    /// <summary>HP and TP the panels show, per unit, as of the current step's start.</summary>
+    readonly Dictionary<BattleUnit, int> _hp = new(), _mp = new();
+    int _stepIndex, _c, _sub, _phaseTicks;
     Phase _phase = Phase.DimMap;
-    (int Amount, bool Recovery, bool Miss, BattleUnit On, int Age)? _number;
-    BattleUnit? _dying;
-    /// <summary>Units that have blinked out after their death message (no longer drawn).</summary>
-    readonly HashSet<BattleUnit> _gone = new();
-    bool _actorFrozen;
 
     public Action<string>? PlaySound { get; set; }
     public bool Done => _phase == Phase.Done;
-    public string DebugPhase => $"{_phase}/{_phaseTicks} step={_stepIndex}";
-    /// <summary>A death message is up, waiting for a click.</summary>
-    public bool WaitingForClick => _phase == Phase.Death;
-    /// <summary>True while only the map (darkened) should show under the scene: before and after it.</summary>
-    public bool OverMap => _phase is Phase.DimMap or Phase.MapIn;
+    public string DebugPhase => $"{_phase}/{_phaseTicks} step={_stepIndex} c={_c} len={Current?.Length} frames={Current?.Anim.FrameCount} hit={Current?.Anim.HitFrame} drain={Current?.Drain}";
+    /// <summary>The scene runs on its own (FUN_00419574 reads no click).</summary>
+    public bool WaitingForClick => false;
+    /// <summary>True while only the map (darkened) should show under the scene, before it.</summary>
+    public bool OverMap => _phase == Phase.DimMap;
 
-    public BattleScene(Database db, Textures tex, Ui.Ui ui, Battlefield field, BattleUnit first, BattleUnit second,
-        IEnumerable<Step> steps, IReadOnlyDictionary<BattleUnit, int> hpBefore)
+    public BattleScene(Database db, Textures tex, Ui.Ui ui, Battlefield field, IEnumerable<Step> steps, IReadOnlyDictionary<BattleUnit, int> hpBefore)
     {
         (_db, _tex, _ui, _field) = (db, tex, ui, field);
-        // allies on the right, enemies on the left (T22); two allies (a heal): the actor on the right
-        (_right, _left) = first.Side == Side.Ally && second.Side != Side.Ally ? (first, second)
-            : second.Side == Side.Ally && first.Side != Side.Ally ? (second, first)
-            : (first, second);
         _steps = steps.ToList();
         foreach (var (u, hp) in hpBefore) _hp[u] = hp;
-        // background: the defender's terrain (provisional)
-        var defender = _steps.Count > 0 ? _steps[0].Target : second;
-        int back = field.TerrainAt(defender.X, defender.Y).BattleBackground;
-        _back = back > 0 ? tex.Get($"BACK_{back:000}.BMP", transparent: false) : null;
     }
+
+    /// <summary>TP shown before the caster's step (the cost comes off at its hit, FUN_00419574).</summary>
+    public void ShowMpBefore(BattleUnit u, int mp) => _mp[u] = mp;
 
     // ---------------- building steps ----------------
 
@@ -99,166 +121,102 @@ public sealed class BattleScene
     public static string SheetFor(Database db, Battlefield f, BattleUnit u, Animation a) =>
         a.IsSpell ? $"MAGA_{a.Index - 79:000}.BMP" : $"CA{a.Index + 1:00}_{f.Class(u).UnitGraphic:000}.BMP";
 
-    Step? Current => _stepIndex >= 0 && _stepIndex < _steps.Count ? _steps[_stepIndex] : null;
-
-    /// <summary>The step whose units are on stage now (the next one while the stage is wiping in or black).</summary>
-    Step? Shown => _phase is Phase.DimMap or Phase.PanelsIn or Phase.WipeIn or Phase.Gap
-        ? (_stepIndex + 1 < _steps.Count ? _steps[_stepIndex + 1] : _steps.LastOrDefault())
-        : Current ?? _steps.LastOrDefault();
-
-    // a solo unit stands on its own side (allies right, enemies left), the other half empty (T22 spell recordings)
-    BattleUnit? StageRight => Shown?.Solo is { } s ? (s.Side == Side.Ally ? s : null) : _right;
-    BattleUnit? StageLeft => Shown?.Solo is { } s ? (s.Side == Side.Ally ? null : s) : _left;
+    Step? Current => _phase == Phase.Steps && _stepIndex < _steps.Count ? _steps[_stepIndex] : null;
 
     // ---------------- update ----------------
 
     public void Update(bool fastForward, bool confirm)
     {
-        if (_phase == Phase.Death)
-        {
-            if (confirm) Go(Phase.Vanish);
-            return;
-        }
         int frames = fastForward ? 4 : 1;
-        for (int i = 0; i < frames && _phase != Phase.Done && _phase != Phase.Death; i++)
+        for (int i = 0; i < frames && _phase != Phase.Done; i++)
             if (++_sub >= TickFrames) { _sub = 0; Tick(); }
     }
 
-    void Go(Phase p) { _phase = p; _phaseTicks = 0; }
-
-    /// <summary>Skip to the end (the map brightens back in). Results were already applied by the rules.</summary>
+    /// <summary>Skip to the end (modern). Results were already applied by the rules.</summary>
     public void Skip()
     {
-        if (_phase is Phase.MapIn or Phase.Done) return;
+        foreach (var st in _steps.Skip(_stepIndex)) EndStep(st);
         _stepIndex = _steps.Count;
-        _number = null;
-        _dying = null;
-        Go(Phase.MapIn);
-    }
-
-    // Displayed HP drains toward the real value from the hit on: 1 HP per tick for weapons, 1 per 2 ticks for
-    // spells (two samples in the T22 recordings; approximate).
-    readonly Dictionary<BattleUnit, int> _shown = new();
-    int _drainTick;
-
-    void Drain()
-    {
-        bool slow = Current?.Anim.IsSpell == true;
-        if (slow && ++_drainTick % 2 != 0) return;
-        foreach (var (u, target) in _hp)
-        {
-            int shown = _shown.TryGetValue(u, out var s) ? s : target;
-            if (shown != target) _shown[u] = shown + Math.Sign(target - shown);
-        }
+        _phase = Phase.Done;
     }
 
     void Tick()
     {
         _phaseTicks++;
-        Drain();
-        if (_number is { } n) _number = n with { Age = n.Age + 1 };
         switch (_phase)
         {
-            case Phase.DimMap: if (_phaseTicks >= 15) Go(Phase.PanelsIn); break;   // 5 ticks, 4 dimming steps, then a hold
-            case Phase.PanelsIn: if (_phaseTicks >= 4) Go(Phase.WipeIn); break;
-            case Phase.WipeIn:
-                if (_phaseTicks >= 5)
-                {
-                    _stepIndex++;
-                    _frame = 0;
-                    _actorFrozen = false;
-                    Go(Phase.Pause);
-                }
+            // the map darkens (FUN_00410388, matched to the recordings): 5 ticks, 4 steps of 20 %, a hold
+            case Phase.DimMap:
+                if (_phaseTicks >= 15) { _phase = Phase.Steps; _stepIndex = 0; _c = 0; }
                 break;
-            case Phase.Pause: if (_phaseTicks >= (Current?.Pause ?? 10)) Go(Phase.Anim); break;
-            case Phase.Anim: AnimTick(); break;
-            case Phase.Hold:
-                if (_dying is not null && _phaseTicks >= 30) { Go(Phase.Death); Runtime.Sfx.Down(); break; }
-                if (_dying is null && _phaseTicks >= (Current?.Hold ?? 15)) Go(Phase.WipeOut);
+            case Phase.Steps:
+                if (Current is not { } st) { _phase = Phase.Done; break; }
+                StepTick(st);
                 break;
-            case Phase.WipeOut:
-                if (_phaseTicks >= 5)
-                {
-                    _number = null;
-                    _dying = null;   // after a death message the next target still follows (area spells)
-                    Go(_stepIndex + 1 < _steps.Count ? Phase.Gap : Phase.EndHold);
-                }
-                break;
-            // T22 death recording: after the click the defeated unit blinks (off/on each tick, 4 times), is gone, and
-            // the stage wipes out ~11 ticks later; the death message stays up meanwhile
-            case Phase.Vanish:
-                if (_phaseTicks == 8 && _dying is not null) _gone.Add(_dying);
-                if (_phaseTicks >= 19) Go(Phase.WipeOut);
-                break;
-            case Phase.Gap: if (_phaseTicks >= 14) Go(Phase.WipeIn); break;   // the panels already show the next step's units
-            case Phase.EndHold: if (_phaseTicks >= 13) Go(Phase.MapIn); break;
-            case Phase.MapIn: if (_phaseTicks >= 4) Go(Phase.Done); break;
         }
     }
 
-    void AnimTick()
+    void StepTick(Step st)
     {
-        if (Current is not { } st) { Go(Phase.Hold); return; }
-        var a = st.Anim;
-        if (_frame == 0) _mp.Remove(st.Actor);
-        if (st.Hit && _frame == a.HitSoundFrame && a.HitSound.Length > 0) PlaySound?.Invoke(a.HitSound);
-        if (!st.Hit && _frame == a.MissSoundFrame && a.MissSound.Length > 0) PlaySound?.Invoke(a.MissSound);
-        if (_frame == a.HitFrame)
-        {
-            if (st.Hit)
-            {
-                _shown[st.Target] = Hp(st.Target);
-                _hp[st.Target] = st.Recovery
-                    ? Math.Min(st.Target.MaxHp, Hp(st.Target) + st.Amount)
-                    : Math.Max(0, Hp(st.Target) - st.Amount);
-                if (!st.Recovery && _hp[st.Target] == 0) _dying = st.Target;
-            }
-            if (st.Caption is null) _number = (st.Amount, st.Recovery, !st.Hit, st.Target, 0);
-        }
-        if (_frame + 1 >= Math.Max(1, a.FrameCount)) { _actorFrozen = true; Go(Phase.Hold); return; }
-        _frame++;
+        _c++;
+        if (st.Hit && _c == st.Anim.HitSoundFrame + 15 && st.Anim.HitSound.Length > 0) PlaySound?.Invoke(st.Anim.HitSound);
+        if (!st.Hit && _c == st.Anim.MissSoundFrame + 15 && st.Anim.MissSound.Length > 0) PlaySound?.Invoke(st.Anim.MissSound);
+        if (_c == st.Length - 58 && st.Kind != StepKind.Cast && st.HpAfter == 0) Sfx.Down();
+        if (_c < st.Length) return;
+        EndStep(st);
+        _stepIndex++;
+        _c = 0;
+        if (_stepIndex >= _steps.Count) _phase = Phase.Done;
     }
 
-    int Hp(BattleUnit u) => _hp.TryGetValue(u, out var h) ? h : u.Hp;
-
-    /// <summary>White-silhouette flicker: flash_time frames centred on hit_frame, with a normal frame now and then.</summary>
-    bool Flashing(BattleUnit u)
+    /// <summary>A step's end: the HP and TP it left.</summary>
+    void EndStep(Step st)
     {
-        if (_phase != Phase.Anim || Current is not { } st || st.Target != u || !st.Hit || st.Caption is not null && !st.Recovery) return false;
-        int start = st.Anim.HitFrame - st.Anim.FlashTime / 2, k = _frame - start;
-        return k >= 0 && k < Math.Max(1, st.Anim.FlashTime) && !(k % 3 == 1 && k < 8);
+        if (st.Numbered && st.Target is { } t) _hp[t] = st.HpAfter;
+        if (st.Kind == StepKind.Cast && st.Actor is { } a) _mp[a] = st.MpAfter;
     }
 
-    /// <summary>
-    /// Hit knock-back (the "stutter"): while the flash lasts, the target is pushed away from the attacker by
-    /// 0 px on the first tick, 11 px on the second, then 8 px until the flash ends. Not in any data file (it is
-    /// engine behaviour); the offsets are read frame by frame off the T22 recording, both directions. Heals don't do it.
-    /// </summary>
-    int Knockback(BattleUnit u)
+    /// <summary>The HP the panel and the dying blink go by: the bar moving after the hit (FUN_00419574).</summary>
+    int ShownHp(BattleUnit u)
     {
-        if (_phase != Phase.Anim || Current is not { } st || st.Target != u || !st.Hit || st.Recovery) return 0;
-        int start = st.Anim.HitFrame - st.Anim.FlashTime / 2, k = _frame - start;
-        if (k <= 0 || k >= Math.Max(1, st.Anim.FlashTime)) return 0;
-        int away = u == StageRight ? 1 : -1;
-        return away * (k == 1 ? 11 : 8);
+        int start = _hp.TryGetValue(u, out var h) ? h : u.Hp;
+        if (Current is not { Numbered: true } st || st.Target != u || _c <= st.HitTick + 4) return start;
+        int remaining = st.HitTick + 4 + st.Drain - _c;
+        if (remaining < 0 || st.Drain <= 0) return st.HpAfter;
+        return st.Recovery ? st.HpAfter - st.Moved * remaining / st.Drain : st.HpAfter + st.Moved * remaining / st.Drain;
+    }
+
+    int ShownMp(BattleUnit u)
+    {
+        int start = _mp.TryGetValue(u, out var m) ? m : u.Mp;
+        return Current is { Kind: StepKind.Cast } st && st.Actor == u && _c > st.HitTick ? st.MpAfter : start;
     }
 
     // ---------------- drawing ----------------
 
-    /// <summary>
-    /// Darkening of the map before and after the scene, the palette's brightness (FUN_00410388, FUN_0041093c): 5 ticks
-    /// after the attack is chosen it drops 20 % a tick to 20 % and stays there while the scene loads; afterwards the
-    /// map comes back from 20 % in 20 % steps.
-    /// </summary>
-    public float MapDim => _phase switch
-    {
-        Phase.DimMap => _phaseTicks < 5 ? 0 : Math.Min(4, _phaseTicks - 4) * 0.2f,
-        Phase.MapIn => Math.Max(0, 4 - _phaseTicks) * 0.2f,
-        _ => 1f,
-    };
+    /// <summary>The map's darkening before the scene (an overlay over the map).</summary>
+    public float MapDim => _phase == Phase.DimMap ? (_phaseTicks < 5 ? 0 : Math.Min(4, _phaseTicks - 4) * 0.2f) : 0f;
 
-    /// <summary>A step's animation is playing: the exe's tick is 33 ms (slowed by GAME.DAT [4]) from here on.</summary>
-    public bool Animating => _phase == Phase.Anim;
+    /// <summary>The step's animation is playing: the tick is 33 ms slowed by GAME.DAT [4] from c 15 to 15 before the end.</summary>
+    public bool Animating => Current is { } st && _c >= 15 && _c < st.Length - 15;
+
+    // the critical hit's brightness for 10 ticks from its hit (DAT_0043341c; the exe indexes it by the counter alone,
+    // reading other stack memory unless the hit frame is 24–33, so this is the evident intent)
+    static readonly int[] CriticalFlash = { 140, 180, 80, 160, 100, 180, 60, 90, 180, 200 };
+
+    /// <summary>The palette's brightness while a step runs (FUN_00419574), null before the steps.</summary>
+    public int? Brightness
+    {
+        get
+        {
+            if (_phase == Phase.Done) return 0;
+            if (Current is not { } st) return null;
+            int len = st.Length;
+            int b = _c < 2 ? 0 : _c < 5 ? _c * 25 : _c < len - 4 ? 100 : Math.Max(0, (len - _c) * 25);
+            if (st.Critical && _c >= st.HitTick && _c < st.HitTick + 10) b = CriticalFlash[_c - st.HitTick];
+            return b;
+        }
+    }
 
     public void Draw(SpriteBatch sb)
     {
@@ -268,85 +226,60 @@ public sealed class BattleScene
             return;
         }
         _ui.Fill(sb, new Rectangle(0, 0, 640, 480), Color.Black);
-        // stage, revealed / hidden by the left-to-right wipe
-        int visible = _phase switch
+        if (Current is not { } st) return;
+        int len = st.Length;
+        // the slide: in from the acting side's end over 10 ticks, out the other way over the last 15
+        int dir = st.Flag ? 1 : -1;
+        int slide = _c < 10 ? dir * (10 - _c) * 106 : _c >= len - 15 ? -dir * (_c - (len - 15)) * 106 : 0;
+        DrawStage(sb, st, slide);
+        if (st.DeathMessage && _c > len - 80 && st.Target is { } dying) DrawDeathMessage(sb, dying);
+        else DrawPanels(sb, st);
+    }
+
+    void DrawStage(SpriteBatch sb, Step st, int slide)
+    {
+        var ground = st.Kind == StepKind.Cast ? st.Actor! : st.Target!;
+        int back = _field.TerrainAt(ground.X, ground.Y).BattleBackground;
+        if (back > 0 && _tex.Get($"BACK_{back:000}.BMP", transparent: false) is { } bg) sb.Draw(bg, new Vector2(slide, 0), Color.White);
+        if (st.Kind != StepKind.Cast && st.Target is { } t) DrawTarget(sb, st, t, slide);
+        DrawActor(sb, st, slide);
+        DrawNumber(sb, st, slide);
+    }
+
+    /// <summary>The unit acted on: its own animation's first frame, shaken, flashing or blinking out (FUN_00419574).</summary>
+    void DrawTarget(SpriteBatch sb, Step st, BattleUnit t, int slide)
+    {
+        bool left = !st.Flag;   // the exe mirrors the target when its flag is clear
+        int away = left ? -1 : 1, k = _c - st.HitTick, shift = 0;
+        if (st.Numbered && !st.Recovery)
         {
-            Phase.DimMap or Phase.PanelsIn or Phase.Gap or Phase.EndHold => 0,
-            Phase.WipeIn => Math.Min(StageWidth, (_phaseTicks + 1) * 128),
-            Phase.WipeOut => -Math.Min(StageWidth, (_phaseTicks + 1) * 128),   // negative: black from the left
-            _ => StageWidth,
-        };
-        if (visible != 0) DrawStage(sb, visible);
-        if (_phase is Phase.Death or Phase.Vanish && _dying is not null) DrawDeathMessage(sb, _dying);
-        else
-        {
-            float alpha = _phase == Phase.PanelsIn ? (_phaseTicks + 1) / 4f : 1f;
-            DrawPanels(sb, alpha);
+            if (!st.Hit) shift = k is 0 or 3 ? 4 : k is 1 or 2 ? 8 : 0;
+            else if (k >= 0 && k < st.Anim.FlashTime && (_c & 3) < 2) shift = 8;
         }
-    }
-
-    void DrawStage(SpriteBatch sb, int visible)
-    {
-        var clip = visible > 0 ? new Rectangle(0, 0, visible, StageHeight) : new Rectangle(-visible, 0, StageWidth + visible, StageHeight);
-        if (clip.Width <= 0) return;
-        var old = sb.GraphicsDevice.ScissorRectangle;
-        // the scene is drawn to the 640x480 virtual screen, so a scissor in its coordinates is exact
-        sb.End();
-        sb.Begin(samplerState: SamplerState.PointClamp, rasterizerState: Scissor);
-        sb.GraphicsDevice.ScissorRectangle = clip;
-        if (Background() is { } back) sb.Draw(back, Vector2.Zero, Color.White);
-        var st = Current;
-        bool showActor = st is not null && (_phase == Phase.Anim || (_actorFrozen && _phase is Phase.Hold or Phase.Death or Phase.Vanish or Phase.WipeOut));
-        foreach (var (u, right) in new[] { (StageRight, true), (StageLeft, false) })
-        {
-            if (u is null || _gone.Contains(u)) continue;
-            if (_phase == Phase.Vanish && u == _dying && _phaseTicks % 2 == 0) continue;   // blinking out
-            bool inAnim = showActor && st!.Actor == u && !st.Anim.IsSpell;
-            if (!inAnim) DrawIdle(sb, u, right);
-        }
-        if (showActor) DrawFrame(sb, st!);
-        DrawNumber(sb);
-        sb.End();
-        sb.GraphicsDevice.ScissorRectangle = old;
-        sb.Begin(samplerState: SamplerState.PointClamp);
-    }
-
-    /// <summary>BACK_nnn of the terrain under the unit being acted on (confirmed by the user, T22).</summary>
-    Texture2D? Background()
-    {
-        var target = Shown?.Target ?? _left;
-        int back = _field.TerrainAt(target.X, target.Y).BattleBackground;
-        return back > 0 ? _tex.Get($"BACK_{back:000}.BMP", transparent: false) : _back;
-    }
-
-    static readonly RasterizerState Scissor = new() { ScissorTestEnable = true, CullMode = CullMode.None };
-
-    void DrawIdle(SpriteBatch sb, BattleUnit u, bool right)
-    {
-        var a = WeaponAnim(_db, _field, u);
-        string name = SheetFor(_db, _field, u, a);
-        var sheet = Flashing(u) ? _tex.Silhouette(name) : _tex.Get(name);
-        if (sheet is null) return;
+        if (ShownHp(t) == 0 && (_c > st.Length - 30 || (_c > st.Length - 40 && _c % 2 == 0))) return;
+        bool flash = st.Hit && k >= 0 && k < st.Anim.FlashTime && _c % 2 == 0;
+        var a = WeaponAnim(_db, _field, t);
+        string name = SheetFor(_db, _field, t, a);
+        var sheet = flash ? _tex.Silhouette(name) : _tex.Get(name);
+        if (sheet is null || a.Frames.Length == 0) return;
         foreach (var l in a.Frames[0])
         {
             if (l.Cell < 0) continue;
-            // frame 0 of a weapon animation is the actor standing on the right; mirror it for the left side
-            DrawCell(sb, sheet, l.Cell, (right ? l.X : StageWidth - l.X) + Knockback(u), l.Y, flip: !right);
-            break;
+            DrawCell(sb, sheet, l.Cell, (left ? StageWidth - l.X : l.X) + away * shift + slide, l.Y, flip: left);
         }
     }
 
-    void DrawFrame(SpriteBatch sb, Step st)
+    /// <summary>The actor's animation (or the spell's), from c 15 a frame a tick, then its last frame.</summary>
+    void DrawActor(SpriteBatch sb, Step st, int slide)
     {
         var sheet = _tex.Get(st.Sheet);
-        int f = Math.Min(_frame, st.Anim.Frames.Length - 1);
-        if (sheet is null) return;
-        // weapon/cast animations: actor authored on the right; spells: authored landing on the left
-        bool mirror = st.Anim.IsSpell ? st.Target == StageRight : st.Actor == StageLeft;
+        if (sheet is null || st.Anim.Frames.Length == 0) return;
+        int f = Math.Clamp(Math.Min(st.Anim.FrameCount - 1, _c - 15), 0, st.Anim.Frames.Length - 1);
+        bool mirror = st.Flag;   // the exe mirrors the actor's (or the spell's) animation when the flag is set
         foreach (var l in st.Anim.Frames[f])
         {
             if (l.Cell < 0) continue;
-            DrawCell(sb, sheet, l.Cell, mirror ? StageWidth - l.X : l.X, l.Y, flip: mirror);
+            DrawCell(sb, sheet, l.Cell, (mirror ? StageWidth - l.X : l.X) + slide, l.Y, flip: mirror);
         }
     }
 
@@ -363,40 +296,52 @@ public sealed class BattleScene
             0, Vector2.Zero, 1, flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0);
     }
 
-    // bounce of the damage number per tick, relative to resting on the ground line (T22)
-    static readonly int[] Bounce = { -72, -72, -40, -16, 0, -8, -20, -30, -30, -20, -8, 0 };
+    // the number's bounce for its first 11 ticks, px up from its resting place (DAT_00433444)
+    static readonly int[] Bounce = { 72, 60, 40, 16, 0, 8, 20, 30, 30, 20, 8 };
 
-    /// <summary>SYSTEM.BMP digits: 24x32 cells, digit k at x 24k; purple y 128 = damage (T22), red y 160 = recovery (guess).</summary>
-    void DrawNumber(SpriteBatch sb)
+    /// <summary>
+    /// The number (FUN_00419574): SYSTEM.BMP's 24 × 32 digits, purple at y 128 or red at y 160 for recovery, two at most —
+    /// the ones' at the x of the unit's first layer (mirrored on the left), the tens' 24 px before it — 64 px below that
+    /// layer's centre but no lower than y 288, bouncing for 11 ticks, from 19 ticks after the hit to 20 before the end.
+    /// </summary>
+    void DrawNumber(SpriteBatch sb, Step st, int slide)
     {
-        if (_number is not { } n) return;
-        // centre measured once per side: 159 on the left (T22 attack), 511 on the right (T22 heal)
-        int cx = n.On == StageRight ? 511 : 160;
-        int y = 268 + Bounce[Math.Min(n.Age, Bounce.Length - 1)];
+        if (!st.Numbered || st.Target is not { } t || _c < st.HitTick + 4 || _c > st.Length - 20) return;
+        var a = WeaponAnim(_db, _field, t);
+        int x = 0x70, y = 0xd0;
+        if (a.Frames.Length > 0 && a.Frames[0].FirstOrDefault(l => l.Cell >= 0) is { Cell: >= 0 } layer) (x, y) = (layer.X, layer.Y);
+        if (!st.Flag) x = StageWidth - x;
+        y = Math.Min(y + 64, 288);
+        int k = _c - (st.HitTick + 4);
+        if (k < Bounce.Length) y -= Bounce[k];
         var sys = _tex.Get("SYSTEM.BMP");
         if (sys is null) return;
-        string s = n.Miss ? "0" : n.Amount.ToString();   // a miss shows as a purple 0 (T22 recording)
-        int row = n.Recovery ? 160 : 128;
-        int x = cx - s.Length * 12;
-        foreach (char c in s)
-        {
-            sb.Draw(sys, new Vector2(x, y), new Rectangle((c - '0') * 24, row, 24, 32), Color.White);
-            x += 24;
-        }
+        int row = st.Recovery ? 160 : 128, n = Math.Clamp(st.Amount, 0, 99);
+        sb.Draw(sys, new Vector2(x + slide, y), new Rectangle(n % 10 * 24, row, 24, 32), Color.White);
+        if (n > 9) sb.Draw(sys, new Vector2(x + slide - 24, y), new Rectangle(n / 10 * 24, row, 24, 32), Color.White);
     }
 
     /// <summary>
-    /// The info panels (FUN_0041d214 → FUN_0041c960): 320 × 160 at (0,320) and (320,320) in the unit's side's colour —
-    /// blue for the player's, red for the computer's, yellow for neutral ones — text in its light swatch (GDI positions):
-    /// the name, 16 px bold, at (12,8) over an etched rule at y 28; ＨＰ at (12,32) and 「%2d／%2d」 at 272 over its bar at
-    /// y 48; ＴＰ at (12,72) and its numbers over the bar at y 88; then 攻撃力 物理防御 特殊補正値 / 攻撃精度 特殊防御
-    /// 地形効果 at x 12, 118, 224 on y 116 / 132, each 「%4d」 at 60 px further on.
+    /// The info panels (FUN_0041d214 → FUN_0041c960): 320 × 160 at (0,320) and (320,320) — the step's units by their
+    /// side, black where a cast or a spell's landing has nobody — in the unit's side's colour (blue for the player's,
+    /// red for the computer's, yellow for neutral ones), text in its light swatch (GDI positions): the name, 16 px bold,
+    /// at (12,8) over an etched rule at y 28; ＨＰ at (12,32) and 「%2d／%2d」 at 272 over its bar at y 48; ＴＰ at (12,72)
+    /// and its numbers over the bar at y 88; then 攻撃力 物理防御 特殊補正値 / 攻撃精度 特殊防御 地形効果 at x 12, 118, 224 on
+    /// y 116 / 132, each 「%4d」 60 px further on.
     /// </summary>
-    void DrawPanels(SpriteBatch sb, float alpha)
+    void DrawPanels(SpriteBatch sb, Step st)
     {
-        foreach (var (unit, r) in new[] { (StageLeft, new Rectangle(0, 320, 320, 160)), (StageRight, new Rectangle(320, 320, 320, 160)) })
+        BattleUnit? right = null, leftUnit = null;
+        void Put(BattleUnit? u, bool onLeft) { if (onLeft) leftUnit = u; else right = u; }
+        switch (st.Kind)
         {
-            if (unit is not { } u) continue;
+            case StepKind.Strike: Put(st.Actor, st.Flag); Put(st.Target, !st.Flag); break;
+            case StepKind.Cast: Put(st.Actor, st.Flag); break;
+            default: Put(st.Target, !st.Flag); break;
+        }
+        foreach (var (unit, r) in new[] { (leftUnit, new Rectangle(0, 320, 320, 160)), (right, new Rectangle(320, 320, 320, 160)) })
+        {
+            if (unit is not { } u) continue;   // nobody: the black it's cleared to
             var color = u.Side switch { Side.Neutral => Ui.Ui.PanelColor.Yellow, Side.Enemy => Ui.Ui.PanelColor.Red, _ => Ui.Ui.PanelColor.Blue };
             _ui.Panel(sb, r, color);
             var (light, dark) = Ui.Ui.EdgeColors(color);
@@ -406,11 +351,10 @@ public sealed class BattleScene
             if (_ui.NameText.Get(u.Name) is { } name) sb.Draw(name, new Vector2(r.X + 12, r.Y + 8), text);
             _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 28, 296, 1), dark);
             _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 29, 296, 1), light);
-            int hp = Math.Max(0, _shown.TryGetValue(u, out var shownHp) ? shownHp : Hp(u));
+            int hp = Math.Max(0, ShownHp(u)), mp = ShownMp(u);
             T(_db.Words[2], 12, 32);
             T($"{hp,2}／{u.MaxHp,2}", 272, 32);
             Bar(sb, r.X + 12, r.Y + 48, hp, u.MaxHp, 0, light, dark);
-            int mp = _mp.TryGetValue(u, out var m0) ? m0 : u.Mp;
             T(_db.Words[3], 12, 72);
             T($"{mp,2}／{u.MaxMp,2}", 272, 72);
             Bar(sb, r.X + 12, r.Y + 88, mp, u.MaxMp, 16, light, dark);
@@ -429,7 +373,6 @@ public sealed class BattleScene
                     T($"{stats[row, col].Value,4}", x + 60, y);
                 }
         }
-        if (alpha < 1) _ui.Fill(sb, new Rectangle(0, 320, 640, 160), Color.Black * (1 - alpha));
     }
 
     /// <summary>
