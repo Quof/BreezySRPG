@@ -159,6 +159,7 @@ public sealed class OptionsScreen
         Choice(T("Fast-forward key", "早送りキー"), () => new[] { T("Hold", "押している間"), T("Toggle", "切り替え") },
             () => (int)_s.FastForwardMode, i => _s.FastForwardMode = (FastForwardMode)i),
         Toggle(T("Hold left click to fast-forward", "左クリック長押しで早送り"), () => _s.FastForwardMouse, v => _s.FastForwardMouse = v),
+        Toggle(T("Scroll with the pointer at the edge", "画面端にカーソルでスクロール"), () => _s.EdgeScrollHover, v => _s.EdgeScrollHover = v),
         Choice(T("Fast-forward speed", "早送り速度"), () => Speeds.Select(n => $"×{n}").ToArray(),
             () => Math.Max(0, Array.IndexOf(Speeds, _s.FastForwardSpeed)), i => _s.FastForwardSpeed = Speeds[i]),
         Toggle(T("Fast-forward skips battles", "早送り中は戦闘をスキップ"), () => _s.FastForwardSkipsScenes, v => _s.FastForwardSkipsScenes = v),

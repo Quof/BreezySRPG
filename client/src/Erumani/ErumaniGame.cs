@@ -829,13 +829,14 @@ public sealed class ErumaniGame : Game
 
     /// <summary>
     /// FUN_0040dee0: in the player's phase, while the map waits for a unit, a target or an aim and the view isn't panning,
-    /// the left button held with the pointer on the frame scrolls the view that way.
+    /// the left button held with the pointer on the frame scrolls the view that way. With the "scroll with the pointer at
+    /// the edge" option (modern) the pointer alone does, at the same times only.
     /// </summary>
     void EdgeScroll(MouseState m, bool mouseHere)
     {
         if (_session is null || _battle is null) return;
         int dx = 0, dy = 0;
-        if (_opts.Screenshot is null && mouseHere && m.LeftButton == ButtonState.Pressed && _battle.EdgeScrolls && !_session.Panning)
+        if (_opts.Screenshot is null && mouseHere && (m.LeftButton == ButtonState.Pressed || _settings.EdgeScrollHover) && _battle.EdgeScrolls && !_session.Panning)
         {
             dx = _mouseVirtual.X < ViewX ? -1 : _mouseVirtual.X >= ViewX + ViewWidth ? 1 : 0;
             dy = _mouseVirtual.Y < ViewY ? -1 : _mouseVirtual.Y >= ViewY + ViewHeight ? 1 : 0;
