@@ -159,6 +159,16 @@ public class ClientFeatureTests
     }
 
     [Fact]
+    public void A_condition_label_is_no_speaker()
+    {
+        Assert.Equal("ジュナ", Erumani.Ui.Ui.SplitSpeaker(new[] { "ジュナ：", "ぁゃ・・・・", "カミーラ：", "もうっ！！" }).Name);
+        var (name, text) = Erumani.Ui.Ui.SplitSpeaker(new[] { "勝利条件：", "　　敵の全滅", "敗北条件：", "　　チャコの死亡" });
+        Assert.Null(name);
+        Assert.Equal(4, text.Count);
+        Assert.Null(Erumani.Ui.Ui.SplitSpeaker(new[] { "ルビィが仲間になる条件：", "…" }).Name);
+    }
+
+    [Fact]
     public void Battle_saves_keep_the_camera()
     {
         var test = Folder("えるまに - Save testplay");

@@ -333,10 +333,14 @@ public sealed class Ui : IDisposable
         return r;
     }
 
-    /// <summary>A message's speaker — its first line when that is just 「name：」, as nearly every message in the game starts — and the rest.</summary>
+    /// <summary>
+    /// A message's speaker — its first line when that is just 「name：」, as nearly every message in the game starts — and
+    /// the rest. A label for a condition (勝利条件：, 敗北条件：, ボーナス条件：, 終了条件： …) is written the same way but
+    /// is no one speaking: in all five games every such first line with 条件 in it is one, so it stays in the text.
+    /// </summary>
     public static (string? Name, IReadOnlyList<string> Text) SplitSpeaker(IReadOnlyList<string> lines)
     {
-        if (lines.Count > 0 && lines[0].TrimEnd() is { Length: > 1 } first && (first.EndsWith('：') || first.EndsWith(':')))
+        if (lines.Count > 0 && lines[0].TrimEnd() is { Length: > 1 } first && (first.EndsWith('：') || first.EndsWith(':')) && !first.Contains("条件"))
             return (first[..^1].Trim(), lines.Skip(1).ToList());
         return (null, lines);
     }
