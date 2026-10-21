@@ -99,7 +99,8 @@ public static class StatusWindow
         var lines = ItemInfo.Lines(db.Items[held[slot]], db);
         if (lines.Count == 0) return;
         int w = lines.Max(ui.Measure12) + 24, h = 16 * lines.Count + 16;
-        var box = new Rectangle(r.X + 84, Math.Min(r.Y + 232 + 16 * slot + 20, 472 - h), w, h);
+        // from the top of the row below (covering that row's name whole, no sliver of it above the box)
+        var box = new Rectangle(r.X + 84, Math.Min(r.Y + 232 + 16 * slot + 16, 472 - h), w, h);
         // solid under the restyled skins' see-through windows, so the window's own lines don't show through
         if (Ui.Modern) ui.ModernBox(sb, box, new Color(8, 10, 18), 8, 1f, shadow: false);
         else if (Ui.Gilded) ui.Fill(sb, box, new Color(8, 10, 18));
