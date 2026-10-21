@@ -508,11 +508,11 @@ public sealed class ErumaniGame : Game
         bool cancel = _controls.Pressed(GameAction.Cancel) || rclick;
         if (_settings.FastForwardMode == FastForwardMode.Toggle && _controls.Pressed(GameAction.FastForward)) _ffToggle = !_ffToggle;
         bool ff = _settings.FastForwardMode == FastForwardMode.Hold ? _controls.Down(GameAction.FastForward) : _ffToggle;
-        // holding the left button (after 0.6 s, so ordinary clicks stay clicks) fast-forwards too
+        // holding the left button (after 0.4 s, so ordinary clicks stay clicks) fast-forwards too
         _leftHeld = mouseHere && m.LeftButton == ButtonState.Pressed ? _leftHeld + 1 : 0;
         // and the confirm key the same way (its press confirms; held, it fast-forwards)
         _confirmHeld = !alt && _controls.Down(GameAction.Confirm) ? _confirmHeld + 1 : 0;
-        if (_settings.FastForwardMouse && Math.Max(_leftHeld, _confirmHeld) > GameClock.Frames(600)) ff = true;
+        if (_settings.FastForwardMouse && Math.Max(_leftHeld, _confirmHeld) > GameClock.Frames(400)) ff = true;
         if (_scriptFf) ff = true;   // a scripted run's held fast-forward ("ffhold")
         // a story that began under a fast-forward stopped it (StoryBegins): it comes back only once every way of fast-
         // forwarding has been let go and is given again

@@ -164,10 +164,16 @@ public sealed class BattleController
     /// </summary>
     void BattleMusic(BattleUnit actor, BattleUnit? other)
     {
-        if (!CombatMusic) return;
+        // combat music off (modern): the phase's music from the fight's start, as the original has it once the fight is
+        // over — music an event put on (a reinforcement theme...) ends with the first fight as it does there, while the
+        // phase's own goes on without a restart
+        if (!CombatMusic) { PhaseMusic(); return; }
         static bool Boss(BattleUnit? u) => u is { Leader: true, Side: Side.Enemy };
         PlayMapBgm?.Invoke(Boss(actor) || Boss(other) ? 5 : _s.Field.AllyPhase ? 3 : 4);
     }
+
+    /// <summary>The phase's music, map BGM slot 1 or 2, what a fight's scenes leave playing (the same file goes on).</summary>
+    void PhaseMusic() => PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);
 
     /// <summary>The attack or spell being shown, for its EXP once its scenes are over.</summary>
     ExchangeResult? _fight;
@@ -212,7 +218,7 @@ public sealed class BattleController
         _scene = null;
         _fx.FadeIn(0, 20);   // the scene leaves the palette black with the fade-in flag: the map comes back 20 % a tick
         if (_scenes.Count > 0) { RunScenes(); return; }
-        if (CombatMusic) PlayMapBgm?.Invoke(_s.Field.AllyPhase ? 1 : 2);   // back to the phase music
+        PhaseMusic();   // back to the phase music
         AfterScenes();
     }
 
@@ -1371,6 +1377,7 @@ public sealed class BattleController
             Battlefield.ApplyCost(caster, r);
             foreach (var e in r.Effects) _s.Field.ApplyEffect(caster, m, e);
             if (!Quiet) ResultPopups(caster, r);
+            if (r.Effects.Count > 0) PhaseMusic();   // no scene shown (an option): the music the original's would leave
         }
         _fight = r;
         _after = (caster, met);
@@ -1820,6 +1827,7 @@ public sealed class BattleController
             });
         }
         else
+        {
             foreach (var st in r.Strikes)
             {
                 _s.Field.ApplyStrike(st);
@@ -1829,6 +1837,8 @@ public sealed class BattleController
                     : $"{st.Attacker.Name} → {st.Target.Name}：ミス", st.Killed ? st.Target : null);
                 if (st.Killed) _s.Ghosts.Add(st.Target);
             }
+            PhaseMusic();   // no scene shown (an option): the music the original's would leave
+        }
         _fight = r;
         _after = (atk, met);
         _actor = atk;
@@ -1980,7 +1990,7 @@ public sealed class BattleController
 
     /// <summary>Option: the enemy phase resolves without walking, panning, battle scenes or result popups (events still play).</summary>
     public bool SkipEnemyTurn { get; set; }
-    /// <summary>Option (modern): off, the battle scenes keep whatever music is playing instead of the map's battle BGM.</summary>
+    /// <summary>Option (modern): off, a fight plays the phase's music instead of the map's battle BGM (BattleMusic).</summary>
     public bool CombatMusic { get; set; } = true;
     bool Quiet => SkipEnemyTurn && !_s.Field.AllyPhase;
 

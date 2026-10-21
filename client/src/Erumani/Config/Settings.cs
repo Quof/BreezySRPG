@@ -61,13 +61,13 @@ public sealed class Settings
 
     // gameplay
     public bool BattleScenes { get; set; } = true;
-    public bool CombatBgm { get; set; } = true;
-    public bool ActionMenuFromTop { get; set; } = true;   // after a move the pointer goes to the action menu's first entry (off: 行動終了, as the original)           // the map's battle BGM during battle scenes (off: the phase music goes on)
+    public bool CombatBgm { get; set; } = true;           // the map's battle BGM during battle scenes (off: the phase's music, as a fight leaves it)
+    public bool ActionMenuFromTop { get; set; } = true;   // after a move the pointer goes to the action menu's first entry (off: 行動終了, as the original)
     public FastForwardMode FastForwardMode { get; set; } = FastForwardMode.Hold;
     public int FastForwardSpeed { get; set; } = 4;
     public bool FastForwardSkipsScenes { get; set; } = true;
     public bool FastForwardAdvancesText { get; set; } = true;
-    public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button or the confirm key fast-forwards (after 0.6 s)
+    public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button or the confirm key fast-forwards (after 0.4 s)
     public bool EdgeScrollHover { get; set; } = true;     // the pointer on the screen frame scrolls the map, no button held
     public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
     public UiSkin Skin { get; set; }                      // the windows, menus and text box: the original look or a restyled one
@@ -105,7 +105,7 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN
+        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off
             return new Settings
             {
                 Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("ERUMANI_SKIN"), true, out var skin) ? skin
@@ -113,6 +113,7 @@ public sealed class Settings
                 Font = Enum.TryParse<UiFont>(Environment.GetEnvironmentVariable("ERUMANI_UIFONT"), true, out var font) ? font : UiFont.NotoSerif,
                 Language = Enum.TryParse<UiLanguage>(Environment.GetEnvironmentVariable("ERUMANI_LANGUAGE"), true, out var lang) ? lang : UiLanguage.English,
                 SaveScreen = Enum.TryParse<SaveScreen>(Environment.GetEnvironmentVariable("ERUMANI_SAVESCREEN"), true, out var saves) ? saves : SaveScreen.Extended,
+                CombatBgm = !string.Equals(Environment.GetEnvironmentVariable("ERUMANI_COMBATBGM"), "off", StringComparison.OrdinalIgnoreCase),
             };
         foreach (var path in Candidates())
         {
