@@ -100,7 +100,7 @@ public sealed class EventRunner
         Message = LastMessage = null;
         _waitMs = 0;
         _waitButton = false;
-        _waitPan = false;
+        if (_waitPan) { _map.FinishPan(); _waitPan = false; }   // the view where the scroll was taking it
         if (_waitFx) { _fx.Complete(); _waitFx = false; }
         if (_waitMoves) { _map.FinishMoves(); _waitMoves = false; }
         if (_titleMs > 0) { _fx.Complete(); _titleMs = Math.Min(_titleMs, 1); }

@@ -894,13 +894,15 @@ public sealed class BattleController
         {
             _runner.Update(ev);
             if (_runner.Running) return;
-            switch (_runner.End)
-            {
-                case EventEnd.MapWon: Win(); return;
-                case EventEnd.MapLost: Lose(); return;
-                case EventEnd.GameOver: End(MapOutcome.GameOver); return;
-                case EventEnd.ReturnToTitle: End(MapOutcome.ReturnToTitle); return;
-            }
+        }
+        // how the event ended counts wherever it ended: here, or all at once in the cutscene skip (EventRunner.Skip, from
+        // the game's update) — a story map that ends in map_complete must go on to the next map either way
+        switch (_runner.End)
+        {
+            case EventEnd.MapWon: Win(); return;
+            case EventEnd.MapLost: Lose(); return;
+            case EventEnd.GameOver: End(MapOutcome.GameOver); return;
+            case EventEnd.ReturnToTitle: End(MapOutcome.ReturnToTitle); return;
         }
         // the event is over: the opening hands over to the first turn; a waiting fight or "after" check goes on;
         // otherwise the checkpoint looks again (FUN_0040d18c's end → state 2)

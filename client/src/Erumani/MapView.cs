@@ -388,7 +388,7 @@ public sealed class MapSession : IMapContext
 
     public void FinishMoves()
     {
-        _panTarget = null;
+        FinishPan();   // the camera goes where the moves sent it (ExecuteMoves), as when they play
         bool any = true;
         while (any)
         {

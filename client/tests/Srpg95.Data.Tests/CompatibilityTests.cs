@@ -66,6 +66,7 @@ public class CompatibilityTests
         public bool UnitState(int unit, int state) => false;
         public void ShowTile(int x, int y) { }
         public bool Panning => false;
+        public void FinishPan() { }
         public void QueueMove(int unit, IReadOnlyList<byte> steps) { }
         public void ExecuteMoves() { }
         public bool MovesRunning => false;

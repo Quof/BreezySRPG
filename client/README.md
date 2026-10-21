@@ -62,6 +62,7 @@ Options:
   - `endturn` ends the player's turn, as ターン終了 does.
   - `turnmenu` opens the turn menu, as a click on an empty tile does (`down,down,down,enter` then picks ロードする).
   - `wheelup` / `wheeldown` turn the mouse wheel a notch.
+  - `skip` opens the cutscene skip's question (Space) as soon as an event shows a message, `skipany` as soon as an event runs at all (mid-move, mid-pan, mid-fade); `skipyes` answers はい. `client\tools\skips.ps1` uses them.
   - `point:X.Y` puts the pointer at (X, Y) on the 640×480 screen and keeps it there, for what reads the pointer rather than a map tile (the options' rows, the camp's and the title's menus): `options,down,enter,point:320.48,wheeldown` turns the BGM volume down a step.
   - `ffhold` / `ffrelease` hold or let go of the fast-forward key at once; `msg` waits until an event shows a message or a choice.
   - `rclick` right-clicks as soon as an event shows a message or a choice, once the `--advance` confirms are done (the event's menu: save, load, options); `rclickfx` as soon as it shows neither (a screen effect, a move, a pan, a wait). With the menu up, the other keys work it: `enter` saves, `down,enter` loads, `down,down,enter` opens the options; in the save screen `enter` picks the file (a save made in an event starts on file 9).

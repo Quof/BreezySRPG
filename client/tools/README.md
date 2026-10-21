@@ -11,6 +11,7 @@ client\tools\scan.ps1   -Out C:\temp\check "D:\Games\SomeGame"
 client\tools\smoke.ps1  -Game "D:\Games\SomeGame" -Out C:\temp\check\smoke
 client\tools\events.ps1 -Game "D:\Games\SomeGame" -Out C:\temp\check\events
 client\tools\loads.ps1  -Game "D:\Games\SomeGame" -Out C:\temp\check\loads
+client\tools\skips.ps1  -Game "D:\Games\SomeGame" -Out C:\temp\check\skips
 ```
 
 ## scan.ps1: read everything, run nothing
@@ -67,6 +68,21 @@ reach files 1–8 only.
 It prints a line per run, `ok` or `FAIL` with what went wrong (`ended in Title, not Camp`, `went to map SMAP_003`,
 `the event didn't go on`, a crash), then the counts. A failed run keeps its folder: its saves, screenshot, `.txt`
 and `.log`. Run it after any change to saving, loading or the screens between them.
+
+## skips.ps1: the cutscene skip leaves the map as playing it does
+
+This one checks the client too. Each map starts twice. One run plays every event through, confirming messages and
+taking the first option at choices. The other skips each event as soon as it shows a message (Space, はい) and
+answers its choices the same way. Both go on to the same frame, long after the map waits for the player, and their
+states are compared: units (where, shown, HP, level), music, screen, pictures, camera, gold, items, switches and
+variables. A skip must not change any of it. A story map that ends in its opening has to go on to the same next map,
+too. `-At start` skips each event the moment it runs instead, whatever it's in the middle of (a move, a pan, a fade,
+a wait).
+
+It prints `same`, `DIFF` with the lines that differ, `LOOP` for a map whose menu event runs again and again under
+first options (a shop, a hiring list), or `OPEN` when even the played run is still in an event at the last frame (a
+long or repeating one); those two can't be compared. Run it after any change to the skip, to events or to
+what they act on (moves, pans, appearing units, screen effects, music).
 
 ## Reading the results
 

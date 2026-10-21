@@ -623,8 +623,14 @@ public sealed class ErumaniGame : Game
             if (_opts.Screenshot is null)
             {
                 int pick = _skipPrompt.Navigate(battleInput with { MouseMoved = mouseMoved }, _mouseVirtual);
-                if (pick == 0) { _skipPrompt = null; _runner?.Skip(); }
+                if (pick == 0) { _skipPrompt = null; SkipCutscene(); }
                 else if (pick == 1 || cancel) _skipPrompt = null;
+            }
+            else if (_scriptSkipYes)
+            {
+                (_scriptSkipYes, _skipPrompt) = (false, null);
+                SkipCutscene();
+                Trace($"{_frame}: skipped ({_runner?.Name})");
             }
             EndUpdate(gameTime, k, m);
             return;
@@ -732,9 +738,12 @@ public sealed class ErumaniGame : Game
             _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, telopTok)));
             _shotAt = _frame + int.Parse(tm.Groups[2].Value);
         }
-        // cutscene skip: "skip" opens the prompt on the next message, "skipyes" answers はい
-        if (_script.TryPeek(out var sk) && sk == "skip" && _runner is { Running: true, Message: not null }) { _script.Dequeue(); OpenSkipPrompt(); }
-        if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _skipPrompt = null; _runner?.Skip(); }
+        // cutscene skip: "skip" opens the prompt on the next message, "skipany" as soon as an event runs at all (in the
+        // middle of a move, a pan or a fade too), "skipyes" answers はい
+        if (_script.TryPeek(out var sk) && (sk == "skip" && _runner is { Running: true, Message: not null } || sk == "skipany" && _skipPrompt is null && CanSkipCutscene))
+        { _script.Dequeue(); OpenSkipPrompt(); }
+        // (the question takes the answer in its own update, which ends the frame there as a real はい does)
+        if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _scriptSkipYes = true; }
         // "rclick": a right click as soon as an event shows a message or a choice, once the --advance confirms are done (the
         // event's menu: save, load, options); "rclickfx" as soon as it shows neither (a screen effect, a move, a pan, a wait)
         // "ffhold" / "ffrelease": the fast-forward key held or let go, at once; "msg": waits until an event shows a message or a choice
@@ -930,6 +939,8 @@ public sealed class ErumaniGame : Game
     bool _scriptFf;
     /// <summary>A scripted run's pointer on the 640 × 480 screen ("point:X.Y"), in place of the real one, which it ignores.</summary>
     Point? _scriptPointer;
+    /// <summary>A scripted はい to the cutscene skip's question ("skipyes"), taken in the question's own update.</summary>
+    bool _scriptSkipYes;
     /// <summary>An event was running at the last step; the one running began after gameplay and hasn't shown anything yet.</summary>
     bool _eventWasRunning, _eventUnseen;
 
@@ -956,6 +967,9 @@ public sealed class ErumaniGame : Game
     /// <summary>An event is playing on a map and isn't waiting for a choice.</summary>
     bool CanSkipCutscene => _session is not null && _title is null && _camp is null && _runner is { Running: true, Choice: null }
         && _battle?.SceneShowing != true;
+
+    /// <summary>The cutscene skip's はい: the rest of the event at once (<see cref="EventRunner.Skip"/>).</summary>
+    void SkipCutscene() => _runner?.Skip();
 
     void OpenSkipPrompt()
     {

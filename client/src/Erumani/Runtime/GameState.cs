@@ -111,6 +111,8 @@ public interface IMapContext
     /// <summary>Scrolls (smoothly) until the tile is in the view's middle box; <see cref="Panning"/> while it moves.</summary>
     void ShowTile(int x, int y);
     bool Panning { get; }
+    /// <summary>A pan under way ends at once where it was going (cutscene skip).</summary>
+    void FinishPan();
     void QueueMove(int unit, IReadOnlyList<byte> steps);
     /// <summary>Starts all queued moves; <see cref="MovesRunning"/> while they are still animating.</summary>
     void ExecuteMoves();
