@@ -134,7 +134,11 @@ public sealed class Audio(GameFolder game) : IDisposable
         if (next is null) return;
         var path = game.Find("BGM/" + next);
         if (path is null) return;
-        _bgmLengthMs = LengthMs(path);   // also while muted, so scripted runs keep the same timing
+        // a MIDI file with long silence at its ends plays without most of it (MidiTrim)
+        byte[]? midiBytes = null;
+        if (path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase))
+            try { midiBytes = MidiTrim.Trim(File.ReadAllBytes(path)); } catch (Exception) { }
+        _bgmLengthMs = LengthMs(path, midiBytes);   // also while muted, so scripted runs keep the same timing
         _bgmPlayedMs = 0;
         if (Muted) return;
         bool midi = path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase);
@@ -142,7 +146,7 @@ public sealed class Audio(GameFolder game) : IDisposable
         {
             try
             {
-                _sequencer.Play(new MidiFile(path), loop: true);
+                _sequencer.Play(midiBytes is not null ? new MidiFile(new MemoryStream(midiBytes)) : new MidiFile(path), loop: true);
                 _stream = new DynamicSoundEffectInstance(Rate, AudioChannels.Stereo) { Volume = Math.Clamp(_musicVolume, 0, 1) };
                 FeedSynth();
                 _stream.Play();
@@ -163,17 +167,33 @@ public sealed class Audio(GameFolder game) : IDisposable
                 return;
             }
         }
+        if (midi && midiBytes is not null) path = TrimmedCopy(midiBytes) ?? path;
         Mci($"open \"{path}\" type {(midi ? "sequencer" : "waveaudio")} alias erumani_bgm");
         Mci($"setaudio erumani_bgm volume to {(int)(_musicVolume * 1000)}");
         Mci("play erumani_bgm from 0");
         _bgmOpen = true;
     }
 
-    /// <summary>A BGM file's playing time: a MIDI file's last event, a WAV's data at its byte rate.</summary>
-    static double LengthMs(string path)
+    /// <summary>The trimmed MIDI file written for the Windows sequencer, which plays files only; null if it can't be.</summary>
+    static string? TrimmedCopy(byte[] midi)
     {
         try
         {
+            string dir = Path.Combine(Path.GetTempPath(), "EasySRPG95");
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, $"bgm{Environment.ProcessId}.mid");
+            File.WriteAllBytes(file, midi);
+            return file;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>A BGM file's playing time: a MIDI file's last event (as trimmed, <paramref name="midi"/>), a WAV's data at its byte rate.</summary>
+    static double LengthMs(string path, byte[]? midi = null)
+    {
+        try
+        {
+            if (midi is not null) return new MidiFile(new MemoryStream(midi)).Length.TotalMilliseconds;
             if (path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase)) return new MidiFile(path).Length.TotalMilliseconds;
             var b = File.ReadAllBytes(path);
             int pos = 12, byteRate = 0;

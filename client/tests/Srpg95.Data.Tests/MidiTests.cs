@@ -45,4 +45,50 @@ public class MidiTests
             Assert.True(l.Max(Math.Abs) > 0.01f, $"silent: {Path.GetFileName(mid)}");
         }
     }
+
+    static IEnumerable<string> GameMidis()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "えるまに", "SRPGEXEC.EXE")))
+                return Directory.GetDirectories(d.FullName).Where(g => Directory.Exists(Path.Combine(g, "BGM")) && !g.Contains("scan", StringComparison.OrdinalIgnoreCase))
+                    .SelectMany(g => Directory.GetFiles(Path.Combine(g, "BGM"), "*.mid")).ToList();
+        return Array.Empty<string>();
+    }
+
+    [Fact]
+    public void Long_silence_at_a_tracks_ends_is_trimmed_to_three_seconds()
+    {
+        // ＯtoＺ map 3's legend.mid: 1.3 s before its first note, 26.5 s after its last
+        var legend = GameMidis().FirstOrDefault(f => Path.GetFileName(f) == "legend.mid");
+        if (legend is null) return;
+        var bytes = File.ReadAllBytes(legend);
+        var (lead, tail, notes) = MidiTrim.Silence(bytes)!.Value;
+        Assert.True(tail > 20);
+        var trimmed = MidiTrim.Trim(bytes);
+        var (lead2, tail2, notes2) = MidiTrim.Silence(trimmed)!.Value;
+        Assert.Equal(notes, notes2);
+        Assert.Equal(lead, lead2, 2);                                   // the start's 1.3 s kept
+        Assert.Equal(MidiTrim.MaxSilenceSeconds - lead, tail2, 1);      // the end gets the rest of the 3 s
+        double before = new MidiFile(new MemoryStream(bytes)).Length.TotalSeconds, after = new MidiFile(new MemoryStream(trimmed)).Length.TotalSeconds;
+        Assert.Equal(before - tail + tail2, after, 1);
+    }
+
+    [Fact]
+    public void Every_games_midis_keep_their_notes_and_at_most_three_seconds_of_silence()
+    {
+        int checkedFiles = 0;
+        foreach (var f in GameMidis())
+        {
+            var bytes = File.ReadAllBytes(f);
+            if (MidiTrim.Silence(bytes) is not { } s) continue;
+            var trimmed = MidiTrim.Trim(bytes);
+            var t = MidiTrim.Silence(trimmed)!.Value;
+            Assert.Equal(s.Notes, t.Notes);
+            Assert.True(t.Lead + t.Tail <= MidiTrim.MaxSilenceSeconds + 0.05 || trimmed == bytes, $"{f}: {t.Lead:F1} + {t.Tail:F1} s");
+            if (s.Lead + s.Tail <= MidiTrim.MaxSilenceSeconds) Assert.Same(bytes, trimmed);   // nothing to trim: as it is
+            Assert.True(new MidiFile(new MemoryStream(trimmed)).Length > TimeSpan.Zero, f);
+            checkedFiles++;
+        }
+        if (checkedFiles > 0) Assert.True(checkedFiles > 50);
+    }
 }
