@@ -225,7 +225,7 @@ public sealed class Ui : IDisposable
     static readonly Color[] GildedTints = { new(14, 28, 66), new(56, 14, 22), new(48, 38, 12), GildedNavy };
 
     // the gold's pictures (Gilding), made at the render scale they were made for, by what they show
-    readonly Dictionary<(int W, int H, Color Fill, float A, int Pointer, int PointerY, float F, int Corners), Texture2D> _gilded = new();
+    readonly Dictionary<(int W, int H, Color Fill, float A, int Pointer, int PointerY), Texture2D> _gilded = new();
     readonly Dictionary<(int W, int H), Texture2D> _highlights = new();
     readonly Dictionary<int, Texture2D> _rules = new();
     readonly Dictionary<Rectangle, Texture2D> _frames = new();
@@ -269,25 +269,20 @@ public sealed class Ui : IDisposable
 
     /// <summary>
     /// The gilded box (<see cref="Gilding.Box"/>): a dark translucent rectangle with perfectly straight edges, a thin gold
-    /// border along them and a small gold curl inside each of its <paramref name="corners"/>. <paramref name="pointer"/>
-    /// −1 / +1 grows a small pointer out of the left / right side, its tip <paramref name="pointerY"/> px below the top,
-    /// toward a speaking face; the border runs round it. <paramref name="flourish"/> sizes the curls (by default by the
-    /// box's size).
+    /// border along them. <paramref name="pointer"/> −1 / +1 grows a small pointer out of the left / right side, its tip
+    /// <paramref name="pointerY"/> px below the top, toward a speaking face; the border runs round it.
     /// </summary>
-    public void GildedBox(SpriteBatch sb, Rectangle r, Color fill, float alpha = 0.86f, int pointer = 0, int pointerY = 0,
-        float flourish = 0, int corners = Gilding.AllCorners)
+    public void GildedBox(SpriteBatch sb, Rectangle r, Color fill, float alpha = 0.86f, int pointer = 0, int pointerY = 0)
     {
         if (r.Width < 8 || r.Height < 8) return;
-        float f = flourish > 0 ? flourish : Math.Clamp((Math.Min(r.Width, r.Height) - 20) / 90f, 0.5f, 1f);
         int w = r.Width, h = r.Height, py = pointer == 0 ? 0 : pointerY;
         const int m = Gilding.Margin;
-        var t = Gilt(_gilded, (w, h, fill, alpha, pointer, py, f, corners), w + 2 * m, h + 2 * m,
-            k => Gilding.Box(w, h, fill, alpha, pointer, py, f, corners, k));
+        var t = Gilt(_gilded, (w, h, fill, alpha, pointer, py), w + 2 * m, h + 2 * m, k => Gilding.Box(w, h, fill, alpha, pointer, py, k));
         DrawGilt(sb, t, r.X - m, r.Y - m, Color.White);
     }
 
-    /// <summary>A gilded frame round a picture: the box's border and corner curls, nothing filled in but the border's faint shadow.</summary>
-    public void GildedFrame(SpriteBatch sb, Rectangle r) => GildedBox(sb, r, Color.Black, 0, flourish: 0.6f, corners: Gilding.TopLeft | Gilding.BottomRight);
+    /// <summary>A gilded frame round a picture: the box's border, nothing filled in but the border's faint shadow.</summary>
+    public void GildedFrame(SpriteBatch sb, Rectangle r) => GildedBox(sb, r, Color.Black, 0);
 
     /// <summary>The gilded selection bar: a soft gold glow fading to the right, gently pulsing.</summary>
     public void GildedHighlight(SpriteBatch sb, Rectangle r, int frame)
@@ -326,7 +321,7 @@ public sealed class Ui : IDisposable
     {
         int w = Math.Max(minWidth, NameText.Measure(name) + 32);
         var r = new Rectangle(x, y, w, 26);
-        GildedBox(sb, r, NameNavy, 0.95f, corners: Gilding.TopLeft | Gilding.BottomRight);
+        GildedBox(sb, r, NameNavy, 0.95f);
         if (NameText.Get(name) is { } t)
         {
             var p = new Vector2(r.X + (w - t.Width) / 2, r.Y + (r.Height - t.Height) / 2);
@@ -410,8 +405,7 @@ public sealed class Ui : IDisposable
         }
         if (Gilded)
         {
-            // dark strips with a gold bar along the view, rosettes in the corners, running scrolls along the strips
-            // (Gilding.ScreenFrame), and gold arrows in the scrolls' gaps where the view can scroll
+            // dark strips with a thin gold line round the view (Gilding.ScreenFrame), gold arrows where the view can scroll
             foreach (var part in FrameParts)
                 DrawGilt(sb, Gilt(_frames, part, part.Width, part.Height, k => Gilding.ScreenFrame(part, k)), part.X, part.Y, Color.White);
             if (up) Arrow(sb, 320, 6, 0, -1);

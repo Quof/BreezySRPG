@@ -5,9 +5,8 @@ namespace Erumani.Ui;
 /// <summary>
 /// The gilded skin's gold, painted procedurally at the render scale (<see cref="Ui.RenderScale"/>) so that it is smooth at
 /// any window size, and kept simple: a box has perfectly straight edges with a thin gold border along them — polished
-/// metal lit from the top left, a little brighter on the side facing the light, with a slow sheen along it — and, inside
-/// it, a small delicate curl in each corner (two volutes along the edges and a leaf between them). The dividers, the
-/// selection glow, the arrows and the line round the map view are made the same way. Pictures are premultiplied, k render
+/// metal lit from the top left, a little brighter on the side facing the light, with a slow sheen along it. The dividers,
+/// the selection glow, the arrows and the line round the map view are made the same way. Pictures are premultiplied, k render
 /// pixels to a 640 × 480 pixel.
 /// </summary>
 static class Gilding
@@ -67,142 +66,6 @@ static class Gilding
 
     static float Smooth(float e, float x) => x <= 0 ? 0 : x >= e ? 1 : x / e * (x / e) * (3 - 2 * x / e);
 
-    // ---------------- the corner curls ----------------
-
-    /// <summary>Thin raised gold strokes that taper along curves, found by position through a grid.</summary>
-    sealed class Relief
-    {
-        readonly List<(Vector2 A, Vector2 B, float Ra, float Rb)> _segs = new();
-        List<int>?[] _grid = Array.Empty<List<int>?>();
-        float _x0, _y0;
-        int _gw, _gh;
-        const float Cell = 2f, Reach = 1.5f;
-
-        public bool Empty => _segs.Count == 0;
-
-        /// <summary>A stroke through <paramref name="pts"/>, <paramref name="radii"/> its half-width at each.</summary>
-        public void Stroke(IReadOnlyList<Vector2> pts, IReadOnlyList<float> radii)
-        {
-            for (int i = 1; i < pts.Count; i++) _segs.Add((pts[i - 1], pts[i], radii[i - 1], radii[i]));
-        }
-
-        /// <summary>A stroke through <paramref name="pts"/>, its half-width <paramref name="width"/>(t) at the fraction t of its length.</summary>
-        public void Stroke(IReadOnlyList<Vector2> pts, Func<float, float> width)
-        {
-            if (pts.Count < 2) return;
-            var len = new float[pts.Count];
-            for (int i = 1; i < pts.Count; i++) len[i] = len[i - 1] + Vector2.Distance(pts[i - 1], pts[i]);
-            float total = MathF.Max(len[^1], 1e-4f);
-            Stroke(pts, len.Select(l => width(l / total)).ToArray());
-        }
-
-        public void Build()
-        {
-            if (_segs.Count == 0) return;
-            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-            foreach (var (a, b, ra, rb) in _segs)
-            {
-                float r = MathF.Max(ra, rb) + Reach;
-                x0 = MathF.Min(x0, MathF.Min(a.X, b.X) - r);
-                y0 = MathF.Min(y0, MathF.Min(a.Y, b.Y) - r);
-                x1 = MathF.Max(x1, MathF.Max(a.X, b.X) + r);
-                y1 = MathF.Max(y1, MathF.Max(a.Y, b.Y) + r);
-            }
-            (_x0, _y0) = (x0, y0);
-            _gw = (int)((x1 - x0) / Cell) + 1;
-            _gh = (int)((y1 - y0) / Cell) + 1;
-            _grid = new List<int>?[_gw * _gh];
-            for (int i = 0; i < _segs.Count; i++)
-            {
-                var (a, b, ra, rb) = _segs[i];
-                float r = MathF.Max(ra, rb) + Reach;
-                int cx0 = (int)((MathF.Min(a.X, b.X) - r - x0) / Cell), cx1 = (int)((MathF.Max(a.X, b.X) + r - x0) / Cell);
-                int cy0 = (int)((MathF.Min(a.Y, b.Y) - r - y0) / Cell), cy1 = (int)((MathF.Max(a.Y, b.Y) + r - y0) / Cell);
-                for (int cy = cy0; cy <= Math.Min(cy1, _gh - 1); cy++)
-                    for (int cx = cx0; cx <= Math.Min(cx1, _gw - 1); cx++)
-                        (_grid[cy * _gw + cx] ??= new()).Add(i);
-            }
-        }
-
-        List<int>? At(float x, float y)
-        {
-            int cx = (int)MathF.Floor((x - _x0) / Cell), cy = (int)MathF.Floor((y - _y0) / Cell);
-            return cx < 0 || cy < 0 || cx >= _gw || cy >= _gh ? null : _grid[cy * _gw + cx];
-        }
-
-        /// <summary>How much of a pixel <paramref name="px"/> wide at (x, y) the strokes cover, and the normal of the topmost there.</summary>
-        public float Sample(float x, float y, float px, out Vector3 normal)
-        {
-            normal = Vector3.UnitZ;
-            if (At(x, y) is not { } cell) return 0;
-            float cover = 0, best = -1;
-            foreach (int i in cell)
-            {
-                var (a, b, ra, rb) = _segs[i];
-                float abx = b.X - a.X, aby = b.Y - a.Y, l2 = abx * abx + aby * aby;
-                float t = l2 > 0 ? Math.Clamp(((x - a.X) * abx + (y - a.Y) * aby) / l2, 0, 1) : 0;
-                float dx = x - (a.X + abx * t), dy = y - (a.Y + aby * t), dist = MathF.Sqrt(dx * dx + dy * dy);
-                float r = ra + (rb - ra) * t;
-                float c = Math.Clamp((r - dist) / px + 0.5f, 0, 1);
-                if (c <= 0) continue;
-                cover = MathF.Max(cover, c);
-                float u = MathF.Min(dist / r, 0.95f), z = r * MathF.Sqrt(1 - u * u);
-                if (z <= best) continue;
-                best = z;
-                float slope = u / MathF.Sqrt(1 - u * u) * 0.7f;
-                normal = dist > 1e-4f ? Vector3.Normalize(new Vector3(dx / dist * slope, dy / dist * slope, 1)) : Vector3.UnitZ;
-            }
-            return cover;
-        }
-    }
-
-    static List<Vector2> Bezier(Vector2 a, Vector2 b, Vector2 c, Vector2 d, int n = 18)
-    {
-        var pts = new List<Vector2>(n + 1);
-        for (int i = 0; i <= n; i++)
-        {
-            float t = i / (float)n, u = 1 - t;
-            pts.Add(u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d);
-        }
-        return pts;
-    }
-
-    /// <summary>A spiral round <paramref name="c"/> from the angle <paramref name="a0"/> (y down: <paramref name="dir"/> 1 turns clockwise on screen), its radius shrinking from r0 to r1 over <paramref name="turns"/>.</summary>
-    static List<Vector2> Spiral(Vector2 c, float a0, int dir, float turns, float r0, float r1)
-    {
-        int n = Math.Max(10, (int)(turns * 32));
-        var pts = new List<Vector2>(n + 1);
-        for (int i = 0; i <= n; i++)
-        {
-            float t = i / (float)n, a = a0 + dir * t * turns * MathF.Tau, r = r0 + (r1 - r0) * t;
-            pts.Add(c + r * new Vector2(MathF.Cos(a), MathF.Sin(a)));
-        }
-        return pts;
-    }
-
-    /// <summary>
-    /// A corner's curl in the corner's own frame — x along one edge and y along the other, both from the corner into the
-    /// box, <paramref name="o"/> just inside the border, <paramref name="f"/> its size — mapped to the picture by
-    /// <paramref name="map"/>: along each edge a fine stroke curling into a small volute, a leaf between them.
-    /// </summary>
-    static void Corner(Relief rel, Func<Vector2, Vector2> map, float o, float f)
-    {
-        float ws = 0.8f + 0.2f * f;
-        Vector2 P(float a, float i) => new(o + a * f, o + i * f);
-        rel.Stroke(Bezier(P(0.5f, 0.5f), P(1.7f, 1.7f), P(2.9f, 2.9f), P(4.4f, 4.4f)).Select(map).ToList(),
-            t => ws * (t < 0.35f ? 0.25f + 0.33f * t / 0.35f : 0.58f * MathF.Pow(1 - (t - 0.35f) / 0.65f, 1.2f) + 0.03f));
-        for (int side = 0; side < 2; side++)
-        {
-            Func<Vector2, Vector2> m = side == 0 ? map : p => map(new Vector2(p.Y, p.X));
-            var lead = Bezier(P(0.3f, 0.3f), P(3.2f, -0.15f), P(6.4f, 0.0f), P(9.0f, 1.3f));
-            var volute = Spiral(P(8.7f, 3.0f), MathF.Atan2(-1.7f, 0.3f), 1, 1.3f, 1.726f * f, 0.3f * f);
-            var pts = lead.Concat(volute.Skip(1)).Select(m).ToList();
-            var radii = lead.Select((_, i) => ws * (0.3f + 0.12f * i / (lead.Count - 1f)))
-                .Concat(volute.Skip(1).Select((_, i) => ws * (0.42f - 0.24f * (i + 1) / (volute.Count - 1f)))).ToList();
-            rel.Stroke(pts, radii);
-        }
-    }
-
     // ---------------- shapes ----------------
 
     static float BoxSdf(float x, float y, float w, float h)
@@ -226,27 +89,16 @@ static class Gilding
 
     // ---------------- pictures ----------------
 
-    /// <summary>Corners of a box (<see cref="Box"/>), as bits.</summary>
-    public const int TopLeft = 1, TopRight = 2, BottomLeft = 4, BottomRight = 8, AllCorners = 15;
-
     /// <summary>
     /// A gilded box w × h (its picture <see cref="Margin"/> larger all round): the fill a little lighter at the top and
     /// faintly shaded under the border; the thin border along the straight edges and round the pointer, if any
-    /// (<paramref name="pointer"/> −1 / +1: out of the left / right side, its tip <paramref name="pointerY"/> below the top);
-    /// a curl, sized by <paramref name="f"/>, in each of the <paramref name="corners"/>.
+    /// (<paramref name="pointer"/> −1 / +1: out of the left / right side, its tip <paramref name="pointerY"/> below the top).
     /// </summary>
-    public static Color[] Box(int w, int h, Color fill, float alpha, int pointer, int pointerY, float f, int corners, int k)
+    public static Color[] Box(int w, int h, Color fill, float alpha, int pointer, int pointerY, int k)
     {
         const int m = Margin;
         int tw = (w + 2 * m) * k, th = (h + 2 * m) * k;
         const float b = Border;
-        var rel = new Relief();
-        float o = b + 1.0f;
-        if ((corners & TopLeft) != 0) Corner(rel, p => p, o, f);
-        if ((corners & TopRight) != 0) Corner(rel, p => new Vector2(w - p.X, p.Y), o, f);
-        if ((corners & BottomLeft) != 0) Corner(rel, p => new Vector2(p.X, h - p.Y), o, f);
-        if ((corners & BottomRight) != 0) Corner(rel, p => new Vector2(w - p.X, h - p.Y), o, f);
-        rel.Build();
 
         // the pointer: a small triangle out of the side whose long sides run on into the box, so the two are one shape
         Vector2 t0 = default, t1 = default, t2 = default;
@@ -296,11 +148,6 @@ static class Gilding
                     c = Darken(c, 0.3f * MathF.Exp(-MathF.Max(0, d - b) / 1.2f) * (0.3f + 0.7f * MathF.Max(0, Vector2.Dot(gin, ShadowDir))));
                     float edge = Math.Clamp((b - d) * k + 0.5f, 0, 1);
                     if (edge > 0) c = Vector4.Lerp(c, new Vector4(Gold(WireNormal(2 * Math.Clamp(d, 0, b) / b - 1, gin), x, y), 1), edge);
-                }
-                if (d > b)
-                {
-                    float on = rel.Sample(x, y, 1f / k, out var n);
-                    if (on > 0) c = Vector4.Lerp(c, new Vector4(Gold(n, x, y), 1), on);
                 }
                 px[row * tw + col] = new Color(c * cover);
             }
