@@ -75,7 +75,7 @@ public sealed class ErumaniGame : Game
     bool _debug;
     KeyboardState _prevKeys;
     MouseState _prevMouse;
-    int _activeFrames, _leftHeld;
+    int _activeFrames, _leftHeld, _confirmHeld;
     readonly Queue<string> _choose = new();
     readonly Random _chooseRng = new(1);
     int _choicesSeen;
@@ -510,7 +510,9 @@ public sealed class ErumaniGame : Game
         bool ff = _settings.FastForwardMode == FastForwardMode.Hold ? _controls.Down(GameAction.FastForward) : _ffToggle;
         // holding the left button (after 0.6 s, so ordinary clicks stay clicks) fast-forwards too
         _leftHeld = mouseHere && m.LeftButton == ButtonState.Pressed ? _leftHeld + 1 : 0;
-        if (_settings.FastForwardMouse && _leftHeld > GameClock.Frames(600)) ff = true;
+        // and the confirm key the same way (its press confirms; held, it fast-forwards)
+        _confirmHeld = !alt && _controls.Down(GameAction.Confirm) ? _confirmHeld + 1 : 0;
+        if (_settings.FastForwardMouse && Math.Max(_leftHeld, _confirmHeld) > GameClock.Frames(600)) ff = true;
 
         var input = new EventInput(confirm, cancel, up, down, ff);
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input

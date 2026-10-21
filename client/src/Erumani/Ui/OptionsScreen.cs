@@ -160,7 +160,7 @@ public sealed class OptionsScreen
         Toggle(T("Skip enemy turn", "敵ターンスキップ"), () => _s.SkipEnemyTurn, v => _s.SkipEnemyTurn = v),
         Choice(T("Fast-forward key", "早送りキー"), () => new[] { T("Hold", "押している間"), T("Toggle", "切り替え") },
             () => (int)_s.FastForwardMode, i => _s.FastForwardMode = (FastForwardMode)i),
-        Toggle(T("Hold left click to fast-forward", "左クリック長押しで早送り"), () => _s.FastForwardMouse, v => _s.FastForwardMouse = v),
+        Toggle(T("Hold click / confirm to fast-forward", "クリック・決定キー長押しで早送り"), () => _s.FastForwardMouse, v => _s.FastForwardMouse = v),
         Toggle(T("Scroll with the pointer at the edge", "画面端にカーソルでスクロール"), () => _s.EdgeScrollHover, v => _s.EdgeScrollHover = v),
         Choice(T("Action menu starts on", "行動メニューの初期位置"), () => new[] { T("First entry", "先頭"), T("End action (original)", "行動終了（オリジナル）") },
             () => _s.ActionMenuFromTop ? 0 : 1, i => _s.ActionMenuFromTop = i == 0),

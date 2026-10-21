@@ -67,7 +67,7 @@ public sealed class Settings
     public int FastForwardSpeed { get; set; } = 4;
     public bool FastForwardSkipsScenes { get; set; } = true;
     public bool FastForwardAdvancesText { get; set; } = true;
-    public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button fast-forwards
+    public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button or the confirm key fast-forwards (after 0.6 s)
     public bool EdgeScrollHover { get; set; } = true;     // the pointer on the screen frame scrolls the map, no button held
     public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
     public UiSkin Skin { get; set; }                      // the windows, menus and text box: the original look or a restyled one
