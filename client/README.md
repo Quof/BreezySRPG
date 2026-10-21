@@ -45,7 +45,7 @@ Options:
 - `--game DIR`: the game folder. By default it searches next to and above the executable for a folder containing `SRPGEXEC.EXE`.
 - `--rtp DIR`: the RTP folder used as a fallback for graphics and audio. Default `srpg maker 95/RTP`.
 - `--map N`: the map to open (1-based, as in `SMAP_nnn`).
-- `--screenshot FILE.png`: render one frame at 640×480, save it and exit. It also writes `FILE.txt` with the battle state (units, HP, EXP) and a trace of the scripted input. In this mode the real keyboard and mouse are ignored and the battle RNG is seeded, so runs are reproducible.
+- `--screenshot FILE.png`: render one frame at 640×480, save it and exit. It also writes `FILE.txt` with the battle state (units, HP, EXP) and a trace of the scripted input. In this mode the real keyboard and mouse are ignored and the random numbers of battles and of events (variable operations) are seeded, so runs are reproducible.
 - `--scale N`: used with `--screenshot`, renders and saves the frame at N × 640×480, as a window N times the size draws it.
 - `--fast 1`: used with `--screenshot`, runs frames as fast as the machine allows instead of 60 a second. The game advances by frames, so the outcome is the same, only sooner.
 - Scripted runs take their look from the environment instead of the settings: `ERUMANI_SKIN` (original / modern / gilded), `ERUMANI_UIFONT` (NotoSans / NotoSerif / BizUd / YuGothic), `ERUMANI_LANGUAGE` (english / japanese), `ERUMANI_SAVESCREEN` (extended / original), `ERUMANI_COMBATBGM` (`off` turns the combat BGM off).

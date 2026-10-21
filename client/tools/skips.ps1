@@ -5,10 +5,10 @@
 # gold, items, switches and variables. A skip has to leave the map exactly as the played cutscene does.
 # -At start skips each event the moment it runs instead, whatever it is doing (a move, a pan, a fade, a wait).
 # -Choose last answers every choice with its last option (menus whose first option never leaves them usually end on
-# 戻る); anything else --choose takes works too.
-#   skips.ps1 -Game DIR -Out DIR [-Maps 1,2,5] [-At message|start] [-Choose last] [-Parallel 8] [-TimeoutS 240] [-Frames 9000] [-Skips 8]
+# 戻る); anything else --choose takes works too. -Compare runs nothing: it judges the runs already in -Out again.
+#   skips.ps1 -Game DIR -Out DIR [-Maps 1,2,5] [-At message|start] [-Choose last] [-Compare] [-Parallel 8] [-TimeoutS 240] [-Frames 9000] [-Skips 8]
 param([Parameter(Mandatory)][string]$Game, [Parameter(Mandatory)][string]$Out, [int[]]$Maps, [ValidateSet("message", "start")][string]$At = "message",
-      [string]$Choose, [int]$Parallel = 8, [int]$TimeoutS = 240, [int]$Frames = 9000, [int]$Skips = 8)
+      [string]$Choose, [switch]$Compare, [int]$Parallel = 8, [int]$TimeoutS = 240, [int]$Frames = 9000, [int]$Skips = 8)
 . "$PSScriptRoot\common.ps1"
 New-Item -ItemType Directory -Force $Out | Out-Null
 if (-not $Maps) {
@@ -31,7 +31,16 @@ $jobs = foreach ($n in $Maps) {
     }
 }
 "maps: $($Maps.Count), runs: $(@($jobs).Count)"
-$results = Invoke-ClientRuns $jobs $Parallel $TimeoutS $Frames -Keep
+$results = if (-not $Compare) { Invoke-ClientRuns $jobs $Parallel $TimeoutS $Frames -Keep } else {
+    # the runs a previous call left: each one's first line, and whether it crashed or never got its shot
+    foreach ($j in $jobs) {
+        $txt = [IO.Path]::ChangeExtension($j.Png, ".txt"); $err = [IO.Path]::ChangeExtension($j.Png, ".error.txt")
+        $state = if (Test-Path -LiteralPath $txt) { Get-Content -LiteralPath $txt -Encoding utf8 -TotalCount 1 } else { "" }
+        $frame = if ($state -match '^frame=(\d+)') { [int]$Matches[1] } else { -1 }
+        $e = if (Test-Path -LiteralPath $err) { (Get-Content -LiteralPath $err -Encoding utf8 | Select-Object -First 3) -join ' | ' } else { "" }
+        [pscustomobject]@{ Key = $j.Key; Status = $(if ($e) { "CRASH" } elseif (-not $state) { "NOSHOT" } elseif ($frame -gt $Frames) { "CAPPED" } else { "ok" }); Error = $e; State = $state }
+    }
+}
 
 # the state, without what only says how the run got there: on a map the first line (frame, script, the runner's own
 # counters), elsewhere (a camp, the title, game over) only its frame; the trace lines ("123: ...") and the units' step
@@ -44,6 +53,15 @@ function State([string]$png) {
     ,@($first + @($lines | Select-Object -Skip 1 | Where-Object { $_ -notmatch '^\d+: ' } | ForEach-Object { $_ -replace ' run=\d+/\d+/\d+', '' }))
 }
 function Stood($r) { if ($r.State -match '^frame=\d+ script-left=\d+ (\S+)') { $Matches[1] } else { "?" } }
+# how often the map loaded most often in a run started: an opening that wants a unit the army hasn't got (a --map run has
+# none) sends the game back to the same map again and again
+function Restarts([string]$png) {
+    $log = [IO.Path]::ChangeExtension($png, ".log")
+    if (-not (Test-Path -LiteralPath $log)) { return 0 }
+    $maps = @(Get-Content -LiteralPath $log -Encoding utf8 | ForEach-Object { if ($_ -match '^\d+: map (SMAP_\d+)') { $Matches[1] } })
+    if ($maps.Count -eq 0) { return 0 }
+    ($maps | Group-Object | Measure-Object -Property Count -Maximum).Maximum
+}
 $byKey = @{}; foreach ($r in $results) { $byKey[$r.Key] = $r }
 $verdicts = foreach ($n in $Maps) {
     $dir = Join-Path $Out ("{0:000}" -f $n)
@@ -66,8 +84,14 @@ $verdicts = foreach ($n in $Maps) {
     }
     # a menu event that first options never leave (a shop, a hiring list) runs again and again in both: no end to compare
     $events = @($p, $s | ForEach-Object { if ($_.State -match 'events=(\d+)') { [int]$Matches[1] } else { 0 } })
-    $result = if (-not $why) { "same" } elseif (($events | Measure-Object -Maximum).Maximum -ge 50) { "LOOP" } elseif ((Stood $p) -eq "Events") { "OPEN" } else { "DIFF" }
-    if ($result -eq "LOOP") { $why = "an event runs again and again ($($events -join ' / ') events): not compared" }
+    $restarts = @((Restarts (Join-Path $dir "played.png")), (Restarts (Join-Path $dir "skipped.png")))
+    $looped = ($events | Measure-Object -Maximum).Maximum -ge 50
+    $restarted = ($restarts | Measure-Object -Maximum).Maximum -ge 20
+    $result = if (-not $why) { "same" } elseif ($looped -or $restarted) { "LOOP" } elseif ((Stood $p) -eq "Events") { "OPEN" } else { "DIFF" }
+    if ($result -eq "LOOP") {
+        $why = if ($looped) { "an event runs again and again ($($events -join ' / ') events): not compared" }
+               else { "a map starts again and again ($($restarts -join ' / ') loads; an opening wanting a unit the army hasn't got): not compared" }
+    }
     # the played run still in an event at the last frame (a long or repeating one): nothing settled to compare yet
     if ($result -eq "OPEN") { $why = "the played run is still in an event at frame $Frames ($(Stood $s) when skipped): not compared" }
     [pscustomobject]@{ Map = $n; Result = $result; Why = $why }

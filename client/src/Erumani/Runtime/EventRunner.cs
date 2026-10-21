@@ -21,7 +21,8 @@ public sealed class EventRunner
     readonly IMapContext _map;
     readonly Audio _audio;
     readonly ScreenEffects _fx;
-    readonly Random _rng = new();
+    /// <summary>The random numbers of variable operations; a scripted run seeds it, so its events draw the same each time.</summary>
+    public Random Rng { get; set; } = new();
     readonly Stack<(List<ScriptNode> Nodes, int Pc)> _stack = new();
 
     int _face;
@@ -422,7 +423,7 @@ public sealed class EventRunner
         int operand = c.U16(2) switch
         {
             1 => c.U16(6) < GameState.VariableCount ? _state.Variables[c.U16(6)] : 0,
-            2 => _rng.Next(0, c.U16(8) + 1),     // rand() % (max + 1)
+            2 => Rng.Next(0, c.U16(8) + 1),     // rand() % (max + 1)
             _ => c.I16(4),
         };
         ref int x = ref _state.Variables[v];

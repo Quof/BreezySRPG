@@ -337,7 +337,7 @@ public sealed class ErumaniGame : Game
         }
         _session = new MapSession(map, _db, _state, _tex, _folder.Chipset(map.Tileset));
         _runner = new EventRunner(_state, _session, _audio, _fx) { Shown = _backlog.Add };
-        if (_opts.Screenshot is not null) _session.Field.Rng = new Random(1);   // reproducible scripted runs
+        if (_opts.Screenshot is not null) (_session.Field.Rng, _runner.Rng) = (new Random(1), new Random(1));   // reproducible scripted runs: fights and events
         _battle = new BattleController(_session, _runner, _state, _db, _ui, _tex, _fx) { MusicLooped = () => _audio.BgmLooped, ShowThreat = _showThreat };
         // the exe stops the music when a map loads (FUN_0041d5e4 plays ""), except that a camp's music carries on into
         // the opening; the player-turn music comes with PLAYER TURN. A battle save's music comes after its hold (ApplySave).

@@ -79,10 +79,17 @@ variables. A skip must not change any of it. A story map that ends in its openin
 too. `-At start` skips each event the moment it runs instead, whatever it's in the middle of (a move, a pan, a fade,
 a wait).
 
-It prints `same`, `DIFF` with the lines that differ, `LOOP` for a map whose menu event runs again and again under
-first options (a shop, a hiring list), or `OPEN` when even the played run is still in an event at the last frame (a
-long or repeating one); those two can't be compared. Run it after any change to the skip, to events or to
-what they act on (moves, pans, appearing units, screen effects, music).
+It prints `same`, `DIFF` with the lines that differ, `LOOP` or `OPEN`; those two can't be compared:
+
+- `LOOP`: a menu event runs again and again under scripted answers (a shop, a hiring list, a minigame), or a map
+  starts again and again because its opening wants a unit the army hasn't got (`--map` runs start with none). Check
+  that both runs loop: a loop in the skipped run only would be the skip's doing.
+- `OPEN`: even the played run is still in an event at the last frame (a long or repeating one). More `-Frames`, or
+  `-Choose last` for menus that end on 戻る, usually settles it.
+
+`-Compare` judges the runs already in `-Out` again without running anything (the same `-Maps` and `-Frames`).
+Run it after any change to the skip, to events or to what they act on (moves, pans, appearing units, screen effects,
+music).
 
 ## Reading the results
 
