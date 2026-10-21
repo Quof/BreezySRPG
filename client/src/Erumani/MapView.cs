@@ -313,6 +313,13 @@ public sealed class MapSession : IMapContext
 
     public bool Panning => _panTarget is not null;
 
+    /// <summary>A pan under way ends at once where it was going.</summary>
+    public void FinishPan()
+    {
+        if (_panTarget is { } t) Camera = t;
+        _panTarget = null;
+    }
+
     Point? _scrollTarget;
 
     /// <summary>

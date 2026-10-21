@@ -106,6 +106,100 @@ public sealed class EventRunner
         if (_titleMs > 0) { _fx.Complete(); _titleMs = Math.Min(_titleMs, 1); }
     }
 
+    // ---------------- saving in the middle of an event (modern, SceneSave) ----------------
+
+    /// <summary>The event can be saved where it stands: running, not ending, not on its way back to the title.</summary>
+    public bool CanSave => _stack.Count > 0 && End == EventEnd.None && _titleMs <= 0;
+
+    /// <summary>The effects, moves and pans the script waits on have been jumped to their ends: it waits on them no more.</summary>
+    public void Settle() => _waitFx = _waitMoves = _waitPan = false;
+
+    /// <summary>Where the event stands (after <see cref="Settle"/>), or null when it can't be saved now.</summary>
+    public RunnerSave? Save()
+    {
+        if (!CanSave) return null;
+        var frames = _stack.Reverse().ToArray();   // the script's top level first
+        var saved = new List<int[]>();
+        for (int k = 0; k < frames.Length; k++)
+        {
+            int block = 0;
+            if (k > 0)
+            {
+                // a block is the body of the command before the next one in the block below
+                var (below, next) = frames[k - 1];
+                if (next < 1 || next > below.Count) return null;
+                var nodes = frames[k].Nodes;
+                block = below[next - 1] switch
+                {
+                    BranchNode b when ReferenceEquals(b.Then, nodes) => -1,
+                    ChoiceNode c when c.Cases.FindIndex(x => ReferenceEquals(x, nodes)) is var i and >= 0 => i,
+                    ChoiceNode c when nodes.Count == 0 => c.Cases.Count,   // an option past the cases: nothing to run
+                    _ => int.MinValue,
+                };
+                if (block == int.MinValue) return null;
+            }
+            saved.Add(new[] { block, frames[k].Pc });
+        }
+        return new RunnerSave(Name, saved, _face, _faceRight, _faceFlip, Message, LastMessage, Choice is not null, ChoiceIndex, Math.Max(0, _waitMs), _waitButton);
+    }
+
+    /// <summary>Puts the event back where <paramref name="s"/> left it; false (and nothing running) when the script doesn't have that place.</summary>
+    public bool Restore(EventScript script, RunnerSave s)
+    {
+        Start(script);
+        if (_stack.Count == 0 || s.Frames.Count == 0) return Fail();
+        _stack.Clear();
+        List<ScriptNode>? nodes = null;
+        int pc = 0;
+        foreach (var f in s.Frames)
+        {
+            if (f.Length != 2) return Fail();
+            if (nodes is not null)
+            {
+                if (pc < 1 || pc > nodes.Count) return Fail();
+                nodes = (nodes[pc - 1], f[0]) switch
+                {
+                    (BranchNode b, -1) => b.Then,
+                    (ChoiceNode c, var i) when i >= 0 && i < c.Cases.Count => c.Cases[i],
+                    (ChoiceNode c, var i) when i == c.Cases.Count => new List<ScriptNode>(),
+                    _ => null,
+                };
+                if (nodes is null) return Fail();
+            }
+            else nodes = script.Tree;
+            pc = f[1];
+            if (pc < 0 || pc > nodes.Count) return Fail();
+            _stack.Push((nodes, pc));
+        }
+        (_face, _faceRight, _faceFlip) = (s.Face, s.FaceRight, s.FaceFlip);
+        Message = s.Message;
+        LastMessage = s.LastMessage;
+        if (s.Choice)
+        {
+            // the choice is the command before the next one in the top block
+            var (top, next) = _stack.Peek();
+            if (next < 1 || top[next - 1] is not ChoiceNode c) return Fail();
+            _choiceNode = c;
+            Choice = c.Options;
+            ChoiceIndex = Math.Clamp(s.ChoiceIndex, 0, Math.Max(0, c.Options.Length - 1));
+        }
+        (_waitMs, _waitButton) = (Math.Max(0, s.WaitMs), s.WaitButton);
+        _waitFx = _waitMoves = _waitPan = _skipping = false;
+        _titleMs = 0;
+        _messageAge = 0;
+        if (Message is not null) Shown?.Invoke(Message);
+        Trace($"{Name}: resumed from a save");
+        return true;
+
+        bool Fail()
+        {
+            _stack.Clear();
+            Message = LastMessage = null;
+            Choice = null;
+            return false;
+        }
+    }
+
     public void Update(EventInput input)
     {
         if (!Running) { _skipping = false; return; }

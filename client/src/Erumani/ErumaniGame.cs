@@ -134,7 +134,7 @@ public sealed class ErumaniGame : Game
             .Select(p => int.Parse(Path.GetFileNameWithoutExtension(p)[5..]) - 1).Order().ToArray();
         SaveFile.Directory = _opts.SaveDir;
         int start = _opts.StartMap ?? _db.StartMap;
-        if (_opts.LoadSlot is int slot && SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } save) { ApplySave(save); return; }
+        if (_opts.LoadSlot is int slot && SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } save) { ApplySave(save, slot); return; }
         if (_opts.CampBefore is int camp) { OpenCamp(Math.Max(0, Array.IndexOf(_mapIndices, camp)), fromMap: true); return; }
         if (_opts.StartMap is null && _opts.Event is null)
         {
@@ -207,7 +207,7 @@ public sealed class ErumaniGame : Game
         _title = new TitleScreen(_db, _folder, _tex, _ui)
         {
             NewGame = () => AfterFade(10, () => { _state.Reset(); LoadMap(Math.Max(0, Array.IndexOf(_mapIndices, _db.StartMap))); }),
-            Loaded = save => AfterFade(10, () => ApplySave(save)),
+            Loaded = (save, slot) => AfterFade(10, () => ApplySave(save, slot)),
             Options = OpenOptions,
             Quit = () => AfterFade(10, Exit),
             WarpPointer = WarpMouse,
@@ -249,11 +249,11 @@ public sealed class ErumaniGame : Game
         _camp = new Camp.CampScreen(_db, _folder, _tex, _ui, _state, map, idx)
         {
             StartNext = () => AfterFade(10, () => LoadMap(pos, fromCamp: true)),
-            Loaded = save => AfterFade(10, () => ApplySave(save)),
+            Loaded = (save, slot) => AfterFade(10, () => ApplySave(save, slot)),
             Quit = () => AfterFade(10, Exit),
             WarpPointer = WarpMouse,
             NewSaveMenu = MakeSaveMenu,
-            Saved = NoteSave,
+            Saved = slot => NoteSave(slot, null),
         };
         if (fromMap)
         {
@@ -267,13 +267,15 @@ public sealed class ErumaniGame : Game
     /// <summary>
     /// Loads a SAVEn.DAT (FUN_0040bfbc): the music stops, camp saves reopen their camp and battle saves their map with
     /// the saved army; the saved tone comes back, the screen stays black for 800 ms, then the saved music plays and the
-    /// screen fades in (a camp 10 % a tick, a map from −20 by 20).
+    /// screen fades in (a camp 10 % a tick, a map from −20 by 20). A save EasySRPG95 made in the middle of an event
+    /// (file <paramref name="slot"/>'s note holds the rest of it) goes on with that event, its screen as it was.
     /// </summary>
-    void ApplySave(SaveFile save)
+    void ApplySave(SaveFile save, int slot)
     {
         save.ApplyTo(_state);
         // the play time EasySRPG95 noted for exactly this save, if it did
-        (_state.PlaySeconds, _state.PlayTimeKnown) = SaveExtras.Find(_folder, save.Raw)?.PlaySeconds is { } played ? (played, true) : (0, false);
+        var note = SaveExtras.For(SaveExtras.Read(_folder), slot, save.Raw);
+        (_state.PlaySeconds, _state.PlayTimeKnown) = (note ?? SaveExtras.Find(_folder, save.Raw))?.PlaySeconds is { } played ? (played, true) : (0, false);
         _audio.PlayBgm("");
         int pos = Math.Max(0, Array.IndexOf(_mapIndices, save.MapIndex));
         if (save.AtCamp) OpenCamp(pos, fromMap: false);
@@ -282,6 +284,25 @@ public sealed class ErumaniGame : Game
         _fx.SetTone(tone[0], tone[1], tone[2], tone[3]);
         _fx.FadeIn(save.AtCamp ? 0 : -20, save.AtCamp ? 10 : 20, delayMs: 800);
         _bgmAfterHold = save.Bgm;
+        if (!save.AtCamp && note?.Scene is { } scene) ResumeScene(scene);
+    }
+
+    /// <summary>
+    /// The rest of a save made in the middle of an event: the event where it stood, the pictures, the music, the game
+    /// tick; a screen an erase had left black (or white) stays so after the load's hold instead of fading in.
+    /// </summary>
+    void ResumeScene(SceneSave scene)
+    {
+        if (_battle?.ResumeScene(scene) != true)
+        {
+            Trace($"{_frame}: the saved event {scene.Event.Script} isn't on this map; the battle goes on without it");
+            return;
+        }
+        _fx.Pictures.AddRange(scene.Pictures.Select(p => (p.File, p.Position, p.Transparent)));
+        if (scene.Brightness != 100) _fx.FadeIn(scene.Brightness, 0, delayMs: 800);
+        _bgmAfterHold = scene.Bgm;
+        GameClock.SetTick(scene.TickMs is > 0 and < 1000 ? scene.TickMs : 30);
+        if (_opts.Screenshot is not null) Trace($"{_frame}: resumed in event {scene.Event.Script}");
     }
 
     /// <summary>The music a loaded save starts once its 800 ms of black are over.</summary>
@@ -336,18 +357,9 @@ public sealed class ErumaniGame : Game
         _battle.PlaySound = _audio.PlaySe;
         _battle.WarpPointer = WarpMouse;
         _battle.SlotExists = n => File.Exists(SaveFile.PathFor(_folder, n));
-        _battle.SaveRequested = n =>
-        {
-            string path = SaveFile.PathFor(_folder, n);
-            var tone = _fx.Tone;
-            SaveFile.ForBattle(_state, _db, idx, _audio.CurrentBgm ?? map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
-                _session.Field.Units, _battle.FiredSlots, SaveFile.Load(path)?.Raw ?? _state.LastSave,
-                new[] { (int)tone.X, (int)tone.Y, (int)tone.Z, (int)tone.W },
-                (_session.Camera.X / MapSession.Tile, _session.Camera.Y / MapSession.Tile)).Write(path);
-            NoteSave(n);
-        };
+        _battle.SaveRequested = n => WriteBattleSave(n);
         _battle.NewSaveMenu = MakeSaveMenu;
-        _battle.LoadRequested = n => { if (SaveFile.Load(SaveFile.PathFor(_folder, n)) is not { } f) return false; ApplySave(f); return true; };
+        _battle.LoadRequested = n => { if (SaveFile.Load(SaveFile.PathFor(_folder, n)) is not { } f) return false; ApplySave(f, n); return true; };
         _battle.QuitRequested = Exit;
         if (resume is not null)
         {
@@ -450,7 +462,7 @@ public sealed class ErumaniGame : Game
             {
                 _choiceShown = ch;
                 _choiceActive = true;
-                WarpMouse(ChoiceRow(cr, 0).Center);
+                WarpMouse(ChoiceRow(cr, _runner.ChoiceIndex).Center);   // the first option (one loaded mid-choice: the option it had)
             }
             int hover = Enumerable.Range(0, ch.Length).FirstOrDefault(i => ChoiceRow(cr, i).Contains(_mouseVirtual), -1);
             if (mouseMoved)
@@ -477,7 +489,7 @@ public sealed class ErumaniGame : Game
         if (_session is not null && Pressed(Keys.PageUp)) LoadMap((_mapPos + _mapIndices.Length - 1) % _mapIndices.Length);
 
         // keyboard: arrows move the map cursor and menus; WASD scroll the camera, and move in menus too
-        bool menuOpen = _options is not null || _title is not null || _camp is not null || _runner?.Choice is not null || _battle?.MenuOpen == true;
+        bool menuOpen = _options is not null || _eventMenu is not null || _title is not null || _camp is not null || _runner?.Choice is not null || _battle?.MenuOpen == true;
         bool up = _controls.Repeat(GameAction.Up) || (menuOpen && _controls.Repeat(GameAction.CameraUp));
         bool down = _controls.Repeat(GameAction.Down) || (menuOpen && _controls.Repeat(GameAction.CameraDown));
         bool left = _controls.Repeat(GameAction.Left) || (menuOpen && _controls.Repeat(GameAction.CameraLeft));
@@ -504,7 +516,7 @@ public sealed class ErumaniGame : Game
             _shotAt = _frame + int.Parse(cm.Groups[2].Value);
             _shotAdvance = 0;
         }
-        if (_opts.Screenshot is not null && _shotAdvance != 0 && _options is null && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null } or { WaitingForButton: true }))
+        if (_opts.Screenshot is not null && _shotAdvance != 0 && _options is null && _eventMenu is null && !_fx.Holding && _afterFade is null && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null } or { WaitingForButton: true }))
         {
             if (_runner is { Choice: { } options } && _choose.TryDequeue(out var pick))
             {
@@ -525,12 +537,11 @@ public sealed class ErumaniGame : Game
         if (_opts.Screenshot is not null)   // ignore the real mouse while scripted
             battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, false));
 
-        // a right click during an event on the map opens the options there (modern; in the original it does nothing then):
-        // the event waits while they're open and carries on where it was. The click is used up here.
-        if (_options is null && battleInput.RightClick && EventShowing)
+        // a right click during an event on the map opens a menu there — save, load, options (modern; in the original it
+        // does nothing then): the event waits while it's open and carries on where it was. The click is used up here.
+        if (_options is null && _eventMenu is null && battleInput.RightClick && EventShowing && !_backlog.Open && !_fx.Holding && _afterFade is null)
         {
-            OpenOptions();
-            Sfx.Click();
+            OpenEventMenu();
             EndUpdate(gameTime, k, m);
             return;
         }
@@ -558,6 +569,16 @@ public sealed class ErumaniGame : Game
             _audio.Update();
             _options.Update(battleInput, _mouseVirtual, _controls);
             if (_options.Done) _options = null;
+            EndUpdate(gameTime, k, m);
+            return;
+        }
+
+        // the event's menu, and the save / load screen it opens: pause the event
+        if (_eventMenu is not null)
+        {
+            _frame++;
+            _audio.Update();
+            UpdateEventMenu(battleInput with { MouseMoved = battleInput.MouseMoved || _opts.Screenshot is null && mouseMoved });
             EndUpdate(gameTime, k, m);
             return;
         }
@@ -676,8 +697,10 @@ public sealed class ErumaniGame : Game
         // cutscene skip: "skip" opens the prompt on the next message, "skipyes" answers はい
         if (_script.TryPeek(out var sk) && sk == "skip" && _runner is { Running: true, Message: not null }) { _script.Dequeue(); OpenSkipPrompt(); }
         if (_script.TryPeek(out sk) && sk == "skipyes" && _skipPrompt is not null) { _script.Dequeue(); _skipPrompt = null; _runner?.Skip(); }
-        // "rclick": a right click as soon as an event shows (the options in the middle of a cutscene)
-        if (_script.TryPeek(out sk) && sk == "rclick" && EventShowing && _options is null && _runner is { Message: not null } or { Choice: not null })
+        // "rclick": a right click as soon as an event shows a message or a choice, once the --advance confirms are done (the
+        // event's menu: save, load, options); "rclickfx" as soon as it shows neither (a screen effect, a move, a pan, a wait)
+        if (_script.TryPeek(out sk) && sk is "rclick" or "rclickfx" && EventShowing && _options is null && _eventMenu is null && _shotAdvance <= 0 && !bi.Confirm
+            && (sk == "rclick" ? _runner is { Message: not null } or { Choice: not null } : _runner is { Message: null, Choice: null }))
         {
             _script.Dequeue();
             Trace($"{_frame}: rclick in an event ({_runner?.Name})");
@@ -715,7 +738,7 @@ public sealed class ErumaniGame : Game
             _shotAt = _frame + int.Parse(stateTok[(stateTok.LastIndexOf('+') + 1)..]);
             _shotAdvance = 0;
         }
-        bool idle = (_options is not null || _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null })
+        bool idle = (_options is not null || _eventMenu is not null || _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null })
             && !_fx.Holding && _afterFade is null;   // a loaded save's black hold and a choice's fade-out take no input
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
@@ -874,31 +897,136 @@ public sealed class ErumaniGame : Game
         Sfx.Click();
     }
 
+    // ---------------- the event's menu: a right click during an event (modern) ----------------
+    // The original does nothing on a right click while an event runs, and saves only from the turn menu and the camp.
+    // EasySRPG95 opens セーブ / ロード / 環境設定 at the pointer instead: a save made here holds the event where it
+    // stands (SceneSave) and goes in files 9–100 only; loading leaves the event for the file chosen.
+
+    Camp.MenuList? _eventMenu;
+    /// <summary>The save / load screen the menu opened (always the extended one: the original has no saving in an event to keep the look of).</summary>
+    Ui.SaveMenu? _eventFiles;
+    bool _eventSaving;
+
+    void OpenEventMenu()
+    {
+        string[] items = { Ui.Lang.T("Save", "セーブ"), Ui.Lang.T("Load", "ロード"), Ui.Lang.T("Options", "環境設定") };
+        int w = Math.Max(96, items.Max(_ui.Measure12) + 36), h = 16 * items.Length + 16;
+        // the pointer on the first entry, the menu kept on the screen
+        _eventMenu = new Camp.MenuList
+        {
+            Rect = new Rectangle(Math.Clamp(_mouseVirtual.X - 24, 8, VirtualWidth - 8 - w), Math.Clamp(_mouseVirtual.Y - 16, 8, VirtualHeight - 8 - h), w, h),
+            ItemX = 18, ItemWidth = w - 36,
+        };
+        _eventMenu.Set(items, new[] { _battle?.CanSaveScene == true, true, true });
+        Sfx.Click();
+    }
+
+    void UpdateEventMenu(BattleInput bi)
+    {
+        if (_eventFiles is { } files)
+        {
+            var (result, slot) = files.Update(bi, _mouseVirtual);
+            if (result == Ui.SaveMenu.Result.None) return;
+            files.Dispose();
+            _eventFiles = null;
+            if (result == Ui.SaveMenu.Result.Cancelled) return;   // back to the menu
+            _eventMenu = null;
+            if (_eventSaving) { SaveScene(slot); return; }
+            // the turn menu's ロードする fades the map out first (FUN_00410728); an unreadable file brings the event back
+            int brightness = _fx.Brightness;
+            AfterFade(20, () =>
+            {
+                if (SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } f) ApplySave(f, slot);
+                else if (brightness == 100) _fx.FadeIn(0, 20);
+                else _fx.SetBrightness(brightness);
+            });
+            return;
+        }
+        var menu = _eventMenu!;
+        if (bi.Cancel || bi.RightClick || (bi.Click && !menu.Rect.Contains(_mouseVirtual))) { _eventMenu = null; Sfx.Cancel(); return; }
+        switch (menu.Navigate(bi, _mouseVirtual))
+        {
+            case 0 or 1:
+                _eventSaving = menu.Index == 0;
+                _eventFiles = new Ui.SaveMenu(_eventSaving, _ui, GraphicsDevice, _folder, _db, scene: true);
+                break;
+            case 2:
+                _eventMenu = null;
+                OpenOptions();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Saves in the middle of the event into file <paramref name="slot"/>: running effects, moves and pans jump to their
+    /// ends first (the event goes on from there), then the map goes into SAVEn.DAT as a battle save and the event into
+    /// its note (<see cref="SceneSave"/>).
+    /// </summary>
+    void SaveScene(int slot)
+    {
+        if (_battle is null || _session is null || _runner is null) return;
+        _fx.Settle();
+        _session.FinishPan();
+        _session.FinishMoves();
+        _runner.Settle();
+        if (_battle.SaveScene() is not { } scene) { Sfx.Buzzer(); return; }
+        scene = scene with
+        {
+            Brightness = _fx.Brightness,
+            Pictures = _fx.Pictures.Select(p => new PictureSave(p.File, p.Position, p.Transparent)).ToList(),
+            Bgm = _audio.CurrentBgm ?? "",
+            TickMs = GameClock.TickMs,
+        };
+        WriteBattleSave(slot, scene);
+        if (_opts.Screenshot is not null) Trace($"{_frame}: saved event {scene.Event.Script} in file {slot}");
+    }
+
     // ---------------- saves: the extended screen, play time and pictures ----------------
 
     /// <summary>The extended save / load screen, or null for the original's file lists (the "Save / load screen" option).</summary>
     Ui.SaveMenu? MakeSaveMenu(bool saving) =>
         _settings.SaveScreen == SaveScreen.Extended ? new Ui.SaveMenu(saving, _ui, GraphicsDevice, _folder, _db) : null;
 
-    /// <summary>A save just written to <paramref name="slot"/>: EasySRPG95 notes its play time and a picture of the screen beside it.</summary>
-    void NoteSave(int slot)
+    /// <summary>
+    /// A battle save of the map as it stands into file <paramref name="n"/> (the turn menu's セーブする, FUN_0040be6c),
+    /// EasySRPG95's note beside it — with the event, for a save made in the middle of one.
+    /// </summary>
+    void WriteBattleSave(int n, SceneSave? scene = null)
+    {
+        if (_session is null || _battle is null) return;
+        string path = SaveFile.PathFor(_folder, n);
+        var tone = _fx.Tone;
+        int idx = _state.MapIndex;
+        SaveFile.ForBattle(_state, _db, idx, _audio.CurrentBgm ?? _session.Map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
+            _session.Field.Units, _battle.FiredSlots, SaveFile.Load(path)?.Raw ?? _state.LastSave,
+            new[] { (int)tone.X, (int)tone.Y, (int)tone.Z, (int)tone.W },
+            (_session.Camera.X / MapSession.Tile, _session.Camera.Y / MapSession.Tile)).Write(path);
+        NoteSave(n, scene);
+    }
+
+    /// <summary>
+    /// A save just written to <paramref name="slot"/>: EasySRPG95 notes its play time and a picture of the screen beside
+    /// it, and the event it was made in, if any.
+    /// </summary>
+    void NoteSave(int slot, SceneSave? scene)
     {
         try
         {
             string path = SaveFile.PathFor(_folder, slot);
             if (File.Exists(path))
-                SaveExtras.Write(_folder, slot, File.ReadAllBytes(path), _state.PlayTimeKnown ? _state.PlaySeconds : null, CapturePicture());
+                SaveExtras.Write(_folder, slot, File.ReadAllBytes(path), _state.PlayTimeKnown ? _state.PlaySeconds : null, CapturePicture(scene is not null), scene);
         }
         catch (Exception e) { Trace($"{_frame}: no note for save {slot} ({e.Message})"); }   // the save itself stands without it
     }
 
-    bool _capturing;
+    bool _capturing, _capturingScene;
 
     /// <summary>
     /// A save's picture: the map or the camp as it stands, drawn again without the menus, the pointer or the client's
-    /// windows, through the screen's brightness and tone, as a 640 × 480 PNG.
+    /// windows — the event's message and choice kept for a save made in an event — through the screen's brightness and
+    /// tone, as a 640 × 480 PNG.
     /// </summary>
-    byte[]? CapturePicture()
+    byte[]? CapturePicture(bool scene = false)
     {
         if (_camp is null && _session is null) return null;
         int k = Math.Max(1, _scale);
@@ -909,7 +1037,7 @@ public sealed class ErumaniGame : Game
         GraphicsDevice.SetRenderTarget(shot);
         GraphicsDevice.Clear(Color.Black);
         _sb.Begin(samplerState: SamplerState.PointClamp, transformMatrix: _view);
-        _capturing = true;
+        (_capturing, _capturingScene) = (true, scene);
         try
         {
             if (_camp is not null) _camp.DrawBackdrop(_sb, _frame);
@@ -917,7 +1045,7 @@ public sealed class ErumaniGame : Game
         }
         finally
         {
-            _capturing = false;
+            _capturing = _capturingScene = false;
             _sb.End();
         }
         GraphicsDevice.SetRenderTarget(graded);
@@ -1047,7 +1175,7 @@ public sealed class ErumaniGame : Game
         // 1. the game's own screen, as the exe draws it on its 8-bit surface (mouse pointer included)
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
-        bool overlay = _options is not null || _skipPrompt is not null || _missingBox is not null || _backlog.Open;
+        bool overlay = _options is not null || _eventMenu is not null || _skipPrompt is not null || _missingBox is not null || _backlog.Open;
         _sb.Begin(samplerState: SamplerState.PointClamp, transformMatrix: _view);
         if (_logo >= 0 && _logo < _logos.Count) _sb.Draw(_logos[_logo], Vector2.Zero, Color.White);
         else if (_gameOver >= 0)
@@ -1073,6 +1201,8 @@ public sealed class ErumaniGame : Game
             _backlog.Draw(_sb);
             DrawSkipPrompt();
             DrawMissingBox();
+            if (_eventFiles is not null) _eventFiles.Draw(_sb, _frame);   // in the menu's place: nothing of it shows through
+            else _eventMenu?.Draw(_sb, _ui, true, _frame);
             _options?.Draw(_sb, _frame);
             if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
         }
@@ -1108,7 +1238,12 @@ public sealed class ErumaniGame : Game
             _session.DrawUnits(_sb, view, _frame, _battle?.FacingUnit);
         }
         DrawPicture();
-        if (_capturing) return;   // a save's picture: the map alone
+        if (_capturing)
+        {
+            // a save's picture: the map alone — with the event's message and choice for one made in an event
+            if (_capturingScene) { DrawMessage(); DrawChoice(); }
+            return;
+        }
         _battle?.DrawUi(_sb, view, _frame);
         DrawMessage();
         DrawChoice();
@@ -1296,6 +1431,17 @@ public sealed class ErumaniGame : Game
         return new Rectangle((bb.Width - w) / 2, (bb.Height - h) / 2, w, h);
     }
 
+    /// <summary>For a scripted run's state dump on a map: what the event shows, and the game state events change (to compare a run with one loaded from a save).</summary>
+    string EventStateLines()
+    {
+        if (_session is null || _runner is null) return "";
+        string shown = _runner.Message is { } msg ? "message: " + string.Join(" / ", msg.Lines)
+            : _runner.Choice is { } ch ? $"choice {_runner.ChoiceIndex}: {string.Join(" / ", ch)}" : "message: none";
+        return $"{shown}\nface {_runner.Message?.Face} brightness {_fx.Brightness} tone {_fx.Tone} pictures [{string.Join(",", _fx.Pictures.Select(p => p.File))}] bgm {_audio.CurrentBgm} camera {_session.Camera}\n"
+            + $"gold {_state.Gold} items {string.Join(",", _state.Items.Select(kv => $"{kv.Key}x{kv.Value}"))} switches {string.Join(",", Enumerable.Range(0, GameState.SwitchCount).Where(i => _state.Switches[i]))} "
+            + $"variables {string.Join(",", Enumerable.Range(0, GameState.VariableCount).Where(i => _state.Variables[i] != 0).Select(i => $"{i}={_state.Variables[i]}"))}\n";
+    }
+
     /// <summary>Screenshot (in screenshot mode, at the render scale) or the frame to the window: one to one when the window is a whole multiple of 640 × 480, else scaled down from the next whole multiple (smoothly with the Smooth filter).</summary>
     void Present(GameTime gameTime)
     {
@@ -1303,7 +1449,7 @@ public sealed class ErumaniGame : Game
         {
             GraphicsDevice.SetRenderTarget(null);
             using (var f = File.Create(shot)) _final.SaveAsPng(f, _final.Width, _final.Height);
-            File.WriteAllText(Path.ChangeExtension(shot, ".txt"), $"frame={_frame} script-left={_script.Count} {(_title is not null ? "Title" : _camp is not null ? $"Camp gold={_state.Gold} items={string.Join(",", _state.Items.Select(kv => $"{kv.Key}x{kv.Value}"))} roster={string.Join(",", _state.Roster.Select(kv => $"{kv.Key}:c{kv.Value.ClassId}/w{kv.Value.Weapon}/a{kv.Value.Armor}/x{kv.Value.Accessory}"))}" : _battle?.DebugState)}\n" + string.Join("\n", _trace) + "\n");
+            File.WriteAllText(Path.ChangeExtension(shot, ".txt"), $"frame={_frame} script-left={_script.Count} {(_title is not null ? "Title" : _camp is not null ? $"Camp gold={_state.Gold} items={string.Join(",", _state.Items.Select(kv => $"{kv.Key}x{kv.Value}"))} roster={string.Join(",", _state.Roster.Select(kv => $"{kv.Key}:c{kv.Value.ClassId}/w{kv.Value.Weapon}/a{kv.Value.Armor}/x{kv.Value.Accessory}"))}" : _battle?.DebugState)}\n" + EventStateLines() + string.Join("\n", _trace) + "\n");
             Exit();
             return;
         }

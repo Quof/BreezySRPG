@@ -285,6 +285,18 @@ public sealed class ScreenEffects
         EndWipe();
     }
 
+    /// <summary>
+    /// Jumps everything running to its end, the main loop's fades too: the screen as it will stand (a save made in the
+    /// middle of an event).
+    /// </summary>
+    public void Settle()
+    {
+        Complete();
+        if (_tickStep != 0) Brightness = _tickStep > 0 ? 100 : 0;
+        _tickStep = 0;
+        _tickDelay = 0;
+    }
+
     void EndWipe()
     {
         Transition = 0;

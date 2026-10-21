@@ -17,7 +17,7 @@ public sealed class TitleScreen
     readonly GameFolder _folder;
     readonly Textures _tex;
     readonly Ui.Ui _ui;
-    // the original's three rows plus 「オプション」 (modern settings)
+    // the original's three rows plus 「環境設定」 (modern settings)
     readonly Camp.MenuList _menu = new() { Rect = new Rectangle(266, 320, 108, 80), ItemWidth = 84 };
     readonly Camp.MenuList _files = new() { Rect = new Rectangle(272, 280, 96, 176), ItemX = 18, ItemWidth = 60 };
     bool _loading;
@@ -26,7 +26,8 @@ public sealed class TitleScreen
     bool _pointMenu = true;
 
     public Action? NewGame { get; set; }
-    public Action<SaveFile>? Loaded { get; set; }
+    /// <summary>A save picked to load, and its file number (its EasySRPG95 note is the file's own).</summary>
+    public Action<SaveFile, int>? Loaded { get; set; }
     public Action? Quit { get; set; }
     public Action? Options { get; set; }
     public bool AcceptsCancel => _loading;
@@ -44,7 +45,7 @@ public sealed class TitleScreen
 
     public void Update(BattleInput i, Point mouse)
     {
-        _menu.Items[2] = Ui.Lang.T("Options", "オプション");   // in the language the options may just have changed
+        _menu.Items[2] = Ui.Lang.T("Options", "環境設定");   // in the language the options may just have changed
         if (_pointMenu)
         {
             _pointMenu = false;
@@ -54,7 +55,7 @@ public sealed class TitleScreen
         {
             var (result, slot) = files.Update(i, mouse);
             if (result == Ui.SaveMenu.Result.None) return;
-            if (result == Ui.SaveMenu.Result.Picked && SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } picked) { Loaded?.Invoke(picked); return; }
+            if (result == Ui.SaveMenu.Result.Picked && SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } picked) { Loaded?.Invoke(picked, slot); return; }
             files.Dispose();
             _saveMenu = null;
             _loading = false;
@@ -65,7 +66,7 @@ public sealed class TitleScreen
         if (_loading)
         {
             if (i.Cancel || i.RightClick) { _loading = false; _menu.Index = 1; _pointMenu = true; return; }
-            if (_files.Navigate(i, mouse) is var f and >= 0 && SaveFile.Load(SaveFile.PathFor(_folder, f + 1)) is { } save) Loaded?.Invoke(save);
+            if (_files.Navigate(i, mouse) is var f and >= 0 && SaveFile.Load(SaveFile.PathFor(_folder, f + 1)) is { } save) Loaded?.Invoke(save, f + 1);
             return;
         }
         switch (_menu.Navigate(i, mouse))
@@ -87,7 +88,7 @@ public sealed class TitleScreen
 
     public void Draw(SpriteBatch sb, int frame)
     {
-        _menu.Items[2] = Ui.Lang.T("Options", "オプション");
+        _menu.Items[2] = Ui.Lang.T("Options", "環境設定");
         if (_tex.Get("TITLE.BMP", transparent: false) is { } t) sb.Draw(t, Vector2.Zero, Color.White);
         if (!_loading) _menu.Draw(sb, _ui, true, frame);
         else if (_saveMenu is not null) _saveMenu.Draw(sb, frame);

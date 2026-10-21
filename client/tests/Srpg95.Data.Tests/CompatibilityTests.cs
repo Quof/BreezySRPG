@@ -60,7 +60,7 @@ public class CompatibilityTests
         Assert.Equal(new[] { "7" }, messages[1].Lines);
     }
 
-    sealed class NoMap : IMapContext
+    internal sealed class NoMap : IMapContext
     {
         public int Phase => 1;
         public bool UnitState(int unit, int state) => false;

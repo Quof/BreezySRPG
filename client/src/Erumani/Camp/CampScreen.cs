@@ -191,7 +191,8 @@ public sealed class CampScreen
     int _armyPressed = -1, _armyPressedFrames;
 
     public Action? StartNext { get; set; }
-    public Action<SaveFile>? Loaded { get; set; }
+    /// <summary>A save picked to load, and its file number (its EasySRPG95 note is the file's own).</summary>
+    public Action<SaveFile, int>? Loaded { get; set; }
     /// <summary>A file was just written (EasySRPG95 notes its play time and picture beside it).</summary>
     public Action<int>? Saved { get; set; }
     /// <summary>The extended save / load screen (modern), when the options choose it over the original's file list (null).</summary>
@@ -635,7 +636,7 @@ public sealed class CampScreen
 
     void LoadFrom(int slot)
     {
-        if (SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } f) Loaded?.Invoke(f);
+        if (SaveFile.Load(SaveFile.PathFor(_folder, slot)) is { } f) Loaded?.Invoke(f, slot);
     }
 
     // ---------------- drawing ----------------

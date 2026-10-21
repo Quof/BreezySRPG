@@ -13,15 +13,19 @@ namespace Erumani.Ui;
 /// turn; on the right the chosen file's map name, its picture of the screen and its details. Saving over a file and
 /// loading one ask first. The map, its name and キャンプ / the turn are the save's and the game's own data; the play
 /// time and the picture are EasySRPG95's notes beside the saves (<see cref="SaveExtras"/>): "--:--:--" and no picture
-/// for a save it didn't write.
+/// for a save it didn't write. A save made in the middle of an event (<see cref="SceneSave"/>) says so after its turn,
+/// and goes in files 9–100 only.
 /// </summary>
 public sealed class SaveMenu : IDisposable
 {
     public const int Slots = 100;
     public enum Result { None, Cancelled, Picked }
 
-    /// <summary>A file's details: its map (1-based) and that map's name, camp or turn, the play time, when it was written, whether it has a picture.</summary>
-    sealed record Info(int Map, string MapName, bool Camp, int Turn, double? Play, DateTime Saved, bool Picture);
+    /// <summary>
+    /// A file's details: its map (1-based) and that map's name, camp or turn, the play time, when it was written, whether
+    /// it has a picture, and whether it was saved in the middle of an event.
+    /// </summary>
+    sealed record Info(int Map, string MapName, bool Camp, int Turn, double? Play, DateTime Saved, bool Picture, bool Scene);
 
     const int Visible = 5;
     static Rectangle EntryRect(int row) => new(16, 32 + row * 84, 252, 80);
@@ -29,6 +33,13 @@ public sealed class SaveMenu : IDisposable
     static readonly Rectangle UpArrow = new(130, 18, 24, 12), DownArrow = new(130, 452, 24, 12);
 
     readonly bool _saving;
+    /// <summary>
+    /// Saving in the middle of an event (<see cref="SceneSave"/>): not into files 1–8, which the original game shares and
+    /// would load as a plain battle save, the rest of the event lost.
+    /// </summary>
+    readonly bool _scene;
+    /// <summary>The files a save made in the middle of an event may not go into.</summary>
+    public const int SharedFiles = 8;
     readonly Ui _ui;
     readonly GraphicsDevice _device;
     readonly GameFolder _folder;
@@ -41,9 +52,9 @@ public sealed class SaveMenu : IDisposable
     Texture2D? _picture;
     (int Slot, int Scale) _pictureFor = (-1, 0);
 
-    public SaveMenu(bool saving, Ui ui, GraphicsDevice device, GameFolder folder, Database db)
+    public SaveMenu(bool saving, Ui ui, GraphicsDevice device, GameFolder folder, Database db, bool scene = false)
     {
-        (_saving, _ui, _device, _folder, _db) = (saving, ui, device, folder, db);
+        (_saving, _scene, _ui, _device, _folder, _db) = (saving, saving && scene, ui, device, folder, db);
         _title = W(saving ? 53 : 54);   // セーブします / ロードします
         // the game's own name for a file (WORD.DAT 81, 「ファイル１」), the number written the same way for every file
         string first = W(81);
@@ -52,6 +63,7 @@ public sealed class SaveMenu : IDisposable
         if (_slotPrefix.Length == 0) _slotPrefix = T("File ", "ファイル");
         var notes = SaveExtras.Read(folder);
         DateTime newest = DateTime.MinValue;
+        if (_scene) _index = SharedFiles;
         for (int n = 1; n <= Slots; n++)
         {
             string path = SaveFile.PathFor(folder, n);
@@ -59,14 +71,17 @@ public sealed class SaveMenu : IDisposable
             var note = SaveExtras.For(notes, n, save.Raw);
             var saved = File.GetLastWriteTime(path);
             _slots[n - 1] = new Info(save.MapIndex + 1, MapName(save.MapIndex), save.AtCamp, (save.Phase + 1) / 2, note?.PlaySeconds, saved,
-                note is not null && File.Exists(SaveExtras.PicturePath(folder, n)));
-            if (saved > newest) (newest, _index) = (saved, n - 1);   // it opens on the file written last
+                note is not null && File.Exists(SaveExtras.PicturePath(folder, n)), note?.Scene is not null && !save.AtCamp);
+            if (saved > newest && Allowed(n - 1)) (newest, _index) = (saved, n - 1);   // it opens on the file written last
         }
         Follow();
         UpdatePicture();
     }
 
     string W(int i) => i >= 0 && i < _db.Words.Length ? _db.Words[i] : "";
+
+    /// <summary>Whether the file at <paramref name="index"/> (0-based) can be picked: any but the shared ones for a save made in an event.</summary>
+    bool Allowed(int index) => !_scene || index >= SharedFiles;
 
     /// <summary>A map's name as the game's MAPNAME.DAT has it (empty when it has none).</summary>
     string MapName(int index) => index >= 0 && index < _db.MapNames.Length ? _db.MapNames[index].Trim() : "";
@@ -127,6 +142,7 @@ public sealed class SaveMenu : IDisposable
         string name = SlotName(_index + 1);
         if (_saving)
         {
+            if (!Allowed(_index)) { Sfx.Buzzer(); return (Result.None, 0); }
             if (_slots[_index] is null) { Sfx.Click(); return (Result.Picked, _index + 1); }
             Ask(T($"Save over {name}?", $"{name}に上書きしますか？"));
         }
@@ -179,12 +195,15 @@ public sealed class SaveMenu : IDisposable
         else _ui.NameText.Get(s)?.Draw(sb, new Vector2(x, y), c);
     }
 
-    string Where(Info info) => info.Camp ? T("Camp", "キャンプ") : T($"Turn {info.Turn}", $"ターン {info.Turn}");
+    string Where(Info info) => info.Camp ? T("Camp", "キャンプ")
+        : info.Scene ? T($"Turn {info.Turn} (event)", $"ターン {info.Turn}（イベント中）") : T($"Turn {info.Turn}", $"ターン {info.Turn}");
 
     public void Draw(SpriteBatch sb, int frame)
     {
         _ui.Fill(sb, new Rectangle(0, 0, 640, 480), Color.Black * 0.62f);
         Small(sb, _title, 20, 10, Bright);
+        // ASCII and the full-width forms only: the original look's font is the game's own Shift-JIS one
+        if (_scene) SmallRight(sb, T($"Saves made in an event go in files {SharedFiles + 1}-{Slots}", "イベント中のセーブはファイル９以降へ"), 624, 10, Dim);
         for (int row = 0; row < Visible; row++) DrawEntry(sb, _top + row, EntryRect(row), _top + row == _index && _confirm is null, frame);
         if (_top > 0) Arrow(sb, UpArrow, -1);
         if (_top + Visible < Slots) Arrow(sb, DownArrow, 1);
@@ -196,17 +215,19 @@ public sealed class SaveMenu : IDisposable
     void DrawEntry(SpriteBatch sb, int slot, Rectangle r, bool chosen, int frame)
     {
         _ui.Panel(sb, r, chosen ? Ui.PanelColor.Blue : Ui.PanelColor.Green);
-        var top = chosen ? _ui.MenuRow(sb, new Rectangle(r.X + 6, r.Y + 6, r.Width - 12, 16), true, true, frame) : Ui.PanelText;
+        bool allowed = Allowed(slot);
+        var top = chosen ? _ui.MenuRow(sb, new Rectangle(r.X + 6, r.Y + 6, r.Width - 12, 16), true, allowed, frame) : allowed ? Ui.PanelText : Dim;
         Small(sb, SlotName(slot + 1), r.X + 12, r.Y + 6, top);
         if (_slots[slot] is not { } info)
-        {
             Small(sb, T("―― Empty ――", "―― 空き ――"), r.X + 12, r.Y + 34, Dim);   // ― is in the game's own (Shift-JIS) font
-            return;
+        else
+        {
+            SmallRight(sb, $"{T("Map", "マップ")} {info.Map}", r.Right - 12, r.Y + 6, chosen ? top : Dim);
+            Big(sb, info.MapName, r.X + 12, r.Y + 28, Bright);
+            Small(sb, PlayTime(info.Play), r.X + 12, r.Y + 56, Ui.PanelText);
+            SmallRight(sb, Where(info), r.Right - 12, r.Y + 56, Ui.PanelText);
         }
-        SmallRight(sb, $"{T("Map", "マップ")} {info.Map}", r.Right - 12, r.Y + 6, chosen ? top : Dim);
-        Big(sb, info.MapName, r.X + 12, r.Y + 28, Bright);
-        Small(sb, PlayTime(info.Play), r.X + 12, r.Y + 56, Ui.PanelText);
-        SmallRight(sb, Where(info), r.Right - 12, r.Y + 56, Ui.PanelText);
+        if (!allowed) _ui.Fill(sb, r, Color.Black * 0.4f);   // a file this save can't go in, shaded over
     }
 
     void DrawDetails(SpriteBatch sb)

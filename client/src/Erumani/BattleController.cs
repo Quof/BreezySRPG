@@ -264,6 +264,135 @@ public sealed class BattleController
         _state_ = _s.Field.AllyPhase ? State.Idle : State.EnemyPhase;
     }
 
+    // ---------------- saving in the middle of an event (modern, SceneSave) ----------------
+
+    /// <summary>An event is running and nothing of the map's own is under way (a caption, a battle scene, a panel): it can be saved where it stands.</summary>
+    public bool CanSaveScene => _state_ == State.Events && _runner.CanSave && Outcome == MapOutcome.None && _ending == MapOutcome.None
+        && _telop is null && _scene is null && _scenes.Count == 0 && _panel is null && _panels.Count == 0;
+
+    /// <summary>A unit as a save names it: its record number while it's on the map, else its map object (null for neither).</summary>
+    static string? Ref(BattleUnit? u) => u is null ? null : u is { Hidden: false, Slot: > 0 } ? $"r{u.Slot}" : u.MapObject >= 0 ? $"o{u.MapObject}" : null;
+
+    BattleUnit? Unref(string? r) => r is { Length: > 1 } && int.TryParse(r[1..], out int n)
+        ? r[0] == 'r' ? _s.Field.Units.FirstOrDefault(u => !u.Hidden && u.Slot == n)
+        : r[0] == 'o' ? _s.Field.Units.FirstOrDefault(u => u.MapObject == n) : null
+        : null;
+
+    /// <summary>
+    /// The event and what follows it, once the runner and the screen have been settled; null when it can't be saved now.
+    /// The map itself goes into the battle save written with it.
+    /// </summary>
+    public SceneSave? SaveScene()
+    {
+        if (!CanSaveScene || _runner.Save() is not { } ev) return null;
+        FightSave? fight = null;
+        if (_beforeFight is { } f && (fight = SaveFight(f)) is null) return null;
+        static Dictionary<string, string> Marks(Dictionary<(int Obj, int Slot), BattleUnit> marks) =>
+            marks.Where(kv => Ref(kv.Value) is not null).ToDictionary(kv => $"{kv.Key.Obj}.{kv.Key.Slot}", kv => Ref(kv.Value)!);
+        var units = _s.Field.Units.Where(u => !u.Hidden && Ref(u) is not null).Select(u => (u, v: _s.Visuals[u]))
+            .Where(x => x.v.Facing != 0 || x.v.Pending.Count > 0 || x.u.Dead)
+            .Select(x => new UnitSceneSave(Ref(x.u)!, x.v.Facing, x.u.KilledBy, x.v.Pending.Select(b => (int)b).ToArray())).ToList();
+        var overlay = _action is { } o
+            ? new OverlaySave(new[] { o.Actor.X, o.Actor.Y }, o.Colour, o.Area.Select(t => new[] { t.X, t.Y }).ToList(), o.Met.Select(t => new[] { t.X, t.Y }).ToList())
+            : null;
+        var map = new MapSceneSave(_opening, fight, _afterFightNext, Ref(_actor), Ref(_after?.Attacker), _after?.Others.Select(Ref).OfType<string>().ToList(),
+            _group, _wait, Marks(_passMarks), Marks(_stopMarks), overlay, _cursor.X, _cursor.Y, units);
+        return new SceneSave { Event = ev, Map = map, CameraX = _s.Camera.X, CameraY = _s.Camera.Y };
+    }
+
+    /// <summary>The fight a "before" event holds up, as rolled; null if one of its units can't be named.</summary>
+    static FightSave? SaveFight(PendingFight f)
+    {
+        var r = f.Result;
+        if (Ref(f.Actor) is not { } actor || (f.Spell is null && Ref(f.Target) is null)) return null;
+        var strikes = new List<StrikeSave>();
+        foreach (var s in r.Strikes)
+        {
+            if (Ref(s.Attacker) is not { } a || Ref(s.Target) is not { } t) return null;
+            strikes.Add(new StrikeSave(a, t, s.Hit, s.Critical, s.Damage, s.Killed, s.HpAfter, s.Moved));
+        }
+        var effects = new List<EffectSave>();
+        foreach (var e in r.Effects)
+        {
+            if (Ref(e.Target) is not { } t) return null;
+            effects.Add(new EffectSave(t, (int)e.Kind, e.Amount, e.Killed, e.HpAfter, e.Moved));
+        }
+        static Dictionary<string, T> ByRef<T>(Dictionary<BattleUnit, T> d) => d.Where(kv => Ref(kv.Key) is not null).ToDictionary(kv => Ref(kv.Key)!, kv => kv.Value);
+        return new FightSave(actor, Ref(f.Target), f.Spell?.Index ?? -1, new ResultSave(strikes, effects, ByRef(r.ExpGained), ByRef(r.LevelUps),
+            r.RewardGold, r.RewardItems.ToList(), ByRef(r.Learned.ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => m.Index).ToArray())), r.MpAfter));
+    }
+
+    PendingFight? LoadFight(FightSave f)
+    {
+        var target = Unref(f.Target);
+        var spell = f.Spell >= 0 && f.Spell < _db.Magic.Length ? _db.Magic[f.Spell] : null;
+        if (Unref(f.Actor) is not { } actor || (spell is null && target is null)) return null;
+        var s = f.Result;
+        var r = new ExchangeResult { RewardGold = s.RewardGold, MpAfter = s.MpAfter };
+        foreach (var x in s.Strikes)
+        {
+            if (Unref(x.Attacker) is not { } a || Unref(x.Target) is not { } t) return null;
+            r.Strikes.Add(new Strike(a, t, x.Hit, x.Critical, x.Damage, x.Killed, x.HpAfter, x.Moved));
+        }
+        foreach (var x in s.Effects)
+        {
+            if (Unref(x.Target) is not { } t) return null;
+            r.Effects.Add(new Srpg95.Rules.Effect(t, (EffectKind)x.Kind, x.Amount, x.Killed, x.HpAfter, x.Moved));
+        }
+        foreach (var (k, v) in s.Exp) if (Unref(k) is { } u) r.ExpGained[u] = v;
+        foreach (var (k, v) in s.LevelUps) if (Unref(k) is { } u) r.LevelUps[u] = v;
+        foreach (var (k, v) in s.Learned)
+            if (Unref(k) is { } u) r.Learned[u] = v.Where(i => i >= 0 && i < _db.Magic.Length).Select(i => _db.Magic[i]).ToList();
+        r.RewardItems.AddRange(s.RewardItems);
+        return new PendingFight(actor, target, spell, r);
+    }
+
+    /// <summary>
+    /// Goes on with a restored battle (<see cref="Resume"/> first) in the middle of the event <paramref name="save"/> holds.
+    /// Should its script no longer have the place it was saved at (the game's files changed since), the event starts
+    /// over; false when the map has no such event at all.
+    /// </summary>
+    public bool ResumeScene(SceneSave save)
+    {
+        if (!_s.Map.Scripts.TryGetValue(save.Event.Script, out var sc)) return false;
+        var m = save.Map;
+        _opening = m.Opening;
+        _beforeFight = m.Fight is { } f ? LoadFight(f) : null;
+        _afterFightNext = m.AfterFight;
+        _actor = Unref(m.Actor);
+        _after = Unref(m.AfterAttacker) is { } attacker ? (attacker, (m.AfterOthers ?? new()).Select(Unref).OfType<BattleUnit>().ToList()) : null;
+        (_group, _wait) = (m.Group, m.Wait);
+        void Marks(Dictionary<(int Obj, int Slot), BattleUnit> into, Dictionary<string, string> from)
+        {
+            into.Clear();
+            foreach (var (key, unit) in from)
+                if (key.Split('.') is [var o, var s] && int.TryParse(o, out int obj) && int.TryParse(s, out int slot) && Unref(unit) is { } u)
+                    into[(obj, slot)] = u;
+        }
+        Marks(_passMarks, m.PassMarks);
+        Marks(_stopMarks, m.StopMarks);
+        _action = m.Action is { Actor.Length: 2 } a
+            ? new ActionOverlay((a.Actor[0], a.Actor[1]), a.Colour, a.Area.Where(t => t.Length == 2).Select(t => (t[0], t[1])).ToHashSet(),
+                a.Met.Where(t => t.Length == 2).Select(t => (t[0], t[1])).ToList())
+            : null;
+        _cursor = new Point(m.CursorX, m.CursorY);
+        foreach (var us in m.Units)
+            if (Unref(us.Unit) is { } u)
+            {
+                var v = _s.Visuals[u];
+                v.Facing = us.Facing;
+                if (u.Dead) u.KilledBy = us.KilledBy;
+                v.Pending.Clear();
+                foreach (var step in us.Pending) v.Pending.Enqueue((byte)step);
+            }
+        _s.Camera = new Point(save.CameraX, save.CameraY);
+        _s.ClampCamera();
+        _eventsRun++;
+        _state_ = State.Events;
+        if (!_runner.Restore(sc, save.Event)) _runner.Start(sc);
+        return true;
+    }
+
     /// <summary>
     /// セーブする / ロードする (FUN_00418bdc / FUN_00418edc): 「セーブします」 (「ロードします」), a rule and ファイル１–８ in a green
     /// panel (the larger of 5 and half the title's bytes, plus 2) × 12 px wide and 11 rows high, one tile left of the
@@ -416,8 +545,12 @@ public sealed class BattleController
     BattleUnit? _actor;
     /// <summary>Pass-by / stop-on marks on "Other" objects' slots: the unit that went over or stopped on the tile.</summary>
     readonly Dictionary<(int Obj, int Slot), BattleUnit> _passMarks = new(), _stopMarks = new();
-    /// <summary>What continues once the running event ends (a fight waiting on its "before" events, the "after" ones...).</summary>
-    Action? _resume;
+    /// <summary>What continues once the running event ends: a fight waiting on its "before" events...</summary>
+    PendingFight? _beforeFight;
+    /// <summary>...or the rest of a fight's "after" events (<see cref="_after"/>); otherwise the checkpoint.</summary>
+    bool _afterFightNext;
+    /// <summary>An attack on <paramref name="Target"/> or a cast of <paramref name="Spell"/>, as rolled.</summary>
+    sealed record PendingFight(BattleUnit Actor, BattleUnit? Target, Magic? Spell, ExchangeResult Result);
     bool _opening;
     /// <summary>The fight whose "after" (cond 11) events are still to be looked at: the attacker and the opposing units it met.</summary>
     (BattleUnit Attacker, List<BattleUnit> Others)? _after;
@@ -621,11 +754,17 @@ public sealed class BattleController
     /// FUN_00410388: before a fight or spell, its "before" events one at a time; the fight follows straight after
     /// them (no checkpoint in between). Returns true if one started.
     /// </summary>
-    bool BeforeFight(BattleUnit attacker, List<BattleUnit> met, Action fight)
+    bool BeforeFight(BattleUnit attacker, List<BattleUnit> met, PendingFight fight)
     {
         foreach (var t in met)
-            if (AttackTrigger(attacker, t, 10)) { _resume = fight; return true; }
+            if (AttackTrigger(attacker, t, 10)) { _beforeFight = fight; return true; }
         return false;
+    }
+
+    void Fight(PendingFight f)
+    {
+        if (f.Spell is { } m) DoCast(f.Actor, m, f.Result);
+        else DoAttack(f.Actor, f.Target!, f.Result);
     }
 
     /// <summary>
@@ -636,7 +775,7 @@ public sealed class BattleController
         _action = null;
         if (_after is { } a)
             foreach (var t in a.Others)
-                if (AttackTrigger(a.Attacker, t, 11)) { _resume = AfterFight; return; }
+                if (AttackTrigger(a.Attacker, t, 11)) { _afterFightNext = true; return; }
         _after = null;
         if (!CheckPoint()) Continue();
     }
@@ -747,7 +886,8 @@ public sealed class BattleController
         // the event is over: the opening hands over to the first turn; a waiting fight or "after" check goes on;
         // otherwise the checkpoint looks again (FUN_0040d18c's end → state 2)
         if (_opening) { OpeningDone(ran: true); return; }
-        if (_resume is { } r) { _resume = null; r(); return; }
+        if (_beforeFight is { } f) { _beforeFight = null; Fight(f); return; }
+        if (_afterFightNext) { _afterFightNext = false; AfterFight(); return; }
         if (CheckPoint()) return;
         Continue();
     }
@@ -1206,7 +1346,7 @@ public sealed class BattleController
     {
         // the units the spell meets on the other side get their first-attack slots (FUN_00410388)
         var met = OpposingOf(caster, r.Effects.Select(e => e.Target));
-        if (BeforeFight(caster, met, () => DoCast(caster, m, r))) return;
+        if (BeforeFight(caster, met, new PendingFight(caster, null, m, r))) return;
         if (caster.Dead || caster.Hidden) { caster.Acted = true; _actor = caster; AfterFight(); return; }
         if (ShowScenes && !Quiet && r.Effects.Count > 0) QueueSpellScenes(caster, m, r);
         else
@@ -1608,7 +1748,7 @@ public sealed class BattleController
     void DoAttack(BattleUnit atk, BattleUnit def, ExchangeResult r)
     {
         var met = OpposingOf(atk, new[] { def });
-        if (BeforeFight(atk, met, () => DoAttack(atk, def, r))) return;
+        if (BeforeFight(atk, met, new PendingFight(atk, def, null, r))) return;
         // a "before" event can change things (rarely): no fight if either side is gone
         if (atk.Dead || atk.Hidden || def.Dead || def.Hidden) { atk.Acted = true; _actor = atk; AfterFight(); return; }
         if (ShowScenes && !Quiet)

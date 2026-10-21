@@ -60,7 +60,7 @@ Options:
   - `telop+N` / `telopK+N` captures N frames after the next caption (any, or `TELOPK.BMP`: 1 PLAYER TURN, 2 ENEMY TURN, 3 COMPLETE!!) appears.
   - `choice+N` / `choiceK+N` captures N frames after the next (the K-th) character choice comes up, leaving it unanswered.
   - `endturn` ends the player's turn, as ターン終了 does.
-  - `rclick` right-clicks as soon as an event shows a message or a choice (the options in the middle of a cutscene); with the options up, the other keys work them.
+  - `rclick` right-clicks as soon as an event shows a message or a choice, once the `--advance` confirms are done (the event's menu: save, load, options); `rclickfx` as soon as it shows neither (a screen effect, a move, a pan, a wait). With the menu up, the other keys work it: `enter` saves, `down,enter` loads, `down,down,enter` opens the options; in the save screen `enter` picks the file (a save made in an event starts on file 9).
 
   Example: select ジュナ on map 1 and move her 3 tiles up:
 
@@ -107,7 +107,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | Space | during an event: skip the rest of it (asks first) |
 | R | enemy ranges: every enemy's reach (moves and attacks, spells included) as one red area; press again to hide |
 | F1 | options (anywhere) |
-| Right click during an event | options, in the middle of the cutscene |
+| Right click during an event | a menu at the pointer: save, load, options (環境設定), in the middle of the cutscene |
 | F4 or Alt+Enter | fullscreen |
 | F5 | switch pixel-perfect / fit scaling |
 | F3 | debug overlay (map, BGM, event log) |
@@ -115,7 +115,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 ## Options (modern features)
 
-F1 opens them anywhere; a right click during an event (a cutscene) opens them there too, and the event carries on where it was once they're closed. A setting with several values steps through them with ← / → and opens a drop-down list of them on a click or Enter.
+F1 opens them anywhere; during an event (a cutscene), a right click's menu has them too (see [Saving in the middle of an event](#saving-in-the-middle-of-an-event)), and the event carries on where it was once they're closed. A setting with several values steps through them with ← / → and opens a drop-down list of them on a click or Enter.
 
 | Section | Settings |
 |---|---|
@@ -133,6 +133,16 @@ Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font Licen
 100 files: `SAVE1.DAT`–`SAVE100.DAT` beside the game, in the original's format (the original game sees files 1–8). The list on the left shows each file's name (the game's own 「ファイル１」 naming), the map it was saved on (its number and its name from the game's `MAPNAME.DAT`), the play time, and キャンプ or the turn; the right shows the chosen file's map name, a picture of the screen when it was saved, and its details. Saving over a file or loading one asks first. ↑ ↓ move, ← → and the mouse wheel page through, a click picks.
 
 SRPG Maker 95 keeps no play time and no picture, so EasySRPG95 notes them itself in an `EasySRPG95` folder beside the saves (`SAVEn.png`, `saves.json`), tied to each save file's contents: a save the original game wrote shows `--:--:--` and no picture, and so does a game continued from one. Play time counts while a map or camp is up and the window is in front.
+
+### Saving in the middle of an event
+
+The original saves only from the turn menu and the camp, between events, and a right click does nothing while an event runs. In EasySRPG95 a right click during an event (a cutscene, a choice, a battle's opening words) opens セーブ / ロード / 環境設定 (Save / Load / Options) at the pointer; the event waits meanwhile.
+
+- **Save** opens the extended save screen (whatever the "Save / load screen" option says) and writes the map as it stands into `SAVEn.DAT` as an ordinary battle save; the rest — where the event stands (its script, the block and command it's at, the message or choice up, a wait's time left), the pictures, the screen's brightness, the music, the camera, the fight a "before" event holds up (as rolled), what follows the event (the first turn after an opening, the rest of a fight's "after" events, the enemy phase) — goes into the save's note in `saves.json`. A fade, a pan or a unit's move still under way jumps to its end first, and the event goes on from there. The picture keeps the event's message and choice. Such a save goes in files 9–100 only: files 1–8 are the original's, which would load it as a plain battle save with the rest of the event lost. The list marks it "Turn n (event)" / 「ターン n（イベント中）」.
+- **Load** leaves the event for any file (a save made in an event carries on with that event, from the turn menu, the camp or the title too).
+- **Options** opens the options.
+
+Should the save file change (the original game saving over it), its note no longer counts and the file loads as the plain battle save it is.
 
 ## Roadmap
 

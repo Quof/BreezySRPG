@@ -81,7 +81,7 @@ public sealed class OptionsScreen
     string PageTitle => _page switch
     {
         Page.Display => T("Display", "画面"), Page.Audio => T("Audio", "サウンド"), Page.Gameplay => T("Gameplay", "ゲーム"),
-        Page.Controls => T("Controls", "操作"), _ => T("Options", "オプション"),
+        Page.Controls => T("Controls", "操作"), _ => T("Options", "環境設定"),
     };
 
     /// <summary>Window sizes to offer: 4:3 sizes the screen can hold (640 × 480 always), the whole multiples marked.</summary>
@@ -177,7 +177,7 @@ public sealed class OptionsScreen
         GameAction.CameraDown => T("Camera down (menu down)", "画面スクロール下（メニュー下）"),
         GameAction.CameraLeft => T("Camera left", "画面スクロール左"), GameAction.CameraRight => T("Camera right", "画面スクロール右"),
         GameAction.FastForward => T("Fast-forward", "早送り"), GameAction.Backlog => T("Text backlog", "メッセージ履歴"),
-        GameAction.Options => T("Options", "オプション"), GameAction.Fullscreen => T("Fullscreen", "全画面切り替え"),
+        GameAction.Options => T("Options", "環境設定"), GameAction.Fullscreen => T("Fullscreen", "全画面切り替え"),
         GameAction.SkipCutscene => T("Skip cutscene", "イベントスキップ"),
         GameAction.EnemyRanges => T("Enemy ranges (all at once)", "敵の行動範囲表示"),
         _ => a.ToString(),
