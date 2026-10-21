@@ -102,7 +102,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 | Keys | Action |
 |---|---|
-| Enter / Z, left click | confirm. On a unit: select it, or show its status if it can't act; an enemy shows its movement range (blue) and, around it, its attack range (red: its weapon's and its harmful spells' reach). On an empty tile: the turn menu |
+| Enter / Z, left click | confirm. On a unit: select it, or show its status if it can't act; a unit's movement range (blue) comes with its attack range around it (red: its weapon's and its harmful spells' reach, not on its own side's units) — your units' too, while you move them. On an empty tile: the turn menu |
 | Esc / X / Backspace, right click | cancel or back (at the command menu: undo the move). During a battle scene: skip it. A right click on an empty tile opens the turn menu, which also has 環境設定 (Options) |
 | Arrows | move the map cursor (hold to repeat); move in menus |
 | W A S D | scroll the map camera; W/S also move in menus |

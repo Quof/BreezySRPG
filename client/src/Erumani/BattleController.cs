@@ -953,11 +953,12 @@ public sealed class BattleController
         _selFrom = (u.X, u.Y);
         _reach = _s.Field.Reachable(u);
         _viewOnly = u.Side != Side.Ally;
-        // an enemy's attack range, around its movement: not on its own side's units, which it never attacks — their tiles
-        // stay clear, as other units' do in a movement range
-        _reachHits = u.Side == Side.Enemy
-            ? EnemyAi.Hits(_s.Field, u, _reach.Keys).Where(t => !_reach.ContainsKey(t) && _s.Field.UnitAt(t.X, t.Y) is not { Side: Side.Enemy }).ToList()
-            : null;
+        // its attack range around its movement (modern), any side's unit: its weapon's reach and its harmful spells' areas
+        // from every tile it can stop on — not on its own side's units (enemies against everyone else), which it never
+        // attacks: their tiles stay clear, as other units' do in a movement range
+        bool enemy = u.Side == Side.Enemy;
+        _reachHits = EnemyAi.Hits(_s.Field, u, _reach.Keys)
+            .Where(t => !_reach.ContainsKey(t) && !(_s.Field.UnitAt(t.X, t.Y) is { } o && (o.Side == Side.Enemy) == enemy)).ToList();
         _state_ = State.Selected;
     }
 
