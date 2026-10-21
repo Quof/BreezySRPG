@@ -14,7 +14,6 @@ public sealed record MessageView(int Window, IReadOnlyList<string> Lines, int Fa
 /// Runs one event script tree (FORMAT_NOTES §11.3 for the command semantics).
 /// Blocking commands: message, character choice, wait, screen fades, shake,
 /// execute movement and button input. Everything else runs instantly.
-/// Behaviours marked "provisional" still need checking against the original runtime.
 /// </summary>
 public sealed class EventRunner
 {

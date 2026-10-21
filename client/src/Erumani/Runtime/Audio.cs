@@ -8,9 +8,9 @@ namespace Erumani.Runtime;
 /// Sound effects from the original WAVs (all PCM mono 8/16-bit) and looping BGM. MIDI BGM plays either through
 /// a SoundFont synthesizer (MeltySynth, the modern option; consistent on every PC) or the Windows MCI sequencer
 /// (the Microsoft GS Wavetable synth, what the original runtime used). WAV BGM always uses MCI.
-/// System sounds the runtime plays itself (heard in the recordings, FORMAT_NOTES §15): CLICK.WAV on confirm and
-/// when advancing text, CANCEL.WAV on cancel, BUZZER.WAV on an unavailable choice, DOWN.WAV when a unit falls,
-/// LEVELUP.WAV on a level-up.
+/// System sounds the runtime plays itself, from the game folder: FUN_00409428's CLICK.WAV (0, on confirm and when
+/// advancing text), CANCEL.WAV (1), BUZZER.WAV (2, an unavailable choice) and DOWN.WAV (3, a unit falling), and
+/// LEVELUP.WAV when the level-up panel opens (FUN_00410a88) or a class changes (FUN_0040be00).
 /// </summary>
 public sealed class Audio(GameFolder game) : IDisposable
 {

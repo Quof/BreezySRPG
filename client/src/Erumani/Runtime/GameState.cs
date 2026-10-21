@@ -1,6 +1,6 @@
 namespace Erumani.Runtime;
 
-/// <summary>Persistent game state (what a save file will hold). Format of SAVEn.DAT pending (T16).</summary>
+/// <summary>Persistent game state: what a save file holds besides the map's own (<see cref="SaveFile"/>).</summary>
 public sealed class GameState
 {
     public const int SwitchCount = 500, VariableCount = 500;

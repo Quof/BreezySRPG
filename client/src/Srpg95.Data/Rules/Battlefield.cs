@@ -20,8 +20,7 @@ public sealed class ExchangeResult
 
 /// <summary>
 /// Battle-map rules: terrain, movement ranges, attacks, EXP/levels, turn upkeep and win/lose.
-/// Formulas: <see cref="Combat"/> (help "Battle Algorithm"). Everything marked provisional
-/// still needs checking against the original runtime.
+/// Formulas: <see cref="Combat"/> (help "Battle Algorithm", checked against SRPGEXEC.EXE).
 /// </summary>
 /// <summary>Tiles a unit can stop on, plus the full path links (including tiles it may only pass through).</summary>
 public sealed class ReachMap(Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> links)

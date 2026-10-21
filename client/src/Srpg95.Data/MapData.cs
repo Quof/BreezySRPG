@@ -70,6 +70,10 @@ public sealed class MapData
     /// the whole 40 × 40 grid when header +0x444 is set (every shipped map), else h rows of w chips — the 100 objects,
     /// then the script container (FUN_0040289c).
     /// </summary>
+    /// <summary>Where the 100 object records start in an SMAP file: after the header and the tiles.</summary>
+    public static int ObjectsOffset(byte[] d) =>
+        TilesOff + (Bin.I32(d, 0x444) != 0 ? MaxSize * MaxSize : Bin.I32(d, 0x20) * Bin.I32(d, 0x24)) * 2;
+
     public static MapData Parse(byte[] d)
     {
         int w = Bin.I32(d, 0x20), h = Bin.I32(d, 0x24);
@@ -79,7 +83,7 @@ public sealed class MapData
             for (int x = 0; x < w; x++)
                 tiles[y, x] = Bin.U16(d, TilesOff + (y * stride + x) * 2);
 
-        int objOff = TilesOff + (stride == MaxSize ? MaxSize * MaxSize : w * h) * 2;
+        int objOff = ObjectsOffset(d);
         var objects = new List<MapObject>();
         for (int i = 0; i < ObjectCount; i++)
         {

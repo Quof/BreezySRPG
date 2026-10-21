@@ -5,9 +5,9 @@ using Srpg95.Data;
 namespace Erumani.Ui;
 
 /// <summary>
-/// Drawing primitives for the 640x480 screen, matched pixel-for-pixel against screenshots
-/// of the original runtime (FORMAT_NOTES T17): message window, speech tail, screen frame,
-/// mouse cursor and GDI text.
+/// Drawing primitives for the 640x480 screen as the original runtime draws them: panels in SYSTEM.BMP's swatches
+/// (FUN_0041203c), message balloons (FUN_004121ac), menu bars, the screen frame, the mouse cursor, the exe's own
+/// 12-px font (KANJIFONT) and GDI text.
 /// </summary>
 public sealed class Ui : IDisposable
 {
@@ -28,7 +28,7 @@ public sealed class Ui : IDisposable
     public GdiText Text { get; }
     /// <summary>Menu/panel text (choices, camp menu): smaller than message text.</summary>
     public GdiText SmallText { get; }
-    /// <summary>16 px bold: unit names on the battle scene's info panels (T22).</summary>
+    /// <summary>16 px bold (FUN_00407888): unit names on the battle scene's info panels and the status window.</summary>
     public GdiText NameText { get; }
 
     public Ui(GraphicsDevice device, Textures tex)

@@ -1055,11 +1055,6 @@ public sealed class ErumaniGame : Game
         _sb.Draw(t, new Vector2(x, y), Color.White);
     }
 
-    // Layout measured from screenshots of the original (FORMAT_NOTES T17):
-    // window 414x126 at y 33 / 177 / 321 (top / centre / bottom); x 113 without a face,
-    // x 193 with a face on the left (face 128x128 at (32, y-1), speech tail on the window's
-    // left edge). Text: GDI MS Gothic 18 px bold, colour (16,16,0), origin (+17, +11), 22 px lines.
-    // Face-on-the-right placement is mirrored and still unverified.
     void DrawMessage()
     {
         var msg = _runner?.Message ?? (_runner?.Choice is not null ? _runner.LastMessage : null);

@@ -15,8 +15,9 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 
 /// <summary>
 /// Battle-map flow: events (opening, turn, contact, attack, death, victory triggers), the
-/// player phase (select, move, act), the enemy phase (AI), and win/lose. Layout of menus and
-/// popups is provisional where no reference screenshot exists (FORMAT_NOTES §13).
+/// player phase (select, move, act), the enemy phase (AI), and win/lose, laid out and timed as
+/// SRPGEXEC.EXE's map states (FUN_0040dee0) do it. The one-line popups (battle scenes off) and the
+/// forecast and terrain panels are the client's own.
 /// </summary>
 public sealed class BattleController
 {
@@ -937,19 +938,19 @@ public sealed class BattleController
         _pointMenu = true;
     }
 
-    // The lists open by the acting unit (UnitPanel; T21's screenshots show them where these rules put them); the hovered
-    // row gets the flashing light-green / white bar, and a description window sits at (80,32) 480×48 (FUN_004142d4).
-    // Items and equipment choices: 12 rows a page and a "ページ n／m" footer.
+    // The lists open by the acting unit (UnitPanel); the hovered row gets the flashing light-green / white bar, and a
+    // description window sits at (80,32) 480×48 (FUN_004142d4). Items and equipment choices: 12 rows a page and a
+    // "ページ n／m" footer.
     const int ItemRows = 12;
     int _itemPage;
 
     /// <summary>
-    /// The current list: spells 228 wide, 80 px left of the unit's tile; equipment slots 204 × 64, 64 left; items and
-    /// equipment choices 180 × 240 (15 rows), 48 left.
+    /// The current list: spells ((WORD 3's bytes + 1) / 2 + 17) units wide — 228 px for ＴＰ — 80 px left of the unit's
+    /// tile (FUN_00417548); equipment slots 204 × 64, 64 left; items and equipment choices 180 × 240 (15 rows), 48 left.
     /// </summary>
     Rectangle ListRect() => _state_ switch
     {
-        State.SpellList => UnitPanel(-80, 228, (_menu.Length + 1) * 16),
+        State.SpellList => UnitPanel(-80, ((Bin.Sjis.GetByteCount(Word(3)) + 1) / 2 + 17) * 12, (_menu.Length + 1) * 16),
         State.EquipSlots => UnitPanel(-64, 204, 64),
         _ => UnitPanel(-48, 180, 240),
     };

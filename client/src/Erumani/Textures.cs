@@ -24,7 +24,7 @@ public sealed class Textures(GraphicsDevice device, GameFolder game) : IDisposab
 
     readonly Dictionary<string, Texture2D?> _silhouettes = new();
 
-    /// <summary>The sprite sheet with every opaque pixel white (battle hit flash, T22).</summary>
+    /// <summary>The sprite sheet with every opaque pixel white (the battle scene's hit flash, FUN_00419574).</summary>
     public Texture2D? Silhouette(string fileName)
     {
         if (_silhouettes.TryGetValue(fileName, out var t)) return t;

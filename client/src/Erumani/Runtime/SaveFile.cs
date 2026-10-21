@@ -5,10 +5,10 @@ using Srpg95.Data;
 namespace Erumani.Runtime;
 
 /// <summary>
-/// SAVEn.DAT, the original runtime's save format (FORMAT_NOTES §14): a 2000-byte header, 100 map-unit and
-/// 50 roster unit records of 640 bytes, and a copy of the map's object table. Writing starts from the
-/// bytes of the slot's previous file when there is one, so fields the client doesn't understand survive.
-/// Only camp saves are written in full; a battle save's map state is kept as it was (battle saves: later).
+/// SAVEn.DAT, the original runtime's save format (FORMAT_NOTES §14; FUN_0040be6c writes it, FUN_0040bfbc reads it): a
+/// 2000-byte header, 100 map-unit and 50 roster unit records of 640 bytes, and a copy of the map's object table.
+/// Writing starts from the bytes of the slot's previous file when there is one, so fields the client doesn't
+/// understand survive.
 /// </summary>
 public sealed class SaveFile
 {
@@ -36,7 +36,7 @@ public sealed class SaveFile
     int I32(int off) => BinaryPrimitives.ReadInt32LittleEndian(Raw.AsSpan(off));
     void I32(int off, int v) => BinaryPrimitives.WriteInt32LittleEndian(Raw.AsSpan(off), v);
 
-    /// <summary>1 when saved at a camp, 0 during a battle (inferred).</summary>
+    /// <summary>1 when saved at a camp, 0 on a map (FUN_0040be6c writes whether the top state is the camp's).</summary>
     public bool AtCamp => I32(0x000) == 1;
     /// <summary>The map being played, or the camp's map, 0-based (header 0x004: what FUN_004048ac loads).</summary>
     public int MapIndex => I32(0x004);
@@ -236,7 +236,7 @@ public sealed class SaveFile
         // object table: the map's own; objects whose unit is on the map are consumed (in-use 0), and an object whose
         // unit left the map waits where the unit stood; fired slots flagged
         var smap = File.ReadAllBytes(mapPath);
-        Array.Copy(smap, 0x1130, f.Raw, ObjectsOff, 100 * ObjectSize);
+        Array.Copy(smap, MapData.ObjectsOffset(smap), f.Raw, ObjectsOff, 100 * ObjectSize);
         foreach (var u in all.Where(u => u.MapObject is >= 0 and < 100))
         {
             int o = ObjectsOff + u.MapObject * ObjectSize;

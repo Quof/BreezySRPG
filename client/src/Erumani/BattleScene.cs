@@ -403,9 +403,10 @@ public sealed class BattleScene
     }
 
     /// <summary>
-    /// A defeated unit's death message (UNIT.DAT; FUN_0041d24c), in the scene's 160-px strip from y 320: its face at
-    /// (32, 336), the balloon at (192, 336) with its tail to the left whether or not there's a face, at most 5 lines of
-    /// text 18 px into it from y 348 (recording r1: the balloon's light edge at y 337, x 193).
+    /// A defeated unit's death message (UNIT.DAT; FUN_0041d24c), drawn into the scene's 640 × 160 strip at y 320: its face
+    /// at (32, 16) — (32, 336) on the screen — the balloon (FUN_004121ac, 26 × 8 units) at (192, 16) with its tail to the
+    /// left whether or not there's a face, and at most 5 lines, split at each CR, in 18-px MS Gothic from (210, 28), 22 px
+    /// apart.
     /// </summary>
     void DrawDeathMessage(SpriteBatch sb, BattleUnit u)
     {
