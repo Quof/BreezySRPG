@@ -147,8 +147,9 @@ public sealed partial class Battlefield
                     case 0: t.PoisonTurns = 3; return new Effect(t, EffectKind.Poison, 0, false);
                     // asleep for 2 of its own turns, acting again on the 3rd (help); counted down at its phase start
                     case 1: t.SleepTurns = 3; return new Effect(t, EffectKind.Sleep, 0, false);
-                    case 2: t.PowerUp = -power; return new Effect(t, EffectKind.AttackDown, power, false);
-                    default: t.DefUp = -power; return new Effect(t, EffectKind.DefenseDown, power, false);
+                    // buffs don't stack: a down only replaces a smaller one, an up a lower one (FUN_00417.., battle end)
+                    case 2: t.PowerUp = Math.Min(t.PowerUp, -power); return new Effect(t, EffectKind.AttackDown, power, false);
+                    default: t.DefUp = Math.Min(t.DefUp, -power); return new Effect(t, EffectKind.DefenseDown, power, false);
                 }
             }
             default:
@@ -160,8 +161,8 @@ public sealed partial class Battlefield
                         t.Hp = Math.Min(t.MaxHp, t.Hp + power);
                         return new Effect(t, EffectKind.Heal, t.Hp - before, false);
                     }
-                    case 1: t.PowerUp = power; return new Effect(t, EffectKind.PowerUp, power, false);
-                    case 2: t.DefUp = power; return new Effect(t, EffectKind.DefUp, power, false);
+                    case 1: t.PowerUp = Math.Max(t.PowerUp, power); return new Effect(t, EffectKind.PowerUp, power, false);
+                    case 2: t.DefUp = Math.Max(t.DefUp, power); return new Effect(t, EffectKind.DefUp, power, false);
                     case 3: t.PoisonTurns = 0; return new Effect(t, EffectKind.CurePoison, 0, false);
                     case 4: Cleanse(t); return new Effect(t, EffectKind.Cleanse, 0, false);
                     default:

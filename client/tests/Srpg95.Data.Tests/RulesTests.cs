@@ -197,4 +197,64 @@ public class RulesTests
         }
         Assert.Contains((7, 7), reach.Keys);   // reached by walking through ジュナ
     }
+
+    [Fact]
+    public void Ai_attacks_the_unit_it_can_kill_and_walks_whole_paths()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        var rutee = f.Units.Single(u => u.Unit == 242);
+        var minion = f.Units.First(u => u.Side == Side.Enemy && u.Unit != 3);
+        foreach (var e in f.Units.Where(u => u.Side == Side.Enemy && u != minion)) e.Hidden = true;
+        // both allies two tiles away; ルーティ can be killed, so she's worth 100 more (FUN_004162c4)
+        (minion.X, minion.Y) = (8, 10);
+        (juna.X, juna.Y) = (6, 10);
+        (rutee.X, rutee.Y) = (10, 10);
+        rutee.Hp = 1;
+        var plan = EnemyAi.Plan(f, minion, new bool[500]);
+        Assert.Same(rutee, plan.Target);
+        Assert.True(f.InRange(minion, plan.Destination.X, plan.Destination.Y, rutee));
+        Assert.True(f.Reachable(minion).ContainsKey(plan.Destination));
+        var at = (minion.X, minion.Y);
+        foreach (var step in plan.Path) { Assert.Equal(1, Math.Abs(step.X - at.Item1) + Math.Abs(step.Y - at.Item2)); at = step; }
+        Assert.Equal(plan.Destination, at);
+    }
+
+    [Fact]
+    public void Ai_rushes_toward_a_target_out_of_reach()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var minion = f.Units.First(u => u.Side == Side.Enemy && u.Unit != 3 && u.MovePatterns.FirstOrDefault().Action == 0);
+        foreach (var e in f.Units.Where(u => u.Side == Side.Enemy && u != minion)) e.Hidden = true;
+        int before = f.Units.Where(u => u.Side == Side.Ally).Min(a => Math.Abs(minion.X - a.X) + Math.Abs(minion.Y - a.Y));
+        var plan = EnemyAi.Plan(f, minion, new bool[500]);
+        if (plan.Target is not null) return;   // already in reach on this map: nothing to check
+        Assert.NotEmpty(plan.Path);
+        Assert.True(f.Reachable(minion).ContainsKey(plan.Destination));
+        Assert.Null(f.UnitAt(plan.Destination.X, plan.Destination.Y));
+        var nearest = f.Units.Where(u => u.Side == Side.Ally).Min(a => Math.Abs(plan.Destination.X - a.X) + Math.Abs(plan.Destination.Y - a.Y));
+        Assert.True(nearest < before);
+    }
+
+    [Fact]
+    public void Ai_spell_scores_follow_the_exe()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var nasu = f.Units.Single(u => u.Unit == 3);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        var heal = db.Magic.First(m => m.Type == 2 && m.RaiseEffect == 0 && !m.EffectWholeMap && m.Value > 0);
+        (juna.X, juna.Y) = (nasu.X, nasu.Y + 1);
+        // healing an enemy of the caster's own side: min(power, missing) × 10 + 50; a player unit in the area −150
+        var minion = f.Units.First(u => u.Side == Side.Enemy && u != nasu);
+        (minion.X, minion.Y) = (nasu.X + 5, nasu.Y);
+        minion.Hp = 1;
+        int power = heal.Value + heal.Relation * f.Stats(nasu).Mag / 10;
+        int expected = Math.Min(power, minion.MaxHp - 1) * 10 + 50;
+        var area = f.SpellArea(heal, minion.X, minion.Y).ToHashSet();
+        int others = f.Alive.Count(u => u != minion && area.Contains((u.X, u.Y)) && u.Side != Side.Enemy);
+        Assert.Equal(Math.Max(0, expected - 150 * others), EnemyAi.SpellScore(f, nasu, heal, (minion.X, minion.Y)));
+    }
 }

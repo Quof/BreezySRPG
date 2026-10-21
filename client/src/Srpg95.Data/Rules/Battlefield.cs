@@ -105,12 +105,23 @@ public sealed partial class Battlefield
     }
 
     /// <summary>
-    /// Tiles the unit can end its move on, with path back-links. Friendly units can be passed
-    /// through but not stopped on; hostile ones block. (Provisional: no zone of control.)
+    /// Tiles the unit can end its move on, with path back-links. Units of its own side can be passed
+    /// through but not stopped on; any other unit blocks, neutral ones included (FUN_004111cc). No zone of control.
     /// </summary>
     public Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> Reachable(BattleUnit u)
     {
-        int budget = Stats(u).Movement;
+        var best = Flood(u, Stats(u).Movement);
+        // tiles another unit stands on can be walked through but not stopped on: drop them from the result, but keep
+        // every link so paths through them stay whole (a hole there made units jump and land on allies)
+        var result = new ReachMap(best);
+        foreach (var (k, v) in best)
+            if (UnitAt(k.Item1, k.Item2) is not { } o || o == u) result[k] = v;
+        return result;
+    }
+
+    /// <summary>Cheapest path cost to every tile the unit could walk to within <paramref name="budget"/>, occupied tiles included.</summary>
+    public Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> Flood(BattleUnit u, int budget)
+    {
         var best = new Dictionary<(int, int), (int Cost, (int, int) From)> { [(u.X, u.Y)] = (0, (u.X, u.Y)) };
         var queue = new PriorityQueue<(int X, int Y), int>();
         queue.Enqueue((u.X, u.Y), 0);
@@ -124,7 +135,7 @@ public sealed partial class Battlefield
                 int c = MoveCost(u, nx, ny);
                 if (c <= 0) continue;
                 var occ = UnitAt(nx, ny);
-                if (occ is not null && occ != u && !Friendly(u, occ)) continue;
+                if (occ is not null && occ != u && occ.Side != u.Side) continue;
                 int nc = cost + c;
                 if (nc > budget) continue;
                 if (best.TryGetValue((nx, ny), out var old) && old.Cost <= nc) continue;
@@ -132,12 +143,7 @@ public sealed partial class Battlefield
                 queue.Enqueue((nx, ny), nc);
             }
         }
-        // tiles another unit stands on can be walked through but not stopped on: drop them from the result, but keep
-        // every link so paths through them stay whole (a hole there made units jump and land on allies)
-        var result = new ReachMap(best);
-        foreach (var (k, v) in best)
-            if (UnitAt(k.Item1, k.Item2) is not { } o || o == u) result[k] = v;
-        return result;
+        return best;
     }
 
     public static List<(int X, int Y)> PathTo(Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> reach, (int X, int Y) to)

@@ -7,17 +7,17 @@ public sealed record AiPlan(BattleUnit Unit, (int X, int Y) Destination, List<(i
     Magic? Spell = null, (int X, int Y) Aim = default);
 
 /// <summary>
-/// Enemy / neutral behaviour from each object's four movement patterns (FORMAT_NOTES §11.1):
-/// the highest-numbered pattern whose switch is ON wins (pattern 1 has no switch).
-///   Rush: attack the best reachable target, else head for the nearest ally.
-///   Wait: attack only if a target is reachable this turn.
-///   Specific: walk toward the pattern's location; on arrival, turn its switch ON.
-///   None: stay put, attack whatever is already in range.
-/// Target choice follows the game's own readme ("enemies prefer the unit with the lowest
-/// defense or magic defense"): lowest defense, then lowest HP. Provisional.
-/// Neutral units never attack (help text); with Rush they walk up to allies.
-/// Spells (provisional): a known, affordable damage spell is cast when its predicted total damage
-/// beats the best weapon attack; a Raise HP spell when it would restore at least a third of someone's HP.
+/// Enemy / neutral behaviour as SRPGEXEC.EXE decides it (FUN_0041589c and helpers, FORMAT_NOTES §16).
+/// The active move pattern is the highest-numbered one whose switch is ON (pattern 1 has none). Asleep: do nothing.
+/// Unless the pattern is Specific:
+///   1. Spells (not neutral units): every known spell the unit has MP for is scored at every aim it could reach
+///      this turn (<see cref="SpellScore"/>); the best spell with a score above 0 is cast from the nearest tile.
+///   2. Attacks (not neutral units): for each target, the best tile to attack it from anywhere on the map is the one
+///      with the lowest (walk cost − terrain recovery − terrain defense/10, −4 if reachable this turn). A target is
+///      worth (Attack − Defense)×3 + 100 (+200 instead if that kills) − walk cost; the best one reachable this turn is attacked.
+/// Otherwise move: Rush heads for the most valuable target (neutral units: the first player unit), Specific for its
+/// location, Wait and None stay. The unit walks the exe's path toward it as far as this turn allows and stops on the
+/// last free tile. None never moves but may still attack or cast from where it stands.
 /// </summary>
 public static class EnemyAi
 {
@@ -25,9 +25,20 @@ public static class EnemyAi
     {
         var mp = u.MovePatterns;
         if (mp.Length == 0) return new MovePattern(-1, 0, 0, 0, -1);
-        for (int i = mp.Length - 1; i >= 1; i--)
+        for (int i = mp.Length - 1; i >= 0; i--)
             if (mp[i].Switch >= 0 && mp[i].Switch < switches.Length && switches[mp[i].Switch]) return mp[i];
         return mp[0];
+    }
+
+    /// <summary>Path costs for one unit's turn: every tile it could ever walk to, and which of them it can stop on this turn.</summary>
+    sealed class Walk
+    {
+        public required Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)> Cost;
+        public required int Budget;      // movement this turn (0 for the None pattern)
+        public required int Movement;    // the unit's movement stat
+        /// <summary>The exe's "moves spent": movement − moves left, so None-pattern units count their whole movement.</summary>
+        public int Spent((int X, int Y) t) => Cost[t].Cost + Movement - Budget;
+        public bool ThisTurn((int X, int Y) t) => Cost.TryGetValue(t, out var c) && c.Cost <= Budget;
     }
 
     public static AiPlan Plan(Battlefield f, BattleUnit u, bool[] switches)
@@ -35,99 +46,198 @@ public static class EnemyAi
         var p = ActivePattern(u, switches);
         var here = (u.X, u.Y);
         if (u.SleepTurns > 0) return new AiPlan(u, here, new(), null, -1);
-        bool attacks = u.Side == Side.Enemy;
+        int movement = f.Stats(u).Movement;
+        var w = new Walk { Cost = f.Flood(u, int.MaxValue / 4), Budget = p.Action < 3 ? movement : 0, Movement = movement };
+        bool neutral = u.Side == Side.Neutral;
+        bool Free((int X, int Y) t) => f.UnitAt(t.X, t.Y) is not { } o || o == u;
+        // tiles to stop on this turn, in the exe's scan order (rows, then columns)
+        var stops = w.Cost.Keys.Where(t => w.ThisTurn(t) && Free(t)).OrderBy(t => t.Y).ThenBy(t => t.X).ToList();
 
-        if (p.Action == 3)   // none: don't move
+        var targets = new List<(BattleUnit Unit, (int X, int Y) Tile, int Spent, int Value)>();
+        if (p.Action != 2)
         {
-            var still = attacks ? BestTarget(f, f.TargetsFrom(u, u.X, u.Y)) : null;
-            if (attacks && BestSpell(f, u, new[] { here }) is { } s && s.Score > (still is null ? 0 : Physical(f, u, still)))
-                return new AiPlan(u, here, new(), null, -1, s.Spell, s.Aim);
-            return new AiPlan(u, here, new(), still, -1);
-        }
+            if (!neutral && BestSpell(f, u, w, stops) is { } s)
+                return Go(f, u, w, s.Tile, null, -1, s.Spell, s.Spell.EffectWholeMap ? s.Tile : s.Aim);
 
-        var reach = f.Reachable(u);
-        if (attacks && p.Action is 0 or 1)
-        {
-            // best (target, standing tile): lowest defense, lowest HP, shortest walk
-            var options = reach.Keys
-                .SelectMany(t => f.TargetsFrom(u, t.X, t.Y).Select(b => (Tile: t, Target: b)))
-                .OrderBy(o => f.Stats(o.Target).Defense).ThenBy(o => o.Target.Hp).ThenBy(o => reach[o.Tile].Cost)
-                .ToList();
-            var spell = BestSpell(f, u, reach.Keys);
-            if (spell is { } s && s.Score > (options.Count > 0 ? Physical(f, u, options[0].Target) : 0))
-                return new AiPlan(u, s.Tile, Battlefield.PathTo(reach, s.Tile), null, -1, s.Spell, s.Aim);
-            if (options.Count > 0)
+            // FUN_004160f0 / FUN_004162c4: best tile and value for every unit the enemy may attack
+            var st = f.Stats(u);
+            foreach (var t in f.Alive.Where(b => b.Side != Side.Enemy && !(b.Side == Side.Neutral && b.Unattackable)))
             {
-                var (tile, target) = options[0];
-                return new AiPlan(u, tile, Battlefield.PathTo(reach, tile), target, -1);
+                (int X, int Y)? tile = null;
+                int best = int.MaxValue;
+                foreach (var c in w.Cost.Keys.Where(Free).OrderBy(c => c.Y).ThenBy(c => c.X))
+                {
+                    int d = Math.Abs(c.X - t.X) + Math.Abs(c.Y - t.Y);
+                    if (d < st.RangeMin || d > st.RangeMax) continue;
+                    var ter = f.TerrainAt(c.X, c.Y);
+                    int score = w.Spent(c) - ter.HpRecovery - ter.DefenseBonus / 10 - (w.ThisTurn(c) ? 4 : 0);
+                    if (score < best) { best = score; tile = c; }
+                }
+                if (tile is not { } at) continue;
+                int spent = w.Spent(at);
+                int dmg = st.Attack - f.Stats(t).Defense;
+                int value = dmg < 1 ? 1 : dmg * 3 + (dmg < t.Hp ? 100 : 200) - spent;
+                targets.Add((t, at, spent, value));
             }
-            if (p.Action == 1) return new AiPlan(u, here, new(), null, -1);
+            if (!neutral)
+            {
+                (BattleUnit Unit, (int X, int Y) Tile, int Spent, int Value)? pick = null;
+                foreach (var t in targets)
+                    if (t.Spent <= movement && t.Value > (pick?.Value ?? 1)) pick = t;
+                if (pick is { } a) return Go(f, u, w, a.Tile, a.Unit, -1);
+            }
         }
 
-        (int X, int Y)? goal = p.Action switch
+        (int X, int Y)? goal = null;
+        if (p.Action == 0)
         {
-            2 => (p.X, p.Y),
-            0 => Nearest(f, u, attacks),
-            _ => null,
-        };
-        if (goal is null) return new AiPlan(u, here, new(), null, -1);
-        // pick the reachable tile closest to the goal (by straight-line distance; provisional)
-        var dest = reach.Keys.OrderBy(t => Math.Abs(t.X - goal.Value.X) + Math.Abs(t.Y - goal.Value.Y))
-            .ThenBy(t => reach[t].Cost).First();
-        BattleUnit? after = attacks ? BestTarget(f, f.TargetsFrom(u, dest.X, dest.Y)) : null;
-        short sw = p.Action == 2 && dest == (p.X, p.Y) ? p.SwitchToApply : (short)-1;
-        return new AiPlan(u, dest, Battlefield.PathTo(reach, dest), after, sw);
+            if (!neutral)
+            {
+                int top = 0;
+                foreach (var t in targets)
+                    if (t.Value > top) { top = t.Value; goal = (t.Unit.X, t.Unit.Y); }
+            }
+            else if (f.Alive.FirstOrDefault(b => b.Side == Side.Ally) is { } ally) goal = (ally.X, ally.Y);
+        }
+        if (p.Action == 2) goal = (p.X, p.Y);
+        if (goal is not { } g) return new AiPlan(u, here, new(), null, -1);
+
+        var path = Trace(f, u, w, g);
+        // as far along as this turn allows, then back to the last tile nobody else stands on
+        int n = 0;
+        while (n < path.Count && w.ThisTurn(path[n])) n++;
+        while (n > 0 && !Free(path[n - 1])) n--;
+        path.RemoveRange(n, path.Count - n);
+        var dest = n > 0 ? path[^1] : here;
+        short sw = p.Action == 2 && dest == g ? p.SwitchToApply : (short)-1;
+        return new AiPlan(u, dest, path, null, sw);
     }
 
-    static (int X, int Y)? Nearest(Battlefield f, BattleUnit u, bool hostileOnly)
+    static AiPlan Go(Battlefield f, BattleUnit u, Walk w, (int X, int Y) dest, BattleUnit? target, short sw, Magic? spell = null, (int X, int Y) aim = default) =>
+        new(u, dest, Trace(f, u, w, dest), target, sw, spell, aim);
+
+    /// <summary>
+    /// FUN_004113c4: the exe's path, traced back from the goal to the unit by always stepping to the first neighbour
+    /// that is closer to the unit (x−1, x+1, y−1, y+1 when the unit is farther away sideways, else y−1, y+1, x−1, x+1).
+    /// Returned unit-first, without the unit's own tile; the goal itself needn't be walkable.
+    /// </summary>
+    static List<(int X, int Y)> Trace(Battlefield f, BattleUnit u, Walk w, (int X, int Y) goal)
     {
-        var allies = f.Alive.Where(b => b.Side == Side.Ally && (!hostileOnly || Battlefield.Hostile(u, b))).ToList();
-        if (allies.Count == 0) return null;
-        var n = allies.OrderBy(b => Math.Abs(b.X - u.X) + Math.Abs(b.Y - u.Y)).First();
-        return (n.X, n.Y);
+        int V((int X, int Y) t) => w.Cost.TryGetValue(t, out var c) ? -c.Cost : int.MinValue;
+        var back = new List<(int X, int Y)>();
+        var cur = goal;
+        for (int guard = 0; cur != (u.X, u.Y) && guard < 10000; guard++)
+        {
+            back.Add(cur);
+            int dx = Math.Abs(u.X - cur.X), dy = Math.Abs(u.Y - cur.Y);
+            var order = dy < dx
+                ? new[] { (-1, 0), (1, 0), (0, -1), (0, 1) }
+                : new[] { (0, -1), (0, 1), (-1, 0), (1, 0) };
+            (int X, int Y)? next = null;
+            foreach (var (ox, oy) in order)
+            {
+                var n = (cur.X + ox, cur.Y + oy);
+                if (f.InBounds(n.Item1, n.Item2) && V(n) != int.MinValue && V(n) > V(cur)) { next = n; break; }
+            }
+            if (next is not { } nx) return new();
+            cur = nx;
+        }
+        back.Reverse();
+        return back;
     }
 
-    static int Physical(Battlefield f, BattleUnit u, BattleUnit t) =>
-        Math.Min(t.Hp, Math.Max(0, f.Stats(u).Attack - f.Stats(t).Defense));
-
-    /// <summary>Best (spell, standing tile, aim) by score: damage dealt to hostile units minus double the damage to friends, or HP restored.</summary>
-    static (Magic Spell, (int X, int Y) Tile, (int X, int Y) Aim, int Score)? BestSpell(Battlefield f, BattleUnit u, IEnumerable<(int X, int Y)> tiles)
+    /// <summary>FUN_0041589c's spell pass: the best (spell, aim) by <see cref="SpellScore"/>, cast from the cheapest tile (FUN_00416c44).</summary>
+    static (Magic Spell, (int X, int Y) Tile, (int X, int Y) Aim)? BestSpell(Battlefield f, BattleUnit u, Walk w, List<(int X, int Y)> stops)
     {
-        (Magic, (int, int), (int, int), int)? best = null;
-        var tileList = tiles.ToList();
+        (Magic, (int X, int Y) Aim, int Score)? best = null;
         foreach (var m in f.KnownSpells(u))
         {
             if (!Battlefield.CanCast(u, m)) continue;
-            bool heal = m.Type == 2 && m.RaiseEffect == 0;
-            if (m.Type != 0 && !heal) continue;
-            int power = Combat.SpellEffect(m, f.Stats(u).Mag);
-            // where the caster stands doesn't matter for whole-map ranges
-            foreach (var tile in m.RangeWholeMap ? tileList.Take(1) : tileList)
+            // aims: anywhere for whole-map ranges, else within range of a tile the unit can stop on this turn (FUN_00416478)
+            var aims = new HashSet<(int X, int Y)>();
+            foreach (var s in m.RangeWholeMap ? stops.Take(1) : stops) aims.UnionWith(f.SpellRange(m, s.X, s.Y));
+            if (m.EffectWholeMap) aims = aims.OrderBy(a => a.Y).ThenBy(a => a.X).Take(1).ToHashSet();   // same area wherever it's aimed
+            int top = 0;
+            (int X, int Y) at = default;
+            foreach (var a in aims.OrderBy(a => a.Y).ThenBy(a => a.X))
             {
-                var aims = m.EffectWholeMap ? f.SpellRange(m, tile.X, tile.Y).Take(1) : f.SpellRange(m, tile.X, tile.Y);
-                foreach (var aim in aims)
-                {
-                    int score = 0;
-                    foreach (var t in f.SpellTargets(u, m, aim.X, aim.Y))
-                    {
-                        if (heal)
-                        {
-                            int missing = t.MaxHp - t.Hp;
-                            if (missing * 3 >= t.MaxHp) score += Math.Min(power, missing);
-                        }
-                        else
-                        {
-                            int d = Math.Min(t.Hp, f.PredictSpellDamage(u, m, t));
-                            score += Battlefield.Hostile(u, t) ? d : -2 * d;
-                        }
-                    }
-                    if (score > 0 && (best is null || score > best.Value.Item4)) best = (m, tile, aim, score);
-                }
+                int score = SpellScore(f, u, m, a);
+                if (score > top) { top = score; at = a; }
             }
+            if (top > (best?.Score ?? 0)) best = (m, at, top);
         }
-        return best;
+        if (best is not { } b) return null;
+        if (b.Item1.RangeWholeMap) return (b.Item1, (u.X, u.Y), b.Aim);
+        (int X, int Y) tile = (u.X, u.Y);
+        int cheapest = int.MaxValue;
+        foreach (var s in stops)
+        {
+            if (!f.SpellRange(b.Item1, s.X, s.Y).Contains(b.Aim)) continue;
+            int c = w.Spent(s);
+            if (c < cheapest) { cheapest = c; tile = s; }
+        }
+        return (b.Item1, tile, b.Aim);
     }
 
-    static BattleUnit? BestTarget(Battlefield f, IEnumerable<BattleUnit> targets) =>
-        targets.OrderBy(b => f.Stats(b).Defense).ThenBy(b => b.Hp).FirstOrDefault();
+    /// <summary>
+    /// FUN_0041664c, a spell's worth when aimed at <paramref name="aim"/>, counting every unit in its area where it
+    /// stands now (the caster only if the aim is in range from where it stands). Player-side units are the targets of
+    /// damage and status spells, the caster's side of support spells; each unit on the wrong side costs 150.
+    /// Damage: (spell damage + Mag − MDef) × 5 + 80 when positive. Poison / sleep: rand(20) + HP × 2 + 40 if not
+    /// already so. Support: healing min(power, HP missing) × 10 + 50; Power / Defense Up rand(20) + power × 10 +
+    /// Attack × 3 (× 2) + 30 if the current buff is below power / 2; and so on. Never below 0.
+    /// </summary>
+    public static int SpellScore(Battlefield f, BattleUnit caster, Magic m, (int X, int Y) aim)
+    {
+        var area = f.SpellArea(m, aim.X, aim.Y).ToHashSet();
+        var cs = f.Stats(caster);
+        int power = m.Value + m.Relation * cs.Mag / 10;
+        int half = power / 2;
+        var rng = f.Rng;
+        int score = 0;
+        foreach (var t in f.Alive.Where(t => area.Contains((t.X, t.Y))))
+        {
+            if (t == caster && !f.SpellRange(m, caster.X, caster.Y).Contains(aim)) continue;
+            bool foe = t.Side != Side.Enemy;    // the exe's "not computer-controlled": allies and neutral units
+            var ts = f.Stats(t);
+            switch (m.Type)
+            {
+                case 0:
+                    if (!foe) score -= 150;
+                    else if (m.Damage + cs.Mag - ts.MagicDefense is var d && d > 0) score += d * 5 + 80;
+                    break;
+                case 1:
+                    if (!foe) { score -= 150; break; }
+                    switch (m.DegradeEffect)
+                    {
+                        case 0: if (t.PoisonTurns == 0) score += rng.Next(20) + t.Hp * 2 + 40; break;
+                        case 1: if (t.SleepTurns == 0) score += rng.Next(20) + t.Hp * 2 + 40; break;
+                        // as in the exe: only scores against a unit whose buff is already above half the power
+                        case 2: if (half < t.PowerUp) score += rng.Next(40) + power * 10 + 30; break;
+                        case 3: if (half < t.DefUp) score += rng.Next(40) + power * 10 + 30; break;
+                    }
+                    break;
+                default:
+                    if (foe) { score -= 150; break; }
+                    switch (m.RaiseEffect)
+                    {
+                        case 0:
+                            if (Math.Min(power, t.MaxHp - t.Hp) is var h && h > 0) score += h * 10 + 50;
+                            break;
+                        case 1: if (t.PowerUp < half) score += rng.Next(20) + power * 10 + ts.Attack * 3 + 30; break;
+                        case 2: if (t.DefUp < half) score += rng.Next(20) + power * 10 + ts.Attack * 2 + 30; break;
+                        case 3: if (t.PoisonTurns > 0) score += rng.Next(20) + t.PoisonTurns * 30 + 40; break;
+                        case 4:
+                            if (t.PoisonTurns > 0) score += t.PoisonTurns * 20 + 40;
+                            if (t.SleepTurns > 0) score += t.PoisonTurns * 30 + 50;   // sic: the exe reuses the poison count
+                            if (t.PowerUp < -2) score += -t.PowerUp * 10 + 60;
+                            if (t.DefUp < -2) score += -t.DefUp * 10 + 60;
+                            break;
+                        case 5: if (t.Acted) score = rng.Next(20) + 95; break;   // replaces the running total, as in the exe
+                    }
+                    break;
+            }
+        }
+        return Math.Max(0, score);
+    }
 }
