@@ -16,7 +16,7 @@ public static class Lang
         Japanese && db.Words.Length > 46 ? new[] { db.Words[45], db.Words[46] } : new[] { "Yes", "No" };
 
     /// <summary>On / off as the option values show them.</summary>
-    public static string OnOff(bool on) => on ? T("On", "オン") : T("Off", "オフ");
+    public static string OnOff(bool on) => on ? T("On", "ON") : T("Off", "OFF");
 
     /// <summary>Hours, minutes and seconds of play, "--:--:--" when they aren't known.</summary>
     public static string PlayTime(double? seconds) => seconds is not { } s ? "--:--:--"

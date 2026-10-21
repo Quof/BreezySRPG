@@ -156,8 +156,11 @@ public sealed class BattleController
         || (_telop == CompleteTelop && _telopTick >= 60 && _ending == MapOutcome.None);
     /// <summary>The message panel up now (the screenshot harness's "panel+N").</summary>
     public bool PanelShowing => _state_ == State.Showing && _panel is not null;
-    /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
+    /// <summary>Set to false to skip the battle scenes (popups only): the 戦闘演出 option's 簡易演出.</summary>
     public bool ShowScenes { get; set; } = true;
+    /// <summary>Battle scenes only for a player-side unit's action — an ally's, a guest's or a neutral unit's (自軍ユニットのみ).</summary>
+    public bool PlayerScenesOnly { get; set; }
+    bool SceneFor(BattleUnit actor) => ShowScenes && !Quiet && !(PlayerScenesOnly && actor.Side == Side.Enemy);
     public bool FastForwardSkipsScenes { get; set; }
 
     /// <summary>
@@ -1416,7 +1419,7 @@ public sealed class BattleController
         var met = OpposingOf(caster, r.Effects.Select(e => e.Target));
         if (BeforeFight(caster, met, new PendingFight(caster, null, m, r))) return;
         if (caster.Dead || caster.Hidden) { caster.Acted = true; _actor = caster; AfterFight(); return; }
-        if (ShowScenes && !Quiet && r.Effects.Count > 0) QueueSpellScenes(caster, m, r);
+        if (SceneFor(caster) && r.Effects.Count > 0) QueueSpellScenes(caster, m, r);
         else
         {
             Battlefield.ApplyCost(caster, r);
@@ -1871,7 +1874,7 @@ public sealed class BattleController
         if (BeforeFight(atk, met, new PendingFight(atk, def, null, r))) return;
         // a "before" event can change things (rarely): no fight if either side is gone
         if (atk.Dead || atk.Hidden || def.Dead || def.Hidden) { atk.Acted = true; _actor = atk; AfterFight(); return; }
-        if (ShowScenes && !Quiet)
+        if (SceneFor(atk))
         {
             // a strike a step (FUN_0041b4b0 → FUN_0041a9c4) as rolled at the click: the damage as rolled for the number,
             // the bar moving as far as the HP went, the HP set at the step's end

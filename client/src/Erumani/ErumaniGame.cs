@@ -405,7 +405,8 @@ public sealed class ErumaniGame : Game
         if (_runner is not null) _runner.FastForwardAdvancesText = _settings.FastForwardAdvancesText;
         if (_battle is not null)
         {
-            _battle.ShowScenes = _settings.BattleScenes;
+            _battle.ShowScenes = _settings.BattleSceneMode != BattleSceneMode.Simple;
+            _battle.PlayerScenesOnly = _settings.BattleSceneMode == BattleSceneMode.PlayerUnits;
             _battle.FastForwardSkipsScenes = _settings.FastForwardSkipsScenes;
             _battle.SkipEnemyTurn = _settings.SkipEnemyTurn;
             _battle.CombatMusic = _settings.CombatBgm;

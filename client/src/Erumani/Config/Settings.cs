@@ -25,6 +25,8 @@ public enum MusicEngine { Windows, SoundFont }
 public enum FastForwardMode { Hold, Toggle }
 /// <summary>決定音, CLICK.WAV: everywhere, everywhere but advancing a message, or nowhere (saving and loading play it anyway).</summary>
 public enum ConfirmSound { On, GameplayOnly, Off }
+/// <summary>戦闘演出: every fight's battle scene, only those of a player-side unit's action (allies, guests and neutral units), or none (the result popups alone).</summary>
+public enum BattleSceneMode { On, PlayerUnits, Simple }
 
 /// <summary>
 /// Player settings (modern features; none of this exists in the original), kept in %APPDATA%\EasySRPG95\settings.json
@@ -59,7 +61,9 @@ public sealed class Settings
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? MessageSound { get; set; }
 
     // gameplay
-    public bool BattleScenes { get; set; } = true;
+    public BattleSceneMode BattleSceneMode { get; set; }
+    /// <summary>The on/off battle scenes earlier versions saved (off = <see cref="BattleSceneMode.Simple"/>); read, never written.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? BattleScenes { get; set; }
     public bool CombatBgm { get; set; } = true;           // the map's battle BGM during battle scenes (off: the phase's music, as a fight leaves it)
     public bool ActionMenuFromTop { get; set; } = true;   // after a move the pointer goes to the action menu's first entry (off: 行動終了, as the original)
     public FastForwardMode FastForwardMode { get; set; } = FastForwardMode.Hold;
@@ -127,6 +131,8 @@ public sealed class Settings
                 if (s.ModernUi) { s.Skin = UiSkin.Modern; s.ModernUi = false; }   // the old on/off look setting
                 if (s.MessageSound == false) s.ConfirmSound = ConfirmSound.Off;      // the old on/off confirm sound
                 s.MessageSound = null;
+                if (s.BattleScenes == false) s.BattleSceneMode = BattleSceneMode.Simple;   // the old on/off battle scenes
+                s.BattleScenes = null;
                 s.Path = path == OldSettings ? UserSettings : path;   // saved to the new place from now on
                 return s;
             }
