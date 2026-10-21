@@ -7,6 +7,8 @@ namespace Erumani;
 public sealed class Textures(GraphicsDevice device, GameFolder game) : IDisposable
 {
     readonly Dictionary<(string, bool), Texture2D?> _cache = new();
+    /// <summary>A bitmap the game asked for isn't there (told once per file; the original stops with an error box).</summary>
+    public Action<string>? Missing { get; set; }
 
     /// <param name="transparent">Treat palette index 0 as transparent (sprite sheets).</param>
     public Texture2D? Get(string fileName, bool transparent = true)
@@ -18,6 +20,7 @@ public sealed class Textures(GraphicsDevice device, GameFolder game) : IDisposab
             t = new Texture2D(device, bmp.Width, bmp.Height, false, SurfaceFormat.Color);
             t.SetData(bmp.ToRgba(transparent));
         }
+        else if (!_cache.Keys.Any(k => k.Item1 == fileName)) Missing?.Invoke(fileName);
         _cache[(fileName, transparent)] = t;
         return t;
     }

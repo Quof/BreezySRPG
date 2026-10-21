@@ -73,7 +73,6 @@ public sealed class ErumaniGame : Game
     int[] _mapIndices = Array.Empty<int>();
     int _mapPos, _frame, _shotAdvance;
     bool _debug;
-    string _status = "";
     KeyboardState _prevKeys;
     MouseState _prevMouse;
     int _activeFrames, _leftHeld;
@@ -115,7 +114,7 @@ public sealed class ErumaniGame : Game
     {
         _db = Database.Load(_folder);
         if (_db.Words.Length > 63) Camp.MenuList.PageLabel = _db.Words[63];   // ページ
-        _tex = new Textures(GraphicsDevice, _folder);
+        _tex = new Textures(GraphicsDevice, _folder) { Missing = f => ReportMissing("BMP/" + f) };
         _ui = new Ui.Ui(GraphicsDevice, _tex);
         // the original's 12-px text comes from its own font (FUN_0040a284 loads KANJIFONT)
         if (_folder.Find("SRPGEXEC.EXE") is { } exePath && ExeResources.Raw(exePath, 0, "KANJI", "KANJIFONT") is { Length: >= 24 } glyphs)
@@ -215,7 +214,6 @@ public sealed class ErumaniGame : Game
             WarpPointer = WarpMouse,
         };
         Window.Title = GameTitle;
-        _status = "";
         if (_opts.Screenshot is not null) Trace($"{_frame}: title");
     }
 
@@ -261,7 +259,6 @@ public sealed class ErumaniGame : Game
             GameClock.SetTick(30);
         }
         Window.Title = $"{GameTitle} — camp before SMAP_{idx + 1:000} {map.Name}";
-        _status = "";
         if (_opts.Screenshot is not null) Trace($"{_frame}: camp before SMAP_{idx + 1:000} {map.Name} (army {_state.Roster.Count}, gold {_state.Gold})");
     }
 
@@ -359,7 +356,6 @@ public sealed class ErumaniGame : Game
         _seenOutcome = MapOutcome.None;
         _pendingMap = null;
         Window.Title = $"{GameTitle} — SMAP_{idx + 1:000} {map.Name}";
-        _status = "";
     }
 
     // ---------------- settings ----------------
@@ -522,6 +518,16 @@ public sealed class ErumaniGame : Game
         if (battleInput.Cancel || battleInput.RightClick)
             if (_options is null && (_title?.AcceptsCancel == true || _camp?.AcceptsCancel == true || _battle?.AcceptsCancel == true || _backlog.Open))
                 Sfx.Cancel();
+
+        // a missing file's error box: pauses everything else until it's clicked away
+        if (_missingBox is not null)
+        {
+            _frame++;
+            _audio.Update();
+            if (_missingBox.Navigate(battleInput with { MouseMoved = mouseMoved }, _mouseVirtual) >= 0 || cancel) CloseMissingBox();
+            EndUpdate(gameTime, k, m);
+            return;
+        }
 
         // options (F1 anywhere, or from the title): pauses everything else
         if (_options is null && _opts.Screenshot is null && _controls.Pressed(GameAction.Options)) OpenOptions();
@@ -795,7 +801,6 @@ public sealed class ErumaniGame : Game
                 // on to header 0x010's map — a "Next Map" command's, else the following one — with its camp first if it
                 // has one and the army isn't empty; the army was saved into the roster (BattleController.End)
                 int next = _state.NextMap;
-                _status = "";
                 if (Array.IndexOf(_mapIndices, next) is var p and >= 0)
                 {
                     var nextMap = MapData.Load(_folder.MapPath(next));
@@ -806,14 +811,12 @@ public sealed class ErumaniGame : Game
                     }
                     else _pendingMap = p;
                 }
-                else _status = $"SMAP_{next + 1:000} doesn't exist";
+                else ReportMissing($"MAP/SMAP_{next + 1:000}.DAT", OpenTitle);   // nowhere to go on: the title once it's seen
                 break;
             case MapOutcome.GameOver:
-                _status = "";
                 OpenGameOver();
                 break;
             case MapOutcome.ReturnToTitle:
-                _status = "";
                 OpenTitle();
                 break;
         }
@@ -837,6 +840,58 @@ public sealed class ErumaniGame : Game
         };
         _skipPrompt.Set(new[] { _db.Words[45], _db.Words[46] });
         Sfx.Click();
+    }
+
+    // ---------------- missing files ----------------
+    // The original stops with an error box naming a missing bitmap or map (FUN_004030a8, then WM_CLOSE). The client says
+    // so in a box of its own, once per file, and plays on without it; a missing next map goes back to the title.
+
+    readonly HashSet<string> _missingSeen = new(StringComparer.OrdinalIgnoreCase);
+    readonly Queue<(string File, Action? Then)> _missingQueue = new();
+    Camp.MenuList? _missingBox;
+    Action? _afterMissing;
+
+    void ReportMissing(string file, Action? then = null)
+    {
+        if (!_missingSeen.Add(file)) { then?.Invoke(); return; }
+        if (_opts.Screenshot is not null)
+        {
+            Trace($"{_frame}: missing {file}");   // scripted runs go on as a player who clicked it away
+            then?.Invoke();
+            return;
+        }
+        _missingQueue.Enqueue((file, then));
+        if (_missingBox is null) OpenMissingBox();
+    }
+
+    void OpenMissingBox()
+    {
+        var (file, then) = _missingQueue.Dequeue();
+        const string title = "Error: Missing Game File";
+        int w = (Math.Max(Bin.Sjis.GetByteCount(title), Bin.Sjis.GetByteCount(file)) / 2 + 3) * 12;
+        _missingBox = new Camp.MenuList
+        {
+            Rect = new Rectangle(320 - w / 2, 200, w, 80), Header = new[] { title, file, "-" }, ItemX = w / 2 - 12, ItemWidth = 24,
+        };
+        _missingBox.Set(new[] { "OK" });
+        _afterMissing = then;
+        Sfx.Buzzer();
+    }
+
+    void CloseMissingBox()
+    {
+        var then = _afterMissing;
+        (_missingBox, _afterMissing) = (null, null);
+        Sfx.Click();
+        then?.Invoke();
+        if (_missingBox is null && _missingQueue.Count > 0) OpenMissingBox();
+    }
+
+    void DrawMissingBox()
+    {
+        if (_missingBox is null) return;
+        _ui.Fill(_sb, new Rectangle(0, 0, 640, 480), Color.Black * 0.35f);
+        _missingBox.Draw(_sb, _ui, true, _frame);
     }
 
     void DrawSkipPrompt()
@@ -900,7 +955,7 @@ public sealed class ErumaniGame : Game
         // 1. the game's own screen, as the exe draws it on its 8-bit surface (mouse pointer included)
         GraphicsDevice.SetRenderTarget(_screen);
         GraphicsDevice.Clear(Color.Black);
-        bool overlay = _options is not null || _skipPrompt is not null || _backlog.Open;
+        bool overlay = _options is not null || _skipPrompt is not null || _missingBox is not null || _backlog.Open;
         _sb.Begin(samplerState: SamplerState.PointClamp, transformMatrix: _view);
         if (_logo >= 0 && _logo < _logos.Count) _sb.Draw(_logos[_logo], Vector2.Zero, Color.White);
         else if (_gameOver >= 0)
@@ -925,6 +980,7 @@ public sealed class ErumaniGame : Game
         {
             _backlog.Draw(_sb);
             DrawSkipPrompt();
+            DrawMissingBox();
             _options?.Draw(_sb, _frame);
             if (_opts.Screenshot is null && IsActive) _ui.Cursor(_sb, _mouseVirtual, false, _frame);
         }
@@ -960,7 +1016,6 @@ public sealed class ErumaniGame : Game
         _battle?.DrawUi(_sb, view, _frame);
         DrawMessage();
         DrawChoice();
-        DrawStatus();
         // an erase wiping its colour in: the new screen is all that colour (palette entry 0 / 255)
         if (_fx.Fill is { } fill) _ui.Fill(_sb, new Rectangle(0, 0, VirtualWidth, VirtualHeight), fill);
         DrawWipe();
@@ -1290,15 +1345,6 @@ public sealed class ErumaniGame : Game
             var c = _ui.MenuRow(_sb, ChoiceRow(r, i), _choiceActive && i == _runner.ChoiceIndex, true, _frame);
             _ui.Text12(_sb, opts[i], r.X + 12, r.Y + 8 + i * 16, c);
         }
-    }
-
-    void DrawStatus()
-    {
-        if (_status.Length == 0) return;
-        int w = _ui.Text.Measure(_status) + 32;
-        var r = new Rectangle((VirtualWidth - w) / 2, ViewY + ViewHeight - 44, w, 36);
-        _ui.Window(_sb, r);
-        _ui.DrawText(_sb, _status, new Vector2(r.X + 16, r.Y + 10), Ui.Ui.TextColor);
     }
 
     void DrawDebug()
