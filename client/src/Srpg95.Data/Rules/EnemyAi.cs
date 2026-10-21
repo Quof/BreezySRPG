@@ -2,9 +2,13 @@ using Srpg95.Data;
 
 namespace Srpg95.Rules;
 
-/// <summary>What a computer-controlled unit decided to do this phase.</summary>
+/// <summary>
+/// What a computer-controlled unit decided to do this phase. <see cref="Acts"/> false: it's asleep or has nowhere to go
+/// (FUN_0041589c returns 0), so it's done at once; otherwise it takes its turn — the camera on it, its walk (none at
+/// all when its way is blocked or it's already there), then the attack or the spell.
+/// </summary>
 public sealed record AiPlan(BattleUnit Unit, (int X, int Y) Destination, List<(int X, int Y)> Path, BattleUnit? Target, short SwitchToApply,
-    Magic? Spell = null, (int X, int Y) Aim = default);
+    Magic? Spell = null, (int X, int Y) Aim = default, bool Acts = true);
 
 /// <summary>
 /// Enemy / neutral behaviour as SRPGEXEC.EXE decides it (FUN_0041589c and helpers, FORMAT_NOTES §16).
@@ -81,11 +85,35 @@ public static class EnemyAi
         public bool ThisTurn((int X, int Y) t) => Cost.TryGetValue(t, out var c) && c.Cost <= Budget;
     }
 
+    /// <summary>
+    /// FUN_0040e658's turn order in the computer's phase: the next unit to take its turn, or null once the phase is over.
+    /// A counter (<paramref name="slot"/>, +0x51c0) goes up the record numbers giving each enemy that hasn't acted its
+    /// turn (<paramref name="group"/> 1); past the last record it goes round again from the first while an enemy still
+    /// hasn't — one a later unit gave another action acts then — and then the neutral units get one round (group 2).
+    /// Start a phase with group 1 and slot 0; the caller marks the unit as acted once its turn is over.
+    /// </summary>
+    public static BattleUnit? NextInPhase(Battlefield f, ref int group, ref int slot)
+    {
+        while (true)
+        {
+            if (++slot > Battlefield.MaxRecord)
+            {
+                slot = 0;
+                if (group == 1 && f.Alive.Any(x => x.Side == Side.Enemy && !x.Acted && x.Slot is > 0 and <= Battlefield.MaxRecord)) continue;
+                if (group == 1) { group = 2; continue; }
+                return null;
+            }
+            int at = slot;
+            var u = f.Alive.FirstOrDefault(x => x.Slot == at);
+            if (u is { Acted: false } && u.Side == (group == 1 ? Side.Enemy : Side.Neutral)) return u;
+        }
+    }
+
     public static AiPlan Plan(Battlefield f, BattleUnit u, bool[] switches)
     {
         var p = ActivePattern(u, switches);
         var here = (u.X, u.Y);
-        if (u.SleepTurns > 0) return new AiPlan(u, here, new(), null, -1);
+        if (u.SleepTurns > 0) return new AiPlan(u, here, new(), null, -1, Acts: false);
         int movement = f.Stats(u).Movement;
         var w = new Walk { Cost = f.Flood(u, int.MaxValue / 4), Budget = p.Action < 3 ? movement : 0, Movement = movement };
         bool neutral = u.Side == Side.Neutral;
@@ -140,7 +168,7 @@ public static class EnemyAi
             else if (f.Alive.Where(b => b.Side == Side.Ally).OrderBy(b => b.Slot).FirstOrDefault() is { } ally) goal = (ally.X, ally.Y);
         }
         if (p.Action == 2) goal = (p.X, p.Y);
-        if (goal is not { } g) return new AiPlan(u, here, new(), null, -1);
+        if (goal is not { } g) return new AiPlan(u, here, new(), null, -1, Acts: false);
 
         var path = Trace(f, u, w, g);
         // as far along as this turn allows, then back to the last tile nobody else stands on
@@ -193,10 +221,11 @@ public static class EnemyAi
         foreach (var m in f.KnownSpells(u))
         {
             if (!Battlefield.CanCast(u, m)) continue;
-            // aims: anywhere for whole-map ranges, else within range of a tile the unit can stop on this turn (FUN_00416478)
+            // aims: anywhere for whole-map ranges, else within range of a tile the unit can stop on this turn (FUN_00416478);
+            // each is scored, a spell that covers the whole map too: whether the caster counts depends on the aim, and
+            // the random terms are drawn again for each
             var aims = new HashSet<(int X, int Y)>();
             foreach (var s in m.RangeWholeMap ? stops.Take(1) : stops) aims.UnionWith(f.SpellRange(m, s.X, s.Y));
-            if (m.EffectWholeMap) aims = aims.OrderBy(a => a.Y).ThenBy(a => a.X).Take(1).ToHashSet();   // same area wherever it's aimed
             int top = 0;
             (int X, int Y) at = default;
             foreach (var a in aims.OrderBy(a => a.Y).ThenBy(a => a.X))
@@ -220,24 +249,31 @@ public static class EnemyAi
     }
 
     /// <summary>
-    /// FUN_0041664c, a spell's worth when aimed at <paramref name="aim"/>, counting every unit in its area where it
-    /// stands now (the caster only if the aim is in range from where it stands). Player-side units are the targets of
-    /// damage and status spells, the caster's side of support spells; each unit on the wrong side costs 150.
+    /// FUN_0041664c, a spell's worth when aimed at <paramref name="aim"/>, counting the units in its area where they
+    /// stand now (the caster only if the aim is in range from where it stands), row by row from the top, each from the
+    /// left, as the exe goes over the map's tiles: for a damage or status spell only those it would affect
+    /// (FUN_00411934 marks their tiles 7 — so one aimed at the other side alone ignores the caster's own units in its
+    /// area), for a support spell every unit in the area, affected or not (4 or 8); a spell over the whole map covers
+    /// the map's tiles, not a unit standing past its edge. Player-side units are the targets of damage and status
+    /// spells, the caster's side of support spells; each unit on the wrong side costs 150.
     /// Damage: (spell damage + Mag − MDef) × 5 + 80 when positive. Poison / sleep: rand(20) + HP × 2 + 40 if not
     /// already so. Support: healing min(power, HP missing) × 10 + 50; Power / Defense Up rand(20) + power × 10 +
-    /// Attack × 3 (× 2) + 30 if the current buff is below power / 2; and so on. Never below 0.
+    /// Attack × 3 (× 2) + 30 if the current buff is below power / 2; another action rand(20) + 95 (replacing the sum)
+    /// for a unit that has acted and hasn't given away an extra action or sat its turn out (+0x30) — so the units counted
+    /// before it don't count, those after it do; and so on. Never below 0.
     /// </summary>
     public static int SpellScore(Battlefield f, BattleUnit caster, Magic m, (int X, int Y) aim)
     {
-        var area = f.SpellArea(m, aim.X, aim.Y).ToHashSet();
+        var area = m.EffectWholeMap ? null : f.SpellArea(m, aim.X, aim.Y).ToHashSet();
         var cs = f.Stats(caster);
         int power = m.Value + m.Relation * cs.Mag / 10;
         int half = power / 2;
         var rng = f.Rng;
         int score = 0;
-        foreach (var t in f.Alive.Where(t => area.Contains((t.X, t.Y))))
+        foreach (var t in f.Alive.Where(t => area?.Contains((t.X, t.Y)) ?? f.InBounds(t.X, t.Y)).OrderBy(t => t.Y).ThenBy(t => t.X))
         {
             if (t == caster && !f.SpellRange(m, caster.X, caster.Y).Contains(aim)) continue;
+            if (m.Type is 0 or 1 && !f.Affects(caster, m, t)) continue;
             bool foe = t.Side != Side.Enemy;    // the exe's "not computer-controlled": allies and neutral units
             var ts = f.Stats(t);
             switch (m.Type)
@@ -273,7 +309,7 @@ public static class EnemyAi
                             if (t.PowerUp < -2) score += -t.PowerUp * 10 + 60;
                             if (t.DefUp < -2) score += -t.DefUp * 10 + 60;
                             break;
-                        case 5: if (t.Acted) score = rng.Next(20) + 95; break;   // replaces the running total, as in the exe
+                        case 5: if (t.Acted && !t.NoMoreTurns) score = rng.Next(20) + 95; break;   // replaces the running total, as in the exe
                     }
                     break;
             }

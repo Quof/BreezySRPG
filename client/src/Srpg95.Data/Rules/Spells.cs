@@ -229,7 +229,10 @@ public sealed partial class Battlefield
             case EffectKind.DefUp: t.DefUp = Math.Max(t.DefUp, e.Amount); break;
             case EffectKind.CurePoison: t.PoisonTurns = 0; break;
             case EffectKind.Cleanse: Cleanse(t); break;
-            case EffectKind.ExtraTurn: if (t != caster) t.Acted = false; break;
+            case EffectKind.ExtraTurn:
+                if (t != caster) t.Acted = false;
+                caster.NoMoreTurns = true;   // +0x30: the giver gets none back this phase (FUN_0041ba0c)
+                break;
         }
     }
 

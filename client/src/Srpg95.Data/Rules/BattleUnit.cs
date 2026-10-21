@@ -31,6 +31,12 @@ public sealed class BattleUnit
     public int Y { get; set; }
     public int Facing { get; set; }
     public bool Acted { get; set; }
+    /// <summary>
+    /// Record +0x30: an extra action would be wasted on it this phase — it gave one away itself (an extra-action spell's
+    /// caster, FUN_0041ba0c), or as a computer unit it found nothing to do (FUN_0041589c). The AI's extra-action score
+    /// passes it over (FUN_0041664c); cleared for every unit when a phase begins (FUN_00410b90).
+    /// </summary>
+    public bool NoMoreTurns { get; set; }
     public bool Dead { get; set; }
     /// <summary>The unit id of whoever defeated it (record [56] keeps the killer), for "dies" slots that name a target.</summary>
     public int KilledBy { get; set; } = -1;

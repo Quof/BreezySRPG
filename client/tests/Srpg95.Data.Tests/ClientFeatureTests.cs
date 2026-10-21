@@ -153,7 +153,7 @@ public class ClientFeatureTests
                     new MessageView(2, new[] { "ジュナ：", "・・・・・・" }, 2, false, false), null, false, 0, 0, false),
                 Map = new MapSceneSave(false, new FightSave("r3", "r2", -1, new ResultSave(
                         new() { new StrikeSave("r3", "r2", true, false, 6, false, 29, 6) }, new(), new() { ["r3"] = 16 }, new(), 0, new(), new(), null)),
-                    false, null, null, null, 1, 0, new(), new(), null, 7, 11, new() { new UnitSceneSave("r1", 3, -1, new[] { 1, 1, 0 }) }),
+                    false, null, null, null, 1, new(), new(), null, 7, 11, new() { new UnitSceneSave("r1", 3, -1, new[] { 1, 1, 0 }) }, AiSlot: 4),
                 Brightness = 0,
                 Pictures = new() { new PictureSave("BACK_001.BMP", 8, false) },
                 Bgm = "安らぎ.MID",
@@ -166,6 +166,7 @@ public class ClientFeatureTests
             Assert.Equal(29, back.Map.Fight!.Result.Strikes[0].HpAfter);
             Assert.Equal(16, back.Map.Fight.Result.Exp["r3"]);
             Assert.Equal(new[] { 1, 1, 0 }, back.Map.Units[0].Pending);
+            Assert.Equal(4, back.Map.AiSlot);   // the computer's phase goes on after record 4
             Assert.Equal((0, "BACK_001.BMP", "安らぎ.MID"), (back.Brightness, back.Pictures[0].File, back.Bgm));
             // a save written over by the original game: its note, the event with it, no longer counts
             var other = (byte[])save.Clone();
@@ -195,8 +196,29 @@ public class ClientFeatureTests
         var save = SaveFile.Load(Path.Combine(test, "SAVE3.DAT"))!;
         var state = new GameState();
         save.ApplyTo(state);
-        var again = SaveFile.ForBattle(state, Database.Load(folder), save.MapIndex, "", save.Phase, folder.MapPath(save.MapIndex),
-            Array.Empty<Srpg95.Rules.BattleUnit>(), save.FiredSlots(), save.Raw, camera: (3, 5));
+        var db = Database.Load(folder);
+        var gaveAway = new Srpg95.Rules.BattleUnit
+        {
+            Unit = 3, Side = Srpg95.Rules.Side.Enemy, ClassId = db.Units[3].ClassId, Base = (int[])db.Units[3].BaseStats.Clone(),
+            Hp = 5, X = 4, Y = 6, Slot = 2, NoMoreTurns = true,
+        };
+        var again = SaveFile.ForBattle(state, db, save.MapIndex, "", save.Phase, folder.MapPath(save.MapIndex),
+            new[] { gaveAway }, save.FiredSlots(), save.Raw, camera: (3, 5));
         Assert.Equal((3, 5), again.CameraTile);   // header 0x008 / 0x00C, as the exe keeps its camera
+        Assert.True(again.MapUnitRecords().Single(r => r.Record == 2).NoMoreTurns);   // record [12] (+0x30)
+    }
+
+    [Fact]
+    public void A_computer_units_turn_brings_what_it_is_after_into_view()
+    {
+        // FUN_00416fb0 (a neutral unit's turn): the unit into the middle box, columns 6–12 and rows 5–8 of the 19 × 14 view
+        Assert.Equal((0, 0), Erumani.MapSession.ViewFor((0, 0), (10, 7), null, 40, 30));
+        Assert.Equal((8, 0), Erumani.MapSession.ViewFor((0, 0), (20, 7), null, 40, 30));
+        // FUN_004170a0 (an enemy's): then what it's after into the view, at its edge
+        Assert.Equal((7, 0), Erumani.MapSession.ViewFor((0, 0), (10, 7), (25, 7), 40, 30));
+        Assert.Equal((5, 0), Erumani.MapSession.ViewFor((10, 0), (17, 7), (5, 7), 40, 30));
+        Assert.Equal((0, 7), Erumani.MapSession.ViewFor((0, 0), (10, 7), (10, 20), 40, 30));
+        // never past the map's edges
+        Assert.Equal((21, 16), Erumani.MapSession.ViewFor((0, 0), (39, 29), (39, 29), 40, 30));
     }
 }

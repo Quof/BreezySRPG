@@ -41,9 +41,10 @@ public sealed record RunnerSave(string Script, List<int[]> Frames, int Face, boo
 /// <param name="Opening">the map's opening: the first turn follows</param>
 /// <param name="Fight">the fight the event came before ("before" events): it follows as it was rolled</param>
 /// <param name="AfterFight">the fight's next "after" events follow (<paramref name="AfterAttacker"/>, <paramref name="AfterOthers"/>)</param>
+/// <param name="AiSlot">the computer's phase: the record number it has come to (0 in older saves: it goes on from the first)</param>
 public sealed record MapSceneSave(bool Opening, FightSave? Fight, bool AfterFight, string? Actor, string? AfterAttacker,
-    List<string>? AfterOthers, int Group, int Wait, Dictionary<string, string> PassMarks, Dictionary<string, string> StopMarks,
-    OverlaySave? Action, int CursorX, int CursorY, List<UnitSceneSave> Units);
+    List<string>? AfterOthers, int Group, Dictionary<string, string> PassMarks, Dictionary<string, string> StopMarks,
+    OverlaySave? Action, int CursorX, int CursorY, List<UnitSceneSave> Units, int AiSlot = 0);
 
 /// <summary>A unit's facing, its killer (a fallen one) and the steps a move command gave it that haven't run yet.</summary>
 public sealed record UnitSceneSave(string Unit, int Facing, int KilledBy, int[] Pending);

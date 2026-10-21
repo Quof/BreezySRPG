@@ -94,7 +94,7 @@ public sealed class BattleController
     sealed record Panel(string[] Lines, int X, int Units, BattleUnit? Kill, Action? Sound, bool Auto);
     readonly Queue<Panel> _panels = new();
     Panel? _panel;
-    int _panelFrames, _wait;
+    int _panelFrames;
     AiPlan? _plan;
     BattleUnit? _statusUnit;
     /// <summary>The status window's equipment box the status key picked (−1 none).</summary>
@@ -102,7 +102,7 @@ public sealed class BattleController
 
     public MapOutcome Outcome { get; private set; }
     /// <summary>One-line state summary (screenshot mode writes it next to the PNG).</summary>
-    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} events={_eventsRun} last={_runner.Name} [{_runner.DebugState}] plan={_plan?.Unit.Name}/{_planWalking} group={_group} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} wait={_wait} fired={string.Join(",", _fired)} scene={_scene?.DebugPhase}" +
+    public string DebugState => $"{_state_} phase={_s.Phase} sel={_sel?.Name} at={_sel?.X},{_sel?.Y} cursor={_cursor.X},{_cursor.Y} outcome={Outcome} telop={_telop} events={_eventsRun} last={_runner.Name} [{_runner.DebugState}] plan={_plan?.Unit.Name}/{_planWalking} group={_group} ai={_aiSlot} pan={_s.Panning} cam={_s.Camera} moves={_s.MovesRunning} fired={string.Join(",", _fired)} scene={_scene?.DebugPhase}" +
         string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
     public bool EventRunning => _state_ == State.Events && _runner.Running;
     public bool Busy => _telop is not null || _ending != MapOutcome.None
@@ -274,7 +274,7 @@ public sealed class BattleController
         foreach (var (o, s) in fired) _fired.Add(MapObject.ScriptName(o, s));
         _opening = false;
         if (_s.FirstPlayerUnit() is { } first) _cursor = new Point(first.X, first.Y);
-        _group = 1;
+        (_group, _aiSlot) = (1, 0);
         _plan = null;
         _state_ = _s.Field.AllyPhase ? State.Idle : State.EnemyPhase;
     }
@@ -311,7 +311,7 @@ public sealed class BattleController
             ? new OverlaySave(new[] { o.Actor.X, o.Actor.Y }, o.Colour, o.Area.Select(t => new[] { t.X, t.Y }).ToList(), o.Met.Select(t => new[] { t.X, t.Y }).ToList())
             : null;
         var map = new MapSceneSave(_opening, fight, _afterFightNext, Ref(_actor), Ref(_after?.Attacker), _after?.Others.Select(Ref).OfType<string>().ToList(),
-            _group, _wait, Marks(_passMarks), Marks(_stopMarks), overlay, _cursor.X, _cursor.Y, units);
+            _group, Marks(_passMarks), Marks(_stopMarks), overlay, _cursor.X, _cursor.Y, units, _aiSlot);
         return new SceneSave { Event = ev, Map = map, CameraX = _s.Camera.X, CameraY = _s.Camera.Y };
     }
 
@@ -376,7 +376,7 @@ public sealed class BattleController
         _afterFightNext = m.AfterFight;
         _actor = Unref(m.Actor);
         _after = Unref(m.AfterAttacker) is { } attacker ? (attacker, (m.AfterOthers ?? new()).Select(Unref).OfType<BattleUnit>().ToList()) : null;
-        (_group, _wait) = (m.Group, m.Wait);
+        (_group, _aiSlot) = (m.Group, m.AiSlot);
         void Marks(Dictionary<(int Obj, int Slot), BattleUnit> into, Dictionary<string, string> from)
         {
             into.Clear();
@@ -2042,14 +2042,15 @@ public sealed class BattleController
         _s.Field.NextPhase();          // enemy phase
         _state_ = State.EnemyPhase;
         _plan = null;
-        _group = 1;
-        _wait = 0;
+        (_group, _aiSlot) = (1, 0);
         TurnTelop(2, () => { if (!CheckPoint()) _state_ = State.EnemyPhase; });
     }
 
     bool _planWalking;
     /// <summary>Who moves now in the computer's phase: 1 the enemies, then 2 the neutral units (FUN_0040e658).</summary>
     int _group = 1;
+    /// <summary>The record number the computer's phase has come to (+0x51c0): the unit taking its turn, or the last that did.</summary>
+    int _aiSlot;
 
     /// <summary>Option: the enemy phase resolves without walking, panning, battle scenes or result popups (events still play).</summary>
     public bool SkipEnemyTurn { get; set; }
@@ -2058,14 +2059,16 @@ public sealed class BattleController
     bool Quiet => SkipEnemyTurn && !_s.Field.AllyPhase;
 
     /// <summary>
-    /// The computer's phase (FUN_0040e658): every enemy that hasn't acted, by record number, then every neutral unit;
-    /// each one's AI decides, the camera shows it while it walks, it acts, and the checkpoint runs before the next.
-    /// A unit with nothing to do is done at once (no camera). Then the camera goes to the first player unit and the
+    /// The computer's phase (FUN_0040e658): a counter goes up the record numbers, giving each enemy that hasn't acted
+    /// its turn; past the last record it goes round again from the first while an enemy still hasn't (one given an extra
+    /// action by a later one acts then), and then the neutral units get one round. Each one's AI decides, the camera
+    /// shows it and where it's headed (FUN_004170a0) while it walks, it acts, and the checkpoint runs before the next. A
+    /// unit that's asleep or has nowhere to go is done at once (no camera); one whose way is blocked, or that's already
+    /// where it's going, still takes its turn without a step. Then the camera goes to the first player unit and the
     /// player's phase begins.
     /// </summary>
     void UpdateEnemyPhase(BattleInput i)
     {
-        if (_wait > 0) { _wait -= i.FastForward ? 4 : 1; return; }
         if (_plan is { } p)
         {
             if (!_planWalking)
@@ -2073,7 +2076,11 @@ public sealed class BattleController
                 if (Quiet) (p.Unit.X, p.Unit.Y) = p.Destination;
                 else
                 {
-                    _s.ShowTile(p.Unit.X, p.Unit.Y);
+                    // an enemy's turn shows the unit and what it's after: the unit it attacks, the spell's aim (a spell over
+                    // the whole map: where it casts from), else where it stops (FUN_00416334); a neutral unit's, the unit
+                    (int X, int Y)? focus = _group == 2 ? null
+                        : p.Target is { } aimed ? (aimed.X, aimed.Y) : p.Spell is { EffectWholeMap: false } ? p.Aim : p.Destination;
+                    _s.ShowTile(p.Unit.X, p.Unit.Y, focus);
                     _s.Walk(p.Unit, p.Path);
                 }
                 _planWalking = true;
@@ -2092,23 +2099,20 @@ public sealed class BattleController
                 return;
             }
             if (p.Target is { Dead: false } t && _s.Field.InRange(p.Unit, p.Unit.X, p.Unit.Y, t)) { Attack(p.Unit, t); return; }
+            // the next unit's turn comes the next tick, no pause between them (FUN_0040ecf0, FUN_0040e658)
             p.Unit.Acted = true;
-            if (CheckPoint()) return;
-            _wait = Quiet ? 0 : 8;
+            CheckPoint();
             return;
         }
-        while (true)
+        while (EnemyAi.NextInPhase(_s.Field, ref _group, ref _aiSlot) is { } u)
         {
-            var u = _s.InRecordOrder.FirstOrDefault(u => !u.Dead && !u.Acted && (_group == 1 ? u.Side == Side.Enemy : u.Side == Side.Neutral));
-            if (u is null)
-            {
-                if (_group == 1) { _group = 2; continue; }
-                break;
-            }
             var plan = EnemyAi.Plan(_s.Field, u, _state.Switches);
-            if (plan.Path.Count == 0 && plan.Target is null && plan.Spell is null)
+            if (!plan.Acts)
             {
-                u.Acted = true;   // nothing to do (FUN_0041589c returns at once)
+                // asleep, or nowhere to go: done at once (FUN_0041589c returns 0); with nothing to do, an extra action
+                // would be wasted on it (+0x30)
+                u.Acted = true;
+                if (u.SleepTurns == 0) u.NoMoreTurns = true;
                 continue;
             }
             _plan = plan;

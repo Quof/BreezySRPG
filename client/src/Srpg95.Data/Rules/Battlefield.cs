@@ -81,6 +81,9 @@ public sealed partial class Battlefield
 
     public IEnumerable<BattleUnit> Alive => Units.Where(u => !u.Dead && !u.Hidden);
 
+    /// <summary>The exe keeps 99 unit records (1–99): a unit on the map holds one (<see cref="BattleUnit.Slot"/>).</summary>
+    public const int MaxRecord = 99;
+
     public BattleUnit? UnitAt(int x, int y) => Units.FirstOrDefault(u => !u.Dead && !u.Hidden && u.X == x && u.Y == y);
 
     Item? Item(int id) => id >= 0 && id < Db.Items.Length ? Db.Items[id] : null;
@@ -364,7 +367,7 @@ public sealed partial class Battlefield
     /// </summary>
     public void NextPhase()
     {
-        foreach (var u in Alive) u.Acted = false;
+        foreach (var u in Alive) (u.Acted, u.NoMoreTurns) = (false, false);
         Phase++;
         bool playerPhase = AllyPhase;
         foreach (var u in Alive.Where(u => playerPhase ? u.Side != Side.Enemy : u.Side == Side.Enemy).ToList())

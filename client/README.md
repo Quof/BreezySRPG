@@ -172,7 +172,7 @@ Should the save file change (the original game saving over it), its note no long
    - enemy phase: AI move patterns (rush, wait, go to a point);
    - event triggers: turn, switch, contact, death, pass/stop on a tile, before/after attack, victory;
    - PLAYER TURN / ENEMY TURN / COMPLETE!! captions with the victory fanfare, GAMEOVER screen;
-   - the camera follows each enemy;
+   - the camera follows each enemy, and brings the unit or tile it's after into view;
    - win/lose, then on to the next map.
 
    - magic (必殺技): spells learned by class level, range/effect grids, damage/degrade/raise effects, MP; enemies cast damage and healing spells;

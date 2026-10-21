@@ -137,7 +137,7 @@ public sealed class MapSession : IMapContext
     }
 
     /// <summary>The exe keeps 99 unit records (1–99): with all of them taken, no more units come onto the map.</summary>
-    const int MaxRecord = 99;
+    const int MaxRecord = Battlefield.MaxRecord;
 
     /// <summary>The lowest record number no unit on the map holds (fallen units keep theirs).</summary>
     int FreeSlot()
@@ -220,6 +220,7 @@ public sealed class MapSession : IMapContext
             u.Guest = r.Guest;
             u.FromRoster = r.FromRoster;
             (u.PowerUp, u.DefUp, u.MdefUp, u.PoisonTurns, u.SleepTurns) = (r.PowerUp, r.DefUp, r.MdefUp, r.PoisonTurns, r.SleepTurns);
+            u.NoMoreTurns = r.NoMoreTurns;
             (u.Hidden, u.Appeared, u.Slot) = (false, true, r.Record);
         }
         Field.SetPhase(Math.Max(1, save.Phase));
@@ -297,15 +298,38 @@ public sealed class MapSession : IMapContext
     /// FUN_00416fb0: scrolls just enough to bring the tile into the view's middle box (columns 6–12, rows 5–8 of the
     /// 19×14 tiles), a tile per tick; used by events' scroll command, the enemy phase and after the opening.
     /// </summary>
-    public void ShowTile(int x, int y)
+    public void ShowTile(int x, int y) => ShowTile(x, y, null);
+
+    /// <summary>
+    /// FUN_004170a0, the camera for a computer unit's turn: the unit into the middle box as above, then, where what it's
+    /// after (<paramref name="focus"/>) would still be outside the 19×14 view, on just far enough to bring it in at the edge.
+    /// </summary>
+    public void ShowTile(int x, int y, (int X, int Y)? focus)
     {
         int cx = Camera.X / Tile, cy = Camera.Y / Tile;
-        int tx = x - cx < 6 ? x - 6 : x - cx > 12 ? x - 12 : cx;
-        int ty = y - cy < 5 ? y - 5 : y - cy > 8 ? y - 8 : cy;
-        tx = Math.Clamp(tx, 0, Math.Max(0, Map.Width - ViewTilesX));
-        ty = Math.Clamp(ty, 0, Math.Max(0, Map.Height - ViewTilesY));
+        var (tx, ty) = ViewFor((cx, cy), (x, y), focus, Map.Width, Map.Height);
         var target = new Point(tx == cx ? Camera.X : tx * Tile, ty == cy ? Camera.Y : ty * Tile);
         _panTarget = target == Camera ? null : target;
+    }
+
+    /// <summary>
+    /// <see cref="ShowTile(int, int, ValueTuple{int, int}?)"/>'s arithmetic: the view's top-left tile, from
+    /// <paramref name="view"/>, that brings <paramref name="tile"/> into the middle box and then the focus into the view,
+    /// on a map of <paramref name="width"/> × <paramref name="height"/> tiles.
+    /// </summary>
+    public static (int X, int Y) ViewFor((int X, int Y) view, (int X, int Y) tile, (int X, int Y)? focus, int width, int height)
+    {
+        int maxX = Math.Max(0, width - ViewTilesX), maxY = Math.Max(0, height - ViewTilesY);
+        var (cx, cy) = view;
+        var (x, y) = tile;
+        int tx = Math.Clamp(x - cx < 6 ? x - 6 : x - cx > 12 ? x - 12 : cx, 0, maxX);
+        int ty = Math.Clamp(y - cy < 5 ? y - 5 : y - cy > 8 ? y - 8 : cy, 0, maxY);
+        if (focus is { } f)
+        {
+            tx = Math.Clamp(f.X < tx ? f.X : f.X - tx > ViewTilesX - 1 ? f.X - (ViewTilesX - 1) : tx, 0, maxX);
+            ty = Math.Clamp(f.Y < ty ? f.Y : f.Y - ty > ViewTilesY - 1 ? f.Y - (ViewTilesY - 1) : ty, 0, maxY);
+        }
+        return (tx, ty);
     }
 
     /// <summary>The enemy phase's "show this unit" (the same box rule).</summary>

@@ -367,4 +367,164 @@ public class RulesTests
         int others = f.Alive.Count(u => u != minion && area.Contains((u.X, u.Y)) && u.Side != Side.Enemy);
         Assert.Equal(Math.Max(0, expected - 150 * others), EnemyAi.SpellScore(f, nasu, heal, (minion.X, minion.Y)));
     }
+
+    /// <summary>A grid of the given (row, column) cells, [10, 10] being the centre.</summary>
+    static bool[,] Grid(params (int Row, int Col)[] cells)
+    {
+        var g = new bool[21, 21];
+        foreach (var (r, c) in cells) g[r, c] = true;
+        return g;
+    }
+
+    [Fact]
+    public void Ai_damage_spell_scores_count_only_the_units_it_affects()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var nasu = f.Units.Single(u => u.Unit == 3);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        var minion = f.Units.First(u => u.Side == Side.Enemy && u != nasu);
+        foreach (var o in f.Units.Where(u => u != nasu && u != juna && u != minion)) o.Hidden = true;
+        (nasu.X, nasu.Y) = (5, 3);
+        (juna.X, juna.Y) = (5, 6);
+        (minion.X, minion.Y) = (6, 6);
+        // a damage spell over a cross of five tiles, at the other side only (target 1): the minion beside ジュナ is in
+        // the area but isn't affected (FUN_00411934 doesn't mark its tile), so it costs nothing (FUN_0041664c)
+        var beam = db.Magic.First(m => m.Type == 0 && m.Target == 1) with
+            { Damage = 30, EffectWholeMap = false, EffectGrid = Grid((10, 10), (9, 10), (11, 10), (10, 9), (10, 11)) };
+        var aim = (juna.X, juna.Y);
+        int one = (beam.Damage + f.Stats(nasu).Mag - f.Stats(juna).MagicDefense) * 5 + 80;
+        Assert.True(one > 150);
+        Assert.Equal(one, EnemyAi.SpellScore(f, nasu, beam, aim));
+        // aimed at everyone in the area (target 0), it would hit the minion as well, and that costs 150
+        Assert.Equal(one - 150, EnemyAi.SpellScore(f, nasu, beam with { Target = 0 }, aim));
+    }
+
+    [Fact]
+    public void Ai_scores_a_spell_over_the_whole_map_at_every_aim()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var nasu = f.Units.Single(u => u.Unit == 3);
+        foreach (var o in f.Units.Where(u => u != nasu)) o.Hidden = true;
+        nasu.MovePatterns[0] = new MovePattern(-1, 0, 0, 0, -1);   // rush
+        // its only spell: a heal over the whole map, aimed two tiles away. It counts the caster only where the aim is
+        // in range from where the caster stands, so most aims are worth nothing and the first one scanned is among them
+        var heal = db.Magic.First(m => m.Type == 2 && m.RaiseEffect == 0) with
+        {
+            Index = 0, MpCost = 1, Value = 50, Relation = 0, RangeWholeMap = false, EffectWholeMap = true,
+            RangeGrid = Grid((8, 10), (12, 10), (10, 8), (10, 12)),
+        };
+        db.Magic[0] = heal;
+        var cls = f.Class(nasu);
+        Array.Clear(cls.SkillLevels);
+        Array.Clear(cls.SkillIds);
+        cls.SkillLevels[0] = 1;
+        nasu.Mp = 10;
+        nasu.Hp = 1;
+        var first = f.Reachable(nasu).Keys.SelectMany(s => f.SpellRange(heal, s.X, s.Y)).OrderBy(a => a.Y).ThenBy(a => a.X).First();
+        Assert.Equal(0, EnemyAi.SpellScore(f, nasu, heal, first));
+        var plan = EnemyAi.Plan(f, nasu, new bool[500]);
+        Assert.Same(heal, plan.Spell);
+        // cast from where it stands, the cheapest tile with the aim in range (FUN_00416c44)
+        Assert.Equal((nasu.X, nasu.Y), plan.Destination);
+        Assert.Empty(plan.Path);
+        // the whole map is the map's tiles: a wounded unit of its side standing past the edge isn't counted
+        var near = f.SpellRange(heal, nasu.X, nasu.Y).First();
+        int alone = EnemyAi.SpellScore(f, nasu, heal, near);
+        Assert.True(alone > 0);
+        var away = f.Units.Single(u => u.Unit == 243);
+        (away.Hidden, away.Side, away.X, away.Y, away.Hp) = (false, Side.Enemy, f.Map.Width, 0, 1);
+        Assert.Equal(alone, EnemyAi.SpellScore(f, nasu, heal, near));
+    }
+
+    [Fact]
+    public void Ai_gives_another_action_only_to_a_unit_that_can_use_it()
+    {
+        if (Game() is null) return;
+        var f = Map1(out var db);
+        var nasu = f.Units.Single(u => u.Unit == 3);
+        var minion = f.Units.First(u => u.Side == Side.Enemy && u != nasu);
+        var juna = f.Units.Single(u => u.Unit == 243);
+        foreach (var o in f.Units.Where(u => u != nasu && u != minion && u != juna)) o.Hidden = true;
+        (nasu.X, nasu.Y) = (3, 6);
+        (minion.X, minion.Y) = (5, 6);
+        (juna.X, juna.Y) = (8, 8);
+        var haste = db.Magic.First(m => m.Type == 2 && m.RaiseEffect == 5) with
+            { EffectWholeMap = false, RangeWholeMap = false, EffectGrid = Grid((9, 10), (10, 10), (11, 10)), RangeGrid = Grid((10, 12)) };
+        var aim = (minion.X, minion.Y);
+        Assert.Equal(0, EnemyAi.SpellScore(f, nasu, haste, aim));            // it hasn't had its turn yet
+        minion.Acted = true;
+        Assert.InRange(EnemyAi.SpellScore(f, nasu, haste, aim), 95, 114);    // rand(20) + 95
+        minion.NoMoreTurns = true;                                           // it sat its turn out, or gave one away (+0x30)
+        Assert.Equal(0, EnemyAi.SpellScore(f, nasu, haste, aim));
+        minion.NoMoreTurns = false;
+        // that replaces what the units before it added up, in the exe's order (rows from the top, each from the left): a
+        // player unit above it in the area costs nothing, one below it 150
+        (juna.X, juna.Y) = (5, 5);
+        Assert.InRange(EnemyAi.SpellScore(f, nasu, haste, aim), 95, 114);
+        (juna.X, juna.Y) = (5, 7);
+        Assert.Equal(0, EnemyAi.SpellScore(f, nasu, haste, aim));
+        // the caster gives one away: the minion acts again, the caster gets none back until the next phase
+        (juna.X, juna.Y) = (8, 8);
+        nasu.Mp = haste.MpCost;
+        f.Cast(nasu, haste, aim.X, aim.Y);
+        Assert.False(minion.Acted);
+        Assert.True(nasu.NoMoreTurns);
+        f.NextPhase();
+        Assert.False(nasu.NoMoreTurns);
+    }
+
+    [Fact]
+    public void Ai_units_with_somewhere_to_go_take_their_turn_even_without_a_step()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        var minion = f.Units.First(u => u.Side == Side.Enemy && u.Unit != 3 && u.MovePatterns.Length > 0);
+        foreach (var o in f.Units.Where(u => u != minion)) o.Hidden = true;
+        var off = new bool[500];
+        // Specific, already on its tile: a turn without a step (FUN_0041589c returns 1): stop-on marks, contacts, the checkpoint
+        minion.MovePatterns[0] = new MovePattern(-1, 2, (short)minion.X, (short)minion.Y, -1);
+        var plan = EnemyAi.Plan(f, minion, off);
+        Assert.True(plan.Acts);
+        Assert.Empty(plan.Path);
+        Assert.Equal((minion.X, minion.Y), plan.Destination);
+        // waiting with nobody to attack: nowhere to go, its turn is over at once (returns 0, +0x30 set)
+        minion.MovePatterns[0] = new MovePattern(-1, 1, 0, 0, -1);
+        Assert.False(EnemyAi.Plan(f, minion, off).Acts);
+        // asleep: the same, wherever it was headed
+        minion.MovePatterns[0] = new MovePattern(-1, 2, (short)minion.X, (short)minion.Y, -1);
+        minion.SleepTurns = 1;
+        Assert.False(EnemyAi.Plan(f, minion, off).Acts);
+    }
+
+    [Fact]
+    public void The_computers_phase_goes_up_the_records_then_round_again_for_another_action()
+    {
+        if (Game() is null) return;
+        var f = Map1(out _);
+        int record = 1;
+        foreach (var u in f.Units) u.Slot = record++;
+        var enemies = f.Units.Where(u => u.Side == Side.Enemy).OrderBy(u => u.Slot).ToList();
+        Assert.True(enemies.Count >= 3);
+        foreach (var e in enemies.Skip(3)) e.Hidden = true;
+        var (e1, e2, e3) = (enemies[0], enemies[1], enemies[2]);
+        var neutral = f.Units.First(u => u.Side == Side.Ally);
+        neutral.Side = Side.Neutral;
+        int group = 1, slot = 0;
+        BattleUnit? Next()
+        {
+            var u = EnemyAi.NextInPhase(f, ref group, ref slot);
+            if (u is not null) u.Acted = true;
+            return u;
+        }
+        Assert.Same(e1, Next());
+        Assert.Same(e2, Next());
+        e1.Acted = false;                 // e2 gave e1 another action
+        Assert.Same(e3, Next());          // the counter goes on up the records first,
+        Assert.Same(e1, Next());          // then round again for it
+        Assert.Same(neutral, Next());     // then the neutral units' round
+        neutral.Acted = false;
+        Assert.Null(Next());              // just the one
+    }
 }

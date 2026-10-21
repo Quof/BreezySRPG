@@ -176,11 +176,11 @@ public sealed class SaveFile
 
     /// <summary>
     /// One map-unit record of a battle save (§14 fields): its record number, [3] computer, [14] guest, [15] neutral, [4] ≥ 0
-    /// holds a roster entry, [36]–[38] the buffs, [45] / [46] the poison and sleep counters.
+    /// holds a roster entry, [36]–[38] the buffs, [45] / [46] the poison and sleep counters, [12] no more actions this phase.
     /// </summary>
     public sealed record SavedUnit(int Record, int Object, int Unit, int ClassId, int Level, int Exp, int[] Base, int Hp, int Mp,
         int Weapon, int Armor, int Accessory, int X, int Y, bool Acted, bool Alive, bool Computer, bool Guest, bool Neutral, bool FromRoster,
-        int PowerUp = 0, int DefUp = 0, int MdefUp = 0, int PoisonTurns = 0, int SleepTurns = 0);
+        int PowerUp = 0, int DefUp = 0, int MdefUp = 0, int PoisonTurns = 0, int SleepTurns = 0, bool NoMoreTurns = false);
 
     /// <summary>The map units of a battle save, in record order (records start at index 1).</summary>
     public IEnumerable<SavedUnit> MapUnitRecords()
@@ -192,7 +192,7 @@ public sealed class SaveFile
             int R(int k) => I32(off + k * 4);
             yield return new SavedUnit(i, R(7), R(8), R(9), R(10), R(11), Enumerable.Range(20, 6).Select(R).ToArray(), R(26), R(27),
                 R(40), R(41), R(42), R(5), R(6), R(2) != 0, R(1) != 0, R(3) != 0, R(14) != 0, R(15) != 0, R(4) >= 0,
-                R(36), R(37), R(38), R(45), R(46));
+                R(36), R(37), R(38), R(45), R(46), R(12) != 0);
         }
     }
 
@@ -232,7 +232,7 @@ public sealed class SaveFile
             int off = UnitOff + u.Slot * UnitSize;
             WriteUnit(f, off, db, u.Unit, new RosterEntry(u.ClassId, u.Level, u.Exp, u.Base, u.Weapon, u.Armor, u.Accessory), keepBattleState: false);
             void R(int k, int v) => f.I32(off + k * 4, v);
-            R(1, u.Dead && u.Cleared ? 0 : 1); R(2, u.Acted ? 1 : 0); R(3, u.Side == Srpg95.Rules.Side.Enemy ? 1 : 0);
+            R(1, u.Dead && u.Cleared ? 0 : 1); R(2, u.Acted ? 1 : 0); R(3, u.Side == Srpg95.Rules.Side.Enemy ? 1 : 0); R(12, u.NoMoreTurns ? 1 : 0);
             R(5, u.X); R(6, u.Y); R(7, u.MapObject); R(13, u.MapObject < 0 ? 1 : 0);
             R(14, u.Guest ? 1 : 0); R(15, u.Side == Srpg95.Rules.Side.Neutral ? 1 : 0); R(16, u.Unattackable ? 1 : 0);
             R(26, Math.Max(0, u.Hp)); R(27, u.Mp); R(36, u.PowerUp); R(37, u.DefUp); R(38, u.MdefUp); R(45, u.PoisonTurns); R(46, u.SleepTurns);
