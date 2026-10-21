@@ -23,6 +23,8 @@ public enum UiLanguage { English, Japanese }
 public enum SaveScreen { Extended, Original }
 public enum MusicEngine { Windows, SoundFont }
 public enum FastForwardMode { Hold, Toggle }
+/// <summary>決定音, CLICK.WAV: everywhere, everywhere but advancing a message, or nowhere (saving and loading play it anyway).</summary>
+public enum ConfirmSound { On, GameplayOnly, Off }
 
 /// <summary>
 /// Player settings (modern features; none of this exists in the original), kept in %APPDATA%\EasySRPG95\settings.json
@@ -53,7 +55,9 @@ public sealed class Settings
     public int SoundVolume { get; set; } = 80;
     public MusicEngine Music { get; set; } = MusicEngine.SoundFont;
     public string? SoundFont { get; set; }                // null = the built-in GeneralUser GS; else a file name in soundfonts/ or a full path
-    public bool MessageSound { get; set; } = true;        // the CLICK.WAV "thunk" on every confirm and text advance (the only sound option)
+    public ConfirmSound ConfirmSound { get; set; }        // the CLICK.WAV "thunk" on confirms and text advances
+    /// <summary>The on/off confirm sound earlier versions saved (off = <see cref="ConfirmSound.Off"/>); read, never written.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? MessageSound { get; set; }
 
     // gameplay
     public bool BattleScenes { get; set; } = true;
@@ -119,6 +123,8 @@ public sealed class Settings
                     ok.Remove(Microsoft.Xna.Framework.Input.Keys.Space);
                 foreach (var (a, keys) in DefaultKeys()) s.Keys.TryAdd(a, keys);   // actions added later
                 if (s.ModernUi) { s.Skin = UiSkin.Modern; s.ModernUi = false; }   // the old on/off look setting
+                if (s.MessageSound == false) s.ConfirmSound = ConfirmSound.Off;      // the old on/off confirm sound
+                s.MessageSound = null;
                 s.Path = path == OldSettings ? UserSettings : path;   // saved to the new place from now on
                 return s;
             }
