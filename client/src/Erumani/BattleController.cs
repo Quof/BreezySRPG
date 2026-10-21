@@ -208,8 +208,8 @@ public sealed class BattleController
     public Func<int, bool>? LoadRequested { get; set; }
     public Func<int, bool>? SlotExists { get; set; }
     public Action? QuitRequested { get; set; }
-    readonly Camp.MenuList _files = new() { Rect = new Rectangle(128, 24, 96, 177), Indent = 16 };
-    readonly Camp.MenuList _quit = new() { Rect = new Rectangle(128, 24, 132, 80), Indent = 6, TopPad = 31 };
+    readonly Camp.MenuList _files = new() { ItemWidth = 60 };
+    readonly Camp.MenuList _quit = new() { ItemWidth = 36 };
     bool _saving;
 
     /// <summary>Event slots that have run (object, slot), for a battle save's fired flags.</summary>
@@ -229,14 +229,18 @@ public sealed class BattleController
 
     /// <summary>
     /// セーブする / ロードする (FUN_00418bdc / FUN_00418edc): 「セーブします」 (「ロードします」), a rule and ファイル１–８ in a green
-    /// panel 96 × 176, one tile left of the clicked tile at its top, inside the frame; saving goes straight back to the
-    /// turn menu, loading fades the map out first.
+    /// panel (the larger of 5 and half the title's bytes, plus 2) × 12 px wide and 11 rows high, one tile left of the
+    /// clicked tile at its top, inside the frame (FUN_0041855c); the files 60 px wide in the middle. Saving goes straight
+    /// back to the turn menu, loading fades the map out first.
     /// </summary>
     void OpenFiles(bool save)
     {
         _saving = save;
-        _files.Rect = new Rectangle(Math.Max(16, Math.Min(_turnMenuAt.X - 32, 624 - 96)), Math.Max(16, Math.Min(_turnMenuAt.Y, 464 - 176)), 96, 176);
-        _files.Header = Word(save ? 53 : 54);   // セーブします / ロードします
+        string title = Word(save ? 53 : 54);   // セーブします / ロードします
+        int w = (Math.Max(5, (Bin.Sjis.GetByteCount(title) + 1) / 2) + 2) * 12, h = 11 * 16;
+        _files.Rect = new Rectangle(Math.Clamp(_turnMenuAt.X - 32, 16, 624 - w), Math.Clamp(_turnMenuAt.Y, 16, 464 - h), w, h);
+        _files.ItemX = w / 2 - 30;
+        _files.Header = new[] { title, "-" };
         _files.Set(Enumerable.Range(81, 8).Select(Word).ToArray(),   // ファイル１–８
             save ? null : Enumerable.Range(1, 8).Select(n => SlotExists?.Invoke(n) ?? false).ToArray());
         _files.Index = 0;
@@ -999,17 +1003,17 @@ public sealed class BattleController
     }
 
     Item? _useItem;
-    readonly Camp.MenuList _useMenu = new() { Indent = 7, TopPad = 47 };
+    readonly Camp.MenuList _useMenu = new() { ItemX = 54, ItemWidth = 36 };
 
     /// <summary>
     /// 「〈item〉 / を使います / ― / はい / いいえ」 (FUN_00418308): a green panel 144 × 96, 32 px left of the unit's tile at its
-    /// top, inside the frame; はい / いいえ at x + 54 with 48-px bars. はい uses it (FUN_0040fc00), いいえ goes back to the list.
+    /// top, inside the frame; はい / いいえ at x + 54, 36 px wide. はい uses it (FUN_0040fc00), いいえ goes back to the list.
     /// </summary>
     void OpenUseConfirm(Item it)
     {
         _useItem = it;
         _useMenu.Rect = UnitPanel(-32, 144, 96, list: false);
-        _useMenu.RowInset = 48;
+        _useMenu.Header = new[] { it.Name, Word(58), "-" };   // を使います
         _useMenu.Set(new[] { Word(45), Word(46) });
         _useMenu.Index = 0;
         _state_ = State.UseConfirm;
@@ -1033,17 +1037,6 @@ public sealed class BattleController
         OpenItemList();
         _menuIndex = Math.Clamp(keep, 0, Math.Max(0, _menu.Length - 1));
         _itemPage = _menuIndex / ItemRows;
-    }
-
-    void DrawUseConfirm(SpriteBatch sb, int frame)
-    {
-        _useMenu.Draw(sb, _ui, true, frame);
-        var r = _useMenu.Rect;
-        if (_useItem is { } it && _ui.SmallText.Get(it.Name) is { } n) sb.Draw(n, new Vector2(r.X + 13, r.Y + 10), Ui.Ui.PanelText);
-        if (_ui.SmallText.Get(Word(58)) is { } q) sb.Draw(q, new Vector2(r.X + 13, r.Y + 26), Ui.Ui.PanelText);   // を使います
-        var (light, dark) = Ui.Ui.EdgeColors(Ui.Ui.PanelColor.Green);
-        _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 47, r.Width - 24, 1), dark);
-        _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 48, r.Width - 24, 1), light);
     }
 
     /// <summary>A spell's aim (FUN_004117d0), the pointer on the caster (FUN_00417188).</summary>
@@ -1585,20 +1578,17 @@ public sealed class BattleController
         }
     }
 
-    int _confirmWord;
-
     /// <summary>
     /// A はい／いいえ question from the turn menu (FUN_00418824, FUN_00418a00): a green panel (the larger of 3 and half the
     /// question's bytes, plus 2) × 12 px wide and 5 rows of 16 px high, its corner 48 px left of the clicked tile's, kept
-    /// inside the frame (FUN_0041855c). The question, an etched rule, then はい / いいえ centred, each with a 48-px bar.
+    /// inside the frame (FUN_0041855c). The question, an etched rule, then はい / いいえ 36 px wide in the middle.
     /// </summary>
     void OpenConfirm(int word, State state)
     {
-        _confirmWord = word;
         int units = Math.Max(3, (Bin.Sjis.GetByteCount(Word(word)) + 1) / 2) + 2, w = units * 12, h = 5 * 16;
-        int x = Math.Max(16, Math.Min(_turnMenuAt.X - 48, 624 - w)), y = Math.Max(16, Math.Min(_turnMenuAt.Y, 464 - h));
-        _quit.Rect = new Rectangle(x, y, w, h);
-        _quit.RowInset = w / 2 - 24;
+        _quit.Rect = new Rectangle(Math.Clamp(_turnMenuAt.X - 48, 16, 624 - w), Math.Clamp(_turnMenuAt.Y, 16, 464 - h), w, h);
+        _quit.ItemX = w / 2 - 18;
+        _quit.Header = new[] { Word(word), "-" };
         _quit.Set(new[] { Word(45), Word(46) });   // はい / いいえ
         _quit.Index = 0;
         _state_ = state;
@@ -1764,17 +1754,9 @@ public sealed class BattleController
         if (_state_ == State.WholeMap)
             _s.DrawWholeMap(sb, _ui, _s.Field.Alive.Where(u => !u.Hidden).Select(u => (u.X, u.Y, u.Side switch { Side.Enemy => 0, Side.Ally => 1, _ => 2 })), frame);
         if (_state_ == State.Files) _files.Draw(sb, _ui, true, frame);
-        if (_state_ is State.QuitConfirm or State.EndTurnConfirm)
-        {
-            _quit.Draw(sb, _ui, true, frame);
-            var qr = _quit.Rect;
-            if (_ui.SmallText.Get(Word(_confirmWord)) is { } q) sb.Draw(q, new Vector2(qr.X + 13, qr.Y + 10), Ui.Ui.PanelText);
-            var (light, dark) = Ui.Ui.EdgeColors(Ui.Ui.PanelColor.Green);
-            _ui.Fill(sb, new Rectangle(qr.X + 12, qr.Y + 31, qr.Width - 24, 1), dark);    // the etched rule under the question
-            _ui.Fill(sb, new Rectangle(qr.X + 12, qr.Y + 32, qr.Width - 24, 1), light);
-        }
+        if (_state_ is State.QuitConfirm or State.EndTurnConfirm) _quit.Draw(sb, _ui, true, frame);
         if (_state_ is State.SpellList or State.ItemList or State.EquipList or State.EquipSlots) DrawList(sb, frame);
-        if (_state_ == State.UseConfirm) DrawUseConfirm(sb, frame);
+        if (_state_ == State.UseConfirm) _useMenu.Draw(sb, _ui, true, frame);
         if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel);
         if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit);
         if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel); }

@@ -76,6 +76,9 @@ public sealed class Ui : IDisposable
 
     public void Fill(SpriteBatch sb, Rectangle r, Color c) => sb.Draw(_pixel, r, c);
 
+    /// <summary>SYSTEM.BMP with palette index 0 transparent (arrows, cursors, balloon pieces).</summary>
+    public Texture2D? SystemBmp => _tex.Get("SYSTEM.BMP");
+
     public void Frame(SpriteBatch sb, Rectangle r, Color c, int t = 1)
     {
         Fill(sb, new Rectangle(r.X, r.Y, r.Width, t), c);

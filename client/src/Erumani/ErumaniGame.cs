@@ -87,6 +87,7 @@ public sealed class ErumaniGame : Game
     protected override void LoadContent()
     {
         _db = Database.Load(_folder);
+        if (_db.Words.Length > 63) Camp.MenuList.PageLabel = _db.Words[63];   // ページ
         _tex = new Textures(GraphicsDevice, _folder);
         _ui = new Ui.Ui(GraphicsDevice, _tex);
         _audio = new Audio(_folder) { Muted = _opts.Screenshot is not null };
@@ -182,6 +183,7 @@ public sealed class ErumaniGame : Game
             Loaded = save => AfterFade(10, () => ApplySave(save)),
             Options = OpenOptions,
             Quit = () => AfterFade(10, Exit),
+            WarpPointer = WarpMouse,
         };
         Window.Title = "Erumani";
         _status = "";
@@ -218,6 +220,7 @@ public sealed class ErumaniGame : Game
             StartNext = () => AfterFade(10, () => LoadMap(pos, fromCamp: true)),
             Loaded = save => AfterFade(10, () => ApplySave(save)),
             Quit = () => AfterFade(10, Exit),
+            WarpPointer = WarpMouse,
         };
         if (fromMap)
         {
@@ -744,8 +747,14 @@ public sealed class ErumaniGame : Game
 
     void OpenSkipPrompt()
     {
-        // the original's はい / いいえ (WORD.DAT 45, 46), defaulting to はい
-        _skipPrompt = new Camp.MenuList { Rect = new Rectangle(216, 196, 208, 84), Header = "イベントをスキップしますか？", Indent = 16 };
+        // laid out like the original's questions (FUN_00418824): the question, a rule, はい / いいえ (WORD.DAT 45, 46) in the
+        // middle, defaulting to はい
+        const string question = "イベントをスキップしますか？";
+        int w = ((Bin.Sjis.GetByteCount(question) + 1) / 2 + 2) * 12;
+        _skipPrompt = new Camp.MenuList
+        {
+            Rect = new Rectangle(320 - w / 2, 200, w, 80), Header = new[] { question, "-" }, ItemX = w / 2 - 18, ItemWidth = 36,
+        };
         _skipPrompt.Set(new[] { _db.Words[45], _db.Words[46] });
         Sfx.Click();
     }
