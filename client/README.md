@@ -93,13 +93,14 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 | Keys | Action |
 |---|---|
-| Enter / Z / Space, left click | confirm. On a unit: select it, or show its status if it can't act. On an empty tile: the turn menu |
+| Enter / Z, left click | confirm. On a unit: select it, or show its status if it can't act. On an empty tile: the turn menu |
 | Esc / X / Backspace, right click | cancel or back (at the command menu: undo the move). During a battle scene: skip it |
 | Arrows | move the map cursor (hold to repeat); move in menus |
 | W A S D | scroll the map camera; W/S also move in menus |
 | C / Left Shift, right click on a unit | unit status |
 | Tab / Left Ctrl | fast-forward (hold, or toggle; see Options) |
 | Mouse wheel up / L | text backlog (wheel down or click to close) |
+| Space | during an event: skip the rest of it (asks first) |
 | R | enemy ranges: every enemy's reach (moves and attacks, spells included) as one red area; press again to hide |
 | F1 | options (anywhere) |
 | F4 or Alt+Enter | fullscreen |
