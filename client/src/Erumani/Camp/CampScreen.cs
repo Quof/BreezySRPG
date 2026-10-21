@@ -105,7 +105,7 @@ public sealed class MenuList
             if (Columns is null) continue;
             for (int col = 0; col < Columns.Length && col < ColumnX.Length; col++)
                 if (k < Columns[col].Length && Columns[col][k] is { Length: > 0 } s && ui.SmallText.Get(s) is { } ct)
-                    ct.Draw(sb, new Vector2(Rect.X + ColumnX[col] - ct.Width, r.Y + 2), c);
+                    ct.Draw(sb, new Vector2(Rect.X + ColumnX[col] - ct.Width, Ui.Ui.Line16Y(ct, r.Y)), c);
         }
         if (PageRows > 0 && Pages > 1) PageFooter(sb, ui, Rect, RowY(PageRows), Page, Pages, _pressedFrames > 0 ? _pressed : -1);
     }

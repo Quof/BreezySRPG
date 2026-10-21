@@ -101,8 +101,11 @@ public sealed class Ui : IDisposable
     public void Text12(SpriteBatch sb, string s, int x, int y, Color c)
     {
         if (!Restyled && MenuFont?.Get(s) is { } t) sb.Draw(t, new Vector2(x, y), c);
-        else SmallText.Get(s)?.Draw(sb, new Vector2(x + 1, y + 2), c);
+        else if (SmallText.Get(s) is { } g) g.Draw(sb, new Vector2(x + 1, Line16Y(g, y)), c);
     }
+
+    /// <summary>Where a smooth 12-px string goes to sit in the middle of the 16-px line (a menu row's bar) from <paramref name="y"/>.</summary>
+    public static float Line16Y(TextImage g, int y) => Restyled ? y + (16 - g.Texture.Height / (float)g.Scale) / 2 : y + 2;
 
     /// <summary>The width <see cref="Text12"/> gives a string.</summary>
     public int Measure12(string s) => !Restyled && MenuFont is not null ? ExeFont.Measure(s) : SmallText.Measure(s);
