@@ -76,6 +76,8 @@ public sealed class ErumaniGame : Game
     KeyboardState _prevKeys;
     MouseState _prevMouse;
     int _activeFrames, _leftHeld, _confirmHeld;
+    /// <summary>Frames each button has been seen up in a row (a press counts after 2).</summary>
+    int _leftUpFrames = 1000, _rightUpFrames = 1000;
     readonly Queue<string> _choose = new();
     readonly Random _chooseRng = new(1);
     int _choicesSeen;
@@ -458,8 +460,14 @@ public sealed class ErumaniGame : Game
         _activeFrames = IsActive ? _activeFrames + 1 : 0;
         _pointerInside = Window.ClientBounds is var cb && m.X >= 0 && m.Y >= 0 && m.X < cb.Width && m.Y < cb.Height;
         bool mouseHere = _activeFrames > 6 && _pointerInside;
-        bool click = mouseHere && m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
-        bool rclick = mouseHere && m.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
+        // a press counts once the button has been seen up for 2 frames (about 30 ms) since the last one: a worn switch's
+        // chatter (its contact opening for a few ms) isn't a second click — the original reads its click flag once a tick,
+        // which merges such presses too
+        bool leftDown = m.LeftButton == ButtonState.Pressed, rightDown = m.RightButton == ButtonState.Pressed;
+        bool click = mouseHere && leftDown && _leftUpFrames >= 2;
+        bool rclick = mouseHere && rightDown && _rightUpFrames >= 2;
+        _leftUpFrames = leftDown ? 0 : Math.Min(_leftUpFrames + 1, 1000);
+        _rightUpFrames = rightDown ? 0 : Math.Min(_rightUpFrames + 1, 1000);
         int wheel = IsActive && _opts.Screenshot is null ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
         bool mouseMoved = mouseHere && m.Position != _prevMouse.Position;   // a pointer passing over the window in the background chooses nothing
         if (_warpedTo is { } warped) { if (m.Position == warped) mouseMoved = false; _warpedTo = null; }
@@ -509,11 +517,12 @@ public sealed class ErumaniGame : Game
         bool cancel = _controls.Pressed(GameAction.Cancel) || rclick;
         if (_settings.FastForwardMode == FastForwardMode.Toggle && _controls.Pressed(GameAction.FastForward)) _ffToggle = !_ffToggle;
         bool ff = _settings.FastForwardMode == FastForwardMode.Hold ? _controls.Down(GameAction.FastForward) : _ffToggle;
-        // holding the left button (after 0.4 s, so ordinary clicks stay clicks) fast-forwards too
-        _leftHeld = mouseHere && m.LeftButton == ButtonState.Pressed ? _leftHeld + 1 : 0;
+        // holding the left button fast-forwards too, so ordinary clicks stay clicks: after 0.4 s in battle, 1 s in a cutscene,
+        // where a slow click on a message mustn't run on into the next
+        _leftHeld = mouseHere && leftDown ? _leftHeld + 1 : 0;
         // and the confirm key the same way (its press confirms; held, it fast-forwards)
         _confirmHeld = !alt && _controls.Down(GameAction.Confirm) ? _confirmHeld + 1 : 0;
-        if (_settings.FastForwardMouse && Math.Max(_leftHeld, _confirmHeld) > GameClock.Frames(400)) ff = true;
+        if (_settings.FastForwardMouse && Math.Max(_leftHeld, _confirmHeld) > GameClock.Frames(EventShowing ? 1000 : 400)) ff = true;
         if (_scriptFf) ff = true;   // a scripted run's held fast-forward ("ffhold")
         // a story that began under a fast-forward stopped it (StoryBegins): it comes back only once every way of fast-
         // forwarding has been let go and is given again
