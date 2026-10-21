@@ -153,7 +153,7 @@ public class RulesTests
         rutee.Hp = rutee.MaxHp - 3;
         var r = f.UseMedicine(juna, potion, rutee);
         Assert.Equal(rutee.MaxHp, rutee.Hp);
-        Assert.Equal(3, Assert.Single(r.Effects).Amount);
+        Assert.Equal(potion.S.MedHp, Assert.Single(r.Effects).Amount);   // the message shows the item's amount (FUN_0040b188)
         Assert.True(juna.Acted);
     }
 

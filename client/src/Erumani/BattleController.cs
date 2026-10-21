@@ -21,7 +21,8 @@ public enum MapOutcome { None, Won, Lost, GameOver, ReturnToTitle }
 public sealed class BattleController
 {
     enum State { Events, Idle, Selected, Moving, ActionMenu, Targeting, Showing, TurnMenu, EnemyPhase, Status, Ended,
-        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList, WholeMap, EndTurnConfirm, Leaving }
+        SpellList, ItemList, Aiming, MedicineTarget, Scene, Files, QuitConfirm, EquipList, WholeMap, EndTurnConfirm, Leaving,
+        EquipSlots, UseConfirm }
 
     readonly MapSession _s;
     readonly EventRunner _runner;
@@ -39,12 +40,58 @@ public sealed class BattleController
     int _menuIndex;
     string[] _menu = Array.Empty<string>();
     bool[] _menuEnabled = Array.Empty<bool>();
-    readonly Queue<string> _popups = new();
-    /// <summary>Per popup: the unit its strike killed, kept on the map until that popup is dismissed.</summary>
-    readonly Queue<BattleUnit?> _popupKills = new();
-    BattleUnit? _popupKill;
-    string? _popup;
-    int _popupFrames, _wait;
+
+    /// <summary>Moves the mouse pointer to a 640×480 point (FUN_00409d24); the game leaves it alone outside its window.</summary>
+    public Action<Point>? WarpPointer { get; set; }
+    /// <summary>
+    /// Pointer places kept for later (FUN_00409cac / FUN_00409cd4), with the map cursor's tile for keys: [0] where the turn
+    /// menu was opened (back there when it closes or the turn ends), [1] where a move ended (back there on 行動終了 and when
+    /// the action menu is closed).
+    /// </summary>
+    readonly (Point Pointer, Point Tile)[] _pointerSlots = new (Point, Point)[2];
+    /// <summary>+0x1c0: the attack's targets came from the action menu's 攻撃 (closing them goes back to that row).</summary>
+    bool _attackFromMenu;
+    /// <summary>A menu opened or came back: the pointer goes onto its row once the view is still (FUN_00413100, +0x51d5).</summary>
+    bool _pointMenu;
+    /// <summary>The spell list's row an aim came from (+0x1ac).</summary>
+    int _spellRow;
+
+    void SavePointer(int slot) => _pointerSlots[slot] = (MouseVirtual, _cursor);
+
+    void RestorePointer(int slot)
+    {
+        var (pointer, tile) = _pointerSlots[slot];
+        _cursor = tile;
+        WarpPointer?.Invoke(pointer);
+    }
+
+    /// <summary>FUN_00417188: the pointer to the middle of the unit's tile (attacks, spells and items aim from there).</summary>
+    void PointAt(BattleUnit u)
+    {
+        _cursor = new Point(u.X, u.Y);
+        WarpPointer?.Invoke(_s.ScreenPos(u.X, u.Y, ViewportRect).ToPoint() + new Point(MapSession.Tile / 2, MapSession.Tile / 2));
+    }
+
+    /// <summary>The open menu's current row (its bar), for the pointer; null when no menu is open.</summary>
+    Rectangle? MenuRow() => _state_ switch
+    {
+        State.ActionMenu or State.TurnMenu => MenuBarRect(MenuRect(), _menuIndex),
+        State.SpellList or State.ItemList or State.EquipList or State.EquipSlots when _menu.Length > 0 => RowRect(_menuIndex),
+        State.UseConfirm => _useMenu.Row(_useMenu.Index),
+        State.EndTurnConfirm or State.QuitConfirm => _quit.Row(_quit.Index),
+        State.Files => _files.Row(_files.Index),
+        _ => null,
+    };
+    /// <summary>
+    /// A message panel on the map (FUN_00414b14 rewards at x 200, FUN_00414d40 level-up at x 140, FUN_004157a4 item
+    /// results at x 160): green, <c>Units</c> × 12 px wide at y 64, a 16-px row per line plus one, waiting for a click.
+    /// The client's own one-line messages (strike results with the battle scenes off) are centred and go by themselves;
+    /// <c>Kill</c> is the unit that strike felled, kept on the map until its message goes.
+    /// </summary>
+    sealed record Panel(string[] Lines, int X, int Units, BattleUnit? Kill, Action? Sound, bool Auto);
+    readonly Queue<Panel> _panels = new();
+    Panel? _panel;
+    int _panelFrames, _wait;
     AiPlan? _plan;
     BattleUnit? _statusUnit;
 
@@ -54,7 +101,8 @@ public sealed class BattleController
         string.Concat(_s.Field.Units.Select(u => $"\n  {u.Side} {u.Name} ({u.X},{u.Y}) HP {u.Hp} Lv {u.Level} Exp {u.Exp} hidden={u.Hidden} run={_s.Visuals[u].Running.Count}/{_s.Visuals[u].StepFrames}/{_s.Visuals[u].Pending.Count}{(u.Dead ? " dead" : "")}"));
     public bool EventRunning => _state_ == State.Events && _runner.Running;
     public bool Busy => _telop is not null || _ending != MapOutcome.None
-        || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene or State.Leaving;
+        || _state_ is State.Events or State.Moving or State.Showing or State.EnemyPhase or State.Scene or State.Leaving
+        || (_s.Panning && _state_ is State.ActionMenu or State.Targeting);
     /// <summary>
     /// The frame's red arrows may show (FUN_00413768): the player's phase, the map idle, a unit selected, or a target or
     /// spell aim being chosen (states 2, 6, 0x10, 0x11) — when the mouse at the frame scrolls the view.
@@ -82,13 +130,15 @@ public sealed class BattleController
     /// <summary>Cancel would do something now (for the CANCEL sound).</summary>
     public bool AcceptsCancel => _state_ is State.WholeMap or State.Selected or State.ActionMenu or State.Targeting or State.TurnMenu or State.Status
         or State.SpellList or State.ItemList or State.Aiming or State.MedicineTarget or State.Files or State.QuitConfirm or State.EquipList
-        or State.EndTurnConfirm;
+        or State.EndTurnConfirm or State.EquipSlots or State.UseConfirm;
     /// <summary>A menu has keyboard focus (W/S move in it instead of the camera).</summary>
     public bool MenuOpen => _state_ is State.WholeMap or State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
-        or State.QuitConfirm or State.EquipList or State.EndTurnConfirm;
+        or State.QuitConfirm or State.EquipList or State.EndTurnConfirm or State.EquipSlots or State.UseConfirm;
     /// <summary>A click would move things on: a battle scene's death message, or COMPLETE!! from its 60th tick.</summary>
-    public bool WaitingForClick => _scene?.WaitingForClick == true
+    public bool WaitingForClick => _scene?.WaitingForClick == true || _state_ == State.Showing
         || (_telop == CompleteTelop && _telopTick >= 60 && _ending == MapOutcome.None);
+    /// <summary>The message panel up now (the screenshot harness's "panel+N").</summary>
+    public bool PanelShowing => _state_ == State.Showing && _panel is not null;
     /// <summary>Set to false to skip the battle scenes (popups only), e.g. a future "animations off" option.</summary>
     public bool ShowScenes { get; set; } = true;
     public bool FastForwardSkipsScenes { get; set; } = true;
@@ -172,22 +222,30 @@ public sealed class BattleController
         _state_ = _s.Field.AllyPhase ? State.Idle : State.EnemyPhase;
     }
 
+    /// <summary>
+    /// セーブする / ロードする (FUN_00418bdc / FUN_00418edc): 「セーブします」 (「ロードします」), a rule and ファイル１–８ in a green
+    /// panel 96 × 176, one tile left of the clicked tile at its top, inside the frame; saving goes straight back to the
+    /// turn menu, loading fades the map out first.
+    /// </summary>
     void OpenFiles(bool save)
     {
         _saving = save;
+        _files.Rect = new Rectangle(Math.Max(16, Math.Min(_turnMenuAt.X - 32, 624 - 96)), Math.Max(16, Math.Min(_turnMenuAt.Y, 464 - 176)), 96, 176);
         _files.Header = Word(save ? 53 : 54);   // セーブします / ロードします
         _files.Set(Enumerable.Range(81, 8).Select(Word).ToArray(),   // ファイル１–８
             save ? null : Enumerable.Range(1, 8).Select(n => SlotExists?.Invoke(n) ?? false).ToArray());
         _files.Index = 0;
         _state_ = State.Files;
+        _pointMenu = true;
     }
 
+    /// <summary>FUN_00410728 / FUN_004107a0: after a save, or on a right click, back to the turn menu's セーブする / ロードする.</summary>
     void UpdateFiles(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
+        if (i.Cancel || i.RightClick) { ReopenTurnMenu(_saving ? 2 : 3); return; }
         int pick = _files.Navigate(i, MouseVirtual);
         if (pick < 0) return;
-        if (_saving) { SaveRequested?.Invoke(pick + 1); Popup(Word(53)); NextPopup(); }
+        if (_saving) { SaveRequested?.Invoke(pick + 1); ReopenTurnMenu(2); }
         else Leave(() =>
         {
             if (LoadRequested?.Invoke(pick + 1) == true) return;
@@ -196,13 +254,14 @@ public sealed class BattleController
         });
     }
 
+    /// <summary>FUN_00410698: はい fades out and quits; いいえ or a right click go back to ゲーム終了.</summary>
     void UpdateQuit(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
+        if (i.Cancel || i.RightClick) { ReopenTurnMenu(4); return; }
         if (_quit.Navigate(i, MouseVirtual) is var c and >= 0)
         {
             if (c == 0) Leave(() => QuitRequested?.Invoke());
-            else _state_ = State.TurnMenu;
+            else ReopenTurnMenu(4);
         }
     }
 
@@ -540,7 +599,23 @@ public sealed class BattleController
 
     public void Update(BattleInput input, EventInput ev)
     {
+        UpdateState(input, ev);
+        // a menu that opened or came back puts the pointer on its row once the view has stopped (FUN_00413100)
+        if (_pointMenu && !_s.Panning)
+        {
+            _pointMenu = false;
+            if (MenuRow() is { } row) WarpPointer?.Invoke(row.Center);
+        }
+    }
+
+    void UpdateState(BattleInput input, EventInput ev)
+    {
         if (input.MouseTile is { } mt && input.MouseMoved) _cursor = mt;
+        // where the map is read, a click on the frame (outside the view) picks no tile (FUN_0040dee0 leaves +0x74 clear)
+        if (input.Click && input.MouseTile is null && _state_ is State.Idle or State.Selected or State.Targeting or State.Aiming or State.MedicineTarget)
+            input = input with { Click = false, Confirm = false };
+        // the action menu and the targets wait for the view to stop (FUN_00413100 / FUN_004144f4 idle while +0x79 is set)
+        if (_s.Panning && _state_ is State.ActionMenu or State.Targeting) return;
         if (_ending != MapOutcome.None)
         {
             // the map's end: once the screen is dark, on to the next map (FUN_0041083c → FUN_0041d5e4)
@@ -561,7 +636,7 @@ public sealed class BattleController
             case State.Events: UpdateEvents(ev); break;
             case State.Idle: UpdateIdle(input); break;
             case State.Selected: UpdateSelected(input); break;
-            case State.Moving: if (!_s.MovesRunning) OpenActionMenu(); break;
+            case State.Moving: if (!_s.MovesRunning) MoveDone(); break;
             case State.ActionMenu: UpdateActionMenu(input); break;
             case State.Targeting: UpdateTargeting(input); break;
             case State.Showing: UpdateShowing(input); break;
@@ -571,12 +646,18 @@ public sealed class BattleController
             case State.SpellList: UpdateSpellList(input); break;
             case State.ItemList: UpdateItemList(input); break;
             case State.EquipList: UpdateEquipList(input); break;
+            case State.EquipSlots: UpdateEquipSlots(input); break;
+            case State.UseConfirm: UpdateUseConfirm(input); break;
             case State.Aiming: UpdateAiming(input); break;
             case State.MedicineTarget: UpdateMedicineTarget(input); break;
             case State.Scene: UpdateScene(input); break;
             case State.Files: UpdateFiles(input); break;
             case State.QuitConfirm: UpdateQuit(input); break;
-            case State.WholeMap: if (input.Confirm || input.Cancel || input.Click || input.RightClick) { Sfx.Cancel(); _state_ = State.Idle; } break;
+            // FUN_00410b28: a click (CLICK) or a right click (CANCEL, played by the game) goes back to the map
+            case State.WholeMap:
+                if (input.Confirm || input.Click) { Sfx.Click(); _state_ = State.Idle; }
+                else if (input.Cancel || input.RightClick) _state_ = State.Idle;
+                break;
         }
     }
 
@@ -658,28 +739,45 @@ public sealed class BattleController
     }
     List<(int X, int Y)> _pendingPath = new();
 
-    /// <summary>The move is over: tile marks and contacts (a contact event ends the unit's action), else the action menu.</summary>
-    void OpenActionMenu()
+    /// <summary>
+    /// FUN_0040ecf0, the player's move is over: tile marks and contacts first (a contact event ends the unit's action);
+    /// then the pointer's place is kept (slot 1), the view brings the unit into its middle box (FUN_00416fb0) and, with an
+    /// enemy in the weapon's reach (FUN_00411708), its targets come up at once (FUN_00411620) — else the action menu.
+    /// </summary>
+    void MoveDone()
     {
         var u = _sel!;
         if (MoveEnded(u, _pendingPath)) { _actor = u; _sel = null; return; }
-        BuildActionMenu();
-        _state_ = State.ActionMenu;
+        SavePointer(1);
+        _attackFromMenu = false;
+        _s.ShowTile(u.X, u.Y);
+        _targets = _s.Field.TargetsFrom(u, u.X, u.Y).ToList();
+        if (_targets.Count > 0) { _forecastArmed = null; _state_ = State.Targeting; }
+        else OpenActionMenu(4);
     }
 
-    void BuildActionMenu()
+    /// <summary>
+    /// The action menu (FUN_004171e0), the view first bringing the unit into its middle box, the pointer on
+    /// <paramref name="row"/>: 行動終了 when it opens, the entry it came back from otherwise. WORD.DAT: 16 攻撃, 17 必殺技,
+    /// 89 装備, 18 アイテム, 15 行動終了 — the original's order is 行動終了 / 攻撃 / 必殺技 / 装備 / アイテム; 行動終了 is moved to
+    /// the bottom here (player request). A sleeping unit can only end its action; otherwise 必殺技 needs a known spell and
+    /// アイテム something in the inventory, while 攻撃 and 装備 are always there (攻撃 shows the weapon's reach even with
+    /// nobody in it).
+    /// </summary>
+    void OpenActionMenu(int row)
     {
         var u = _sel!;
+        _s.ShowTile(u.X, u.Y);
         _targets = _s.Field.TargetsFrom(u, u.X, u.Y).ToList();
-        // WORD.DAT: 16 攻撃, 17 必殺技, 89 装備, 18 アイテム, 15 行動終了. The original's order (T23 recording) is
-        // 行動終了 / 攻撃 / 必殺技 / 装備 / アイテム; 行動終了 is moved to the bottom here (player request).
+        bool awake = u.SleepTurns == 0;
         _menu = new[] { Word(16), Word(17), Word(89), Word(18), Word(15) };
-        _menuEnabled = new[] { _targets.Count > 0, _s.Field.KnownSpells(u).Any(), WeaponChoices(u).Count > 1 || WeaponChoices(u).Any(w => w.Index != u.Weapon),
-            UsableItems(u).Any(), true };
-        _menuIndex = _targets.Count > 0 ? 0 : 4;
+        _menuEnabled = new[] { awake, awake && _s.Field.KnownSpells(u).Any(), awake, awake && _state.Items.Count > 0, true };
+        _menuIndex = row;
+        _state_ = State.ActionMenu;
+        _pointMenu = true;
     }
 
-    // ---------------- magic and items ----------------
+    // ---------------- magic, items and equipment ----------------
 
     List<Magic> _spells = new();
     List<Item> _items = new();
@@ -688,94 +786,156 @@ public sealed class BattleController
     HashSet<(int X, int Y)> _aimRange = new();
     List<BattleUnit> _medTargets = new();
 
-    IEnumerable<Item> UsableItems(BattleUnit u) =>
-        _state.Items.Where(kv => kv.Value > 0 && kv.Key >= 0 && kv.Key < _db.Items.Length)
-            .Select(kv => _db.Items[kv.Key]).Where(it => _s.Field.CanUseInBattle(u, it)).OrderBy(it => it.Index);
+    /// <summary>The inventory's items in its own order, the order the original's lists show them in.</summary>
+    IEnumerable<Item> Inventory() =>
+        _state.Items.Where(kv => kv.Value > 0 && kv.Key >= 0 && kv.Key < _db.Items.Length).Select(kv => _db.Items[kv.Key]);
 
-    bool ItemReady(BattleUnit u, Item it) => it.Type is ItemType.StatUp or ItemType.ClassChange || (_s.Field.ItemSpell(it) is { } m
-        ? _s.Field.SpellAims(u, m, u.X, u.Y).Any()
-        : _s.Field.MedicineTargets(u, it).Any());
+    /// <summary>"%-ns": padded with spaces to <paramref name="bytes"/> Shift-JIS bytes (a space is half a character).</summary>
+    static string Pad(string s, int bytes) => s + new string(' ', Math.Max(0, bytes - Bin.Sjis.GetByteCount(s)));
 
-    /// <summary>Weapons the unit can switch to: the one in hand, then usable ones from the inventory.</summary>
-    List<Item> WeaponChoices(BattleUnit u)
+    /// <summary>An item row, 「%-22s×%2d」 (FUN_00418108, FUN_00417d9c).</summary>
+    string ItemRow(Item it) => $"{Pad(it.Name, 22)}×{_state.ItemCount(it.Index),2}";
+
+    /// <summary>
+    /// A list by the acting unit (FUN_00417548 spells, FUN_004177e8 equipment slots, FUN_00417b08 equipment,
+    /// FUN_00417f54 items, FUN_00418308 the use question): its corner <paramref name="dx"/> px from the unit's tile, at
+    /// the tile's top, kept inside the frame (FUN_0041855c) and, for the lists, not above y 96.
+    /// </summary>
+    Rectangle UnitPanel(int dx, int w, int h, bool list = true)
     {
-        var cls = u.ClassId;
-        var list = new List<Item>();
-        if (u.Weapon >= 0 && u.Weapon < _db.Items.Length) list.Add(_db.Items[u.Weapon]);
-        list.AddRange(_state.Items.Keys.Where(id => id >= 0 && id < _db.Items.Length && id != u.Weapon).Select(id => _db.Items[id])
-            .Where(it => it.Type == ItemType.Weapon && cls >= 0 && cls < it.ClassUsable.Length && it.ClassUsable[cls] != 0).OrderBy(it => it.Index));
-        return list;
+        var t = _s.ScreenPos(_sel!.X, _sel.Y, ViewportRect).ToPoint();
+        int x = Math.Max(16, Math.Min(t.X + dx, 624 - w)), y = Math.Max(16, Math.Min(t.Y, 464 - h));
+        return new Rectangle(x, list ? Math.Max(96, y) : y, w, h);
     }
 
-    /// <summary>装備: switch weapons without ending the action (provisional: the original's 装備 screen wasn't recorded).</summary>
-    void OpenEquipList()
+    int _equipSlot;
+    List<Item?> _equipRows = new();
+
+    /// <summary>
+    /// 装備 (FUN_004177e8): 武器 / 防具 / 装飾品 with what's held (「%-8s：」 and its name), 204 px wide, 64 px from the unit's
+    /// tile; a slot is there if something is held in it or the inventory has something of its kind the class may use.
+    /// </summary>
+    void OpenEquipSlots()
     {
-        _items = WeaponChoices(_sel!);
-        _menu = _items.Select(it => it.Name).ToArray();
-        _menuEnabled = _items.Select(_ => true).ToArray();
+        var u = _sel!;
+        int[] held = { u.Weapon, u.Armor, u.Accessory };
+        _menu = new string[3];
+        _menuEnabled = new bool[3];
+        for (int s = 0; s < 3; s++)
+        {
+            string name = held[s] >= 0 && held[s] < _db.Items.Length ? _db.Items[held[s]].Name : "";
+            _menu[s] = $"{Pad(Word(12 + s), 8)}：{name}";   // 武器 防具 装飾品
+            _menuEnabled[s] = held[s] >= 0 || Inventory().Any(it => (int)it.Type == s + 1 && UnitChanges.Usable(it, u.ClassId));
+        }
+        _menuIndex = 0;
+        _state_ = State.EquipSlots;
+        _pointMenu = true;
+    }
+
+    /// <summary>A right click goes back to the action menu's 装備 (FUN_0040f4c4).</summary>
+    void UpdateEquipSlots(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { OpenActionMenu(2); return; }
+        int pick = ListNavigate(i);
+        if (pick >= 0) OpenEquipItems(pick);
+    }
+
+    /// <summary>
+    /// The slot's choices (FUN_00417b08): 「（装備をはずす）」 if something is held, then the inventory's items of that kind
+    /// the class may use, 「%-22s×%2d」, 12 a page. Picking one (FUN_0040f650) swaps it in — the old item back to the
+    /// inventory (FUN_0040af4c / FUN_0040b038) — and ends the unit's action.
+    /// </summary>
+    void OpenEquipItems(int slot)
+    {
+        var u = _sel!;
+        _equipSlot = slot;
+        int held = slot switch { 0 => u.Weapon, 1 => u.Armor, _ => u.Accessory };
+        _items = Inventory().Where(it => (int)it.Type == slot + 1 && UnitChanges.Usable(it, u.ClassId)).ToList();
+        _equipRows = (held >= 0 ? new Item?[] { null } : Array.Empty<Item?>()).Concat(_items.Select(it => (Item?)it)).ToList();
+        _menu = _equipRows.Select(it => it is null ? Word(32) : ItemRow(it)).ToArray();
+        _menuEnabled = _equipRows.Select(_ => true).ToArray();
         _menuIndex = 0;
         _itemPage = 0;
         _state_ = State.EquipList;
+        _pointMenu = true;
     }
 
     void UpdateEquipList(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
+        if (i.Cancel || i.RightClick) { int slot = _equipSlot; OpenEquipSlots(); _menuIndex = slot; return; }
         int pick = ListNavigate(i);
         if (pick < 0) return;
         var u = _sel!;
-        var it = _items[pick];
-        if (it.Index != u.Weapon)
+        int now = _equipRows[pick]?.Index ?? -1;
+        int old = _equipSlot switch { 0 => u.Weapon, 1 => u.Armor, _ => u.Accessory };
+        if (now >= 0) _state.AddItem(now, -1);
+        if (old >= 0) _state.AddItem(old, 1);
+        switch (_equipSlot)
         {
-            if (u.Weapon >= 0) _state.AddItem(u.Weapon, 1);
-            _state.AddItem(it.Index, -1);
-            u.Weapon = it.Index;
+            case 0: u.Weapon = now; break;
+            case 1: u.Armor = now; break;
+            default: u.Accessory = now; break;
         }
-        OpenActionMenuAgain();
-        _menuIndex = 0;
+        FinishAction();
     }
 
+    /// <summary>
+    /// 必殺技 (FUN_00417548): every known spell, 「%-22sＴＰ%4d／%2d」 (cost and TP left), 80 px left of the unit's tile, the
+    /// pointer on the first; a spell can be picked whenever its cost is covered — where it can land is the aim's business.
+    /// </summary>
     void OpenSpellList()
     {
         var u = _sel!;
         _spells = _s.Field.KnownSpells(u).ToList();
-        _menu = _spells.Select(m => m.Name).ToArray();
-        _menuEnabled = _spells.Select(m => Battlefield.CanCast(u, m) && _s.Field.SpellAims(u, m, u.X, u.Y).Any()).ToArray();
-        _menuIndex = Math.Max(0, Array.IndexOf(_menuEnabled, true));
+        _menu = _spells.Select(m => $"{Pad(m.Name, 22)}{Word(3)}{m.MpCost,4}／{u.Mp,2}").ToArray();
+        _menuEnabled = _spells.Select(m => Battlefield.CanCast(u, m)).ToArray();
+        _menuIndex = 0;
         _state_ = State.SpellList;
+        _pointMenu = true;
     }
 
+    /// <summary>
+    /// アイテム (FUN_00417f54, FUN_00418108): every item in the inventory, 12 a page, from the first page's first row;
+    /// medicine, stat-up and magic items the class may use and class-change items for its level and class can be picked,
+    /// the rest are greyed.
+    /// </summary>
     void OpenItemList()
     {
         var u = _sel!;
-        _items = UsableItems(u).ToList();
-        _menu = _items.Select(it => it.Name).ToArray();
-        _menuEnabled = _items.Select(it => ItemReady(u, it)).ToArray();
-        _menuIndex = Math.Max(0, Array.IndexOf(_menuEnabled, true));
-        _itemPage = _menuIndex / ItemRows;
+        _items = Inventory().ToList();
+        _menu = _items.Select(ItemRow).ToArray();
+        _menuEnabled = _items.Select(it => _s.Field.CanUseInBattle(u, it)).ToArray();
+        _menuIndex = 0;
+        _itemPage = 0;
         _state_ = State.ItemList;
+        _pointMenu = true;
     }
 
-    // Lists measured from the original (T21): spell list at x 352, one 16-px row per spell, "ＴＰ cost／current";
-    // item list a fixed 180x240 panel at (352,224) with 12 rows per page and a "ページ n／m" footer.
-    // The hovered row gets a flashing light-green/white bar; a description window sits at (80,32) 480x48.
+    // The lists open by the acting unit (UnitPanel; T21's screenshots show them where these rules put them); the hovered
+    // row gets the flashing light-green / white bar, and a description window sits at (80,32) 480×48 (FUN_004142d4).
+    // Items and equipment choices: 12 rows a page and a "ページ n／m" footer.
     const int ItemRows = 12;
     int _itemPage;
 
-    Rectangle SpellListRect()
+    /// <summary>
+    /// The current list: spells 228 wide, 80 px left of the unit's tile; equipment slots 204 × 64, 64 left; items and
+    /// equipment choices 180 × 240 (15 rows), 48 left.
+    /// </summary>
+    Rectangle ListRect() => _state_ switch
     {
-        int h = _menu.Length * 16 + 16;
-        int y = _sel is null ? 240 : (int)_s.ScreenPos(_sel.X, _sel.Y, ViewportRect).Y;
-        return new Rectangle(352, Math.Clamp(y, ErumaniGame.ViewY, ErumaniGame.ViewY + ErumaniGame.ViewHeight - h), 228, h);
+        State.SpellList => UnitPanel(-80, 228, (_menu.Length + 1) * 16),
+        State.EquipSlots => UnitPanel(-64, 204, 64),
+        _ => UnitPanel(-48, 180, 240),
+    };
+
+    bool Paged => _state_ is State.ItemList or State.EquipList;
+
+    /// <summary>A row's bar (FUN_004144f4): 6 px in from the panel's sides, 16-px rows from y + 8.</summary>
+    Rectangle RowRect(int row)
+    {
+        var r = ListRect();
+        return new Rectangle(r.X + 6, r.Y + 8 + (Paged ? row % ItemRows : row) * 16, r.Width - 12, 16);
     }
-
-    static readonly Rectangle ItemListRect = new(352, 224, 180, 240);
-
-    bool ItemLike => _state_ is State.ItemList or State.EquipList;
-
-    Rectangle RowRect(int row) => ItemLike
-        ? new Rectangle(ItemListRect.X + 4, ItemListRect.Y + 8 + (row % ItemRows) * 16, ItemListRect.Width - 8, 16)
-        : new Rectangle(SpellListRect().X + 6, SpellListRect().Y + 8 + row * 16, SpellListRect().Width - 12, 16);
 
     int ListNavigate(BattleInput i)
     {
@@ -783,19 +943,20 @@ public sealed class BattleController
         if (n == 0) return -1;
         if (i.Up) _menuIndex = (_menuIndex + n - 1) % n;
         if (i.Down) _menuIndex = (_menuIndex + 1) % n;
-        if (ItemLike)
+        if (Paged)
         {
             int pages = (n + ItemRows - 1) / ItemRows;
             if (i.Left || i.Right) _menuIndex = Math.Min(n - 1, ((_menuIndex / ItemRows + (i.Right ? 1 : pages - 1)) % pages) * ItemRows);
             _itemPage = _menuIndex / ItemRows;
         }
-        int first = ItemLike ? _itemPage * ItemRows : 0;
-        int count = ItemLike ? Math.Min(ItemRows, n - first) : n;
+        int first = Paged ? _itemPage * ItemRows : 0;
+        int count = Paged ? Math.Min(ItemRows, n - first) : n;
         int hover = -1;
         for (int r = 0; r < count; r++)
             if (RowRect(first + r).Contains(MouseVirtual)) hover = first + r;
         if (i.MouseMoved && hover >= 0) _menuIndex = hover;
-        if (i.Confirm || (i.Click && hover >= 0))
+        // a click counts on a row only (FUN_00413100: none is chosen while the pointer is off the rows); keys pick the bar's
+        if ((i.Confirm && !i.Click) || (i.Click && hover >= 0))
         {
             if (_menuEnabled[_menuIndex]) { Sfx.Click(); return _menuIndex; }
             Sfx.Buzzer();
@@ -803,56 +964,114 @@ public sealed class BattleController
         return -1;
     }
 
+    /// <summary>A right click goes back to the action menu's 必殺技 (FUN_0040f308); a spell aims from the unit's tile.</summary>
     void UpdateSpellList(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
+        if (i.Cancel || i.RightClick) { OpenActionMenu(1); return; }
         int pick = ListNavigate(i);
-        if (pick >= 0) BeginAim(_spells[pick], null);
+        if (pick < 0) return;
+        _spellRow = pick;
+        BeginAim(_spells[pick], null);
     }
 
+    /// <summary>
+    /// A picked item (FUN_0040f930): a medicine waits for a click on a unit within its range (FUN_00411ba0; range 0, the
+    /// user itself), a magic item aims its spell — both with the pointer on the user — and a stat-up or class-change item
+    /// asks first (FUN_00418308). A right click goes back to the action menu's アイテム.
+    /// </summary>
     void UpdateItemList(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
+        if (i.Cancel || i.RightClick) { OpenActionMenu(3); return; }
         int pick = ListNavigate(i);
         if (pick < 0) return;
         var it = _items[pick];
-        if (it.Type is ItemType.StatUp or ItemType.ClassChange) { DoSelfItem(_sel!, it); return; }
+        if (it.Type is ItemType.StatUp or ItemType.ClassChange) { OpenUseConfirm(it); return; }
         if (_s.Field.ItemSpell(it) is { } m) { BeginAim(m, it); return; }
         _aimItem = it;
-        if (it.S.MedRange <= 0) { DoMedicine(_sel!, it, _sel!); return; }   // range 0 = oneself
         _medTargets = _s.Field.MedicineTargets(_sel!, it).ToList();
-        _cursor = new Point(_sel!.X, _sel.Y);
+        PointAt(_sel!);
         _state_ = State.MedicineTarget;
     }
 
+    Item? _useItem;
+    readonly Camp.MenuList _useMenu = new() { Indent = 7, TopPad = 47 };
+
+    /// <summary>
+    /// 「〈item〉 / を使います / ― / はい / いいえ」 (FUN_00418308): a green panel 144 × 96, 32 px left of the unit's tile at its
+    /// top, inside the frame; はい / いいえ at x + 54 with 48-px bars. はい uses it (FUN_0040fc00), いいえ goes back to the list.
+    /// </summary>
+    void OpenUseConfirm(Item it)
+    {
+        _useItem = it;
+        _useMenu.Rect = UnitPanel(-32, 144, 96, list: false);
+        _useMenu.RowInset = 48;
+        _useMenu.Set(new[] { Word(45), Word(46) });
+        _useMenu.Index = 0;
+        _state_ = State.UseConfirm;
+        _pointMenu = true;
+    }
+
+    void UpdateUseConfirm(BattleInput i)
+    {
+        if (i.Cancel || i.RightClick) { ReopenItemList(); return; }
+        if (_useMenu.Navigate(i, MouseVirtual) is var c and >= 0)
+        {
+            if (c == 0 && _useItem is { } it) DoSelfItem(_sel!, it);
+            else ReopenItemList();
+        }
+    }
+
+    /// <summary>Back to the item list on the same row (FUN_0040fc00, FUN_0040fda8 restore its page and row).</summary>
+    void ReopenItemList()
+    {
+        int keep = _menuIndex;
+        OpenItemList();
+        _menuIndex = Math.Clamp(keep, 0, Math.Max(0, _menu.Length - 1));
+        _itemPage = _menuIndex / ItemRows;
+    }
+
+    void DrawUseConfirm(SpriteBatch sb, int frame)
+    {
+        _useMenu.Draw(sb, _ui, true, frame);
+        var r = _useMenu.Rect;
+        if (_useItem is { } it && _ui.SmallText.Get(it.Name) is { } n) sb.Draw(n, new Vector2(r.X + 13, r.Y + 10), Ui.Ui.PanelText);
+        if (_ui.SmallText.Get(Word(58)) is { } q) sb.Draw(q, new Vector2(r.X + 13, r.Y + 26), Ui.Ui.PanelText);   // を使います
+        var (light, dark) = Ui.Ui.EdgeColors(Ui.Ui.PanelColor.Green);
+        _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 47, r.Width - 24, 1), dark);
+        _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + 48, r.Width - 24, 1), light);
+    }
+
+    /// <summary>A spell's aim (FUN_004117d0), the pointer on the caster (FUN_00417188).</summary>
     void BeginAim(Magic m, Item? fromItem)
     {
         var u = _sel!;
         _aimSpell = m;
         _aimItem = fromItem;
         _aimRange = _s.Field.SpellRange(m, u.X, u.Y).ToHashSet();
-        // start on a unit the spell would affect (hostile first for harmful spells)
-        var aims = _s.Field.SpellAims(u, m, u.X, u.Y).ToList();
-        var first = aims.OrderBy(a => _s.Field.UnitAt(a.X, a.Y) is { } t && _s.Field.Affects(u, m, t) ? 0 : 1)
-            .ThenBy(a => Math.Abs(a.X - u.X) + Math.Abs(a.Y - u.Y)).FirstOrDefault((u.X, u.Y));
-        _cursor = new Point(first.X, first.Y);
+        PointAt(u);
         _state_ = State.Aiming;
     }
 
+    /// <summary>A right click goes back to the spell's row (FUN_00410050) or the item's (FUN_0040fda8).</summary>
     void UpdateAiming(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { if (_aimItem is null) OpenSpellList(); else OpenItemList(); return; }
+        if (i.Cancel || i.RightClick)
+        {
+            if (_aimItem is not null) ReopenItemList();
+            else { OpenSpellList(); _menuIndex = Math.Clamp(_spellRow, 0, Math.Max(0, _menu.Length - 1)); }
+            return;
+        }
         MoveCursor(i);
         if (!Pick(i) || _aimSpell is null) return;
         var a = (_cursor.X, _cursor.Y);
-        if (!_aimRange.Contains(a) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) { Sfx.Buzzer(); return; }
+        if (!_aimRange.Contains(a) || _s.Field.SpellTargets(_sel!, _aimSpell, a.X, a.Y).Count == 0) return;   // nothing (FUN_00410050)
         Sfx.Click();
         DoCast(_sel!, _aimSpell, a, _aimItem);
     }
 
     void UpdateMedicineTarget(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { OpenItemList(); return; }
+        if (i.Cancel || i.RightClick) { ReopenItemList(); return; }   // back to its row (FUN_0040fda8)
         if (i.Left || i.Up || i.Right || i.Down)
         {
             int k = _medTargets.FindIndex(t => t.X == _cursor.X && t.Y == _cursor.Y);
@@ -870,7 +1089,7 @@ public sealed class BattleController
         var met = OpposingOf(caster, _s.Field.SpellTargets(caster, m, aim.X, aim.Y));
         if (BeforeFight(caster, met, () => DoCast(caster, m, aim, item))) return;
         if (caster.Dead || caster.Hidden) { AfterFight(); return; }
-        if (item is not null) { _state.AddItem(item.Index, -1); Popup($"{caster.Name}は{item.Name}{Word(58)}"); }   // "を使います"
+        if (item is not null) _state.AddItem(item.Index, -1);   // FUN_0040ae68: one less, before the scene
         var before = HpSnapshot(_s.Field.SpellTargets(caster, m, aim.X, aim.Y).Append(caster));
         int mpBefore = caster.Mp;
         var r = _s.Field.Cast(caster, m, aim.X, aim.Y, fromItem: item is not null);
@@ -885,14 +1104,17 @@ public sealed class BattleController
     }
 
     /// <summary>
-    /// A stat-up or class-change item used in battle, on the user (FUN_0040b074): stat-ups add their positive values
-    /// (max HP/MP up to 60, the rest 30, current HP/MP with them); a class change restarts the level at 1, moves the
-    /// stats by the classes' initial-stat difference and sends unusable equipment to the inventory.
+    /// A stat-up or class-change item on its user (FUN_0040b074). Stat-ups add their positive values (max HP/MP up to 60,
+    /// the rest 30, current HP/MP with them): 「〜がｎポイント上昇した」 for each (FUN_0040b8f0). A class change (FUN_0040be00 →
+    /// FUN_0040bb0c) restarts the level at 1, moves Str/Mag/Skl/Sta by the classes' initial-stat difference (1–30) and
+    /// sends unusable equipment to the inventory: 「〈class〉に昇格」, a line per stat that moved, LEVELUP.WAV. The lines come
+    /// in one panel at (160,64), 240 wide (FUN_004157a4), and the action ends.
     /// </summary>
     void DoSelfItem(BattleUnit user, Item it)
     {
         _state.AddItem(it.Index, -1);
-        Popup($"{user.Name}は{it.Name}{Word(58)}");
+        var lines = new List<string>();
+        Action? sound = null;
         if (it.Type == ItemType.StatUp)
         {
             var (b, gained) = UnitChanges.StatUp(user.Base, it.S.StatUp);
@@ -901,28 +1123,52 @@ public sealed class BattleController
             user.Mp += gained[1];
             int[] words = { 2, 3, 8, 9, 10, 11 };   // ＨＰ ＴＰ 攻撃補正値 特殊補正値 命中回避値 耐久力
             for (int k = 0; k < 6; k++)
-                if (gained[k] > 0) Popup($"{Word(words[k])}{Word(64)}{Wide(gained[k])}{Word(65)}{Word(68)}");
+                if (StatLine(words[k], gained[k]) is { } s) lines.Add(s);
         }
         else
         {
             int to = UnitChanges.ClassChangeTarget(it, user.ClassId);
             var from = _db.Classes[Math.Clamp(user.ClassId, 0, _db.Classes.Length - 1)];
+            var before = user.Base.ToArray();
             Array.Copy(UnitChanges.ClassChangeStats(user.Base, from, _db.Classes[to]), user.Base, 6);
             user.ClassId = to;
             user.Level = 1;
             int Keep(int item) { if (item >= 0 && !UnitChanges.Usable(_db.Items[item], to)) { _state.AddItem(item, 1); return -1; } return item; }
             (user.Weapon, user.Armor, user.Accessory) = (Keep(user.Weapon), Keep(user.Armor), Keep(user.Accessory));
-            Popup($"{user.Name}は{_db.Classes[to].Name}{Word(72)}");   // 「に昇格」
+            lines.Add($"{_db.Classes[to].Name}{Word(72)}");   // 「に昇格」
+            int[] words = { 8, 9, 10, 11 };                    // 攻撃補正値 特殊補正値 命中回避値 耐久力
+            for (int k = 0; k < 4; k++)
+                if (StatLine(words[k], user.Base[2 + k] - before[2 + k]) is { } s) lines.Add(s);
+            sound = Sfx.LevelUp;
         }
+        ShowPanel(lines, 160, 20, sound);
         _after = null;
         Finish(user);
     }
 
+    /// <summary>
+    /// A medicine given to a unit (FUN_0040fda8 → FUN_0040b188): its results in one panel at (160,64), 240 wide (FUN_004157a4)
+    /// — 「ＨＰ / ＴＰがｎポイント回復した」 with the item's amounts, 「物理防御 / 特殊防御がｎポイント強化された」, 「毒が消えた」,
+    /// 「目を覚ました」, 「攻撃力 / 物理防御が回復した」 — then the action ends; no panel when nothing came of it.
+    /// </summary>
     void DoMedicine(BattleUnit user, Item it, BattleUnit target)
     {
         _state.AddItem(it.Index, -1);
-        Popup($"{user.Name}は{it.Name}{Word(58)}");
-        ShowResult(user, _s.Field.UseMedicine(user, it, target));
+        var r = _s.Field.UseMedicine(user, it, target);
+        string Points(int word, int v, int verb) => $"{Word(word)}{Word(64)}{Wide(v)}{Word(65)}{Word(verb)}";
+        ShowPanel(r.Effects.Select(e => e.Kind switch
+        {
+            EffectKind.Heal => Points(2, e.Amount, 66),
+            EffectKind.MpHeal => Points(3, e.Amount, 66),
+            EffectKind.DefUp => Points(6, e.Amount, 67),
+            EffectKind.MdefUp => Points(7, e.Amount, 67),
+            EffectKind.CurePoison => Word(74),
+            EffectKind.WakeUp => Word(76),
+            EffectKind.AttackRestored => $"{Word(4)}{Word(64)}{Word(66)}",
+            EffectKind.DefenseRestored => $"{Word(6)}{Word(64)}{Word(66)}",
+            _ => "",
+        }).Where(s => s.Length > 0), 160, 20);
+        _after = null;
         Finish(user);
     }
 
@@ -963,14 +1209,16 @@ public sealed class BattleController
         BattleMusic(caster, first);
     }
 
+    /// <summary>
+    /// A spell's outcome. The original shows it only in the battle scene, then the rewards and level-up panels; with the
+    /// scenes off the client sums it up in its own one-line messages first.
+    /// </summary>
     void ShowResult(BattleUnit actor, ExchangeResult r, bool numbersShown = false)
     {
-        foreach (var e in r.Effects)
+        foreach (var e in numbersShown ? Enumerable.Empty<Srpg95.Rules.Effect>() : r.Effects)
         {
-            // the battle scene already showed damage and misses
-            if (numbersShown && e.Kind is EffectKind.Damage or EffectKind.Miss) continue;
             var n = e.Target.Name;
-            // T21: "ＨＰが８ポイント回復した" (no name, full-width digits); the other stats follow the same pattern (provisional)
+            // the client's own wording, in the style of the original's medicine messages
             string Points(string what, int v, int verb) => $"{what}{Word(64)}{Wide(v)}{Word(65)}{Word(verb)}";
             Popup(e.Kind switch
             {
@@ -979,9 +1227,9 @@ public sealed class BattleController
                 EffectKind.Resisted => $"{n}：無効",
                 EffectKind.Heal => Points(Word(2), e.Amount, 66),
                 EffectKind.MpHeal => Points(Word(3), e.Amount, 66),
-                EffectKind.PowerUp => Points(Word(4), e.Amount, 68),
-                EffectKind.DefUp => Points(Word(6), e.Amount, 68),
-                EffectKind.MdefUp => Points(Word(7), e.Amount, 68),
+                EffectKind.PowerUp => Points(Word(4), e.Amount, 67),
+                EffectKind.DefUp => Points(Word(6), e.Amount, 67),
+                EffectKind.MdefUp => Points(Word(7), e.Amount, 67),
                 EffectKind.AttackDown => Points(Word(4), e.Amount, 69),
                 EffectKind.DefenseDown => Points(Word(6), e.Amount, 69),
                 EffectKind.Poison => $"{n}は毒を受けた",
@@ -989,6 +1237,8 @@ public sealed class BattleController
                 EffectKind.CurePoison => $"{n}の{Word(74)}",                                   // "毒が消えた"
                 EffectKind.WakeUp => $"{n}は{Word(76)}",                                       // "目を覚ました"
                 EffectKind.Cleanse => $"{n}の状態異常が回復した",
+                EffectKind.AttackRestored => $"{Word(4)}{Word(64)}{Word(66)}",
+                EffectKind.DefenseRestored => $"{Word(6)}{Word(64)}{Word(66)}",
                 _ => $"{n}は再行動できる",
             }, e.Killed ? e.Target : null);
             if (e.Killed) _s.Ghosts.Add(e.Target);
@@ -996,55 +1246,78 @@ public sealed class BattleController
         ShowGrowth(r);
     }
 
-    /// <summary>Full-width digits, as the original's messages print numbers.</summary>
-    static string Wide(int v) => string.Concat(v.ToString().Select(c => c is >= '0' and <= '9' ? (char)('０' + (c - '0')) : c));
+    /// <summary>Numbers as the original's messages print them (FUN_004051a0): full-width digits and minus sign.</summary>
+    static string Wide(int v) => string.Concat(v.ToString().Select(c => c is >= '0' and <= '9' ? (char)('０' + (c - '0')) : c == '-' ? '－' : c));
 
+    /// <summary>「〜がｎポイント上昇した / 下降した」 (FUN_0040b800); nothing for 0.</summary>
+    string? StatLine(int word, int change) =>
+        change == 0 ? null : $"{Word(word)}{Word(64)}{Wide(change)}{Word(65)}{Word(change > 0 ? 68 : 69)}";
+
+    /// <summary>
+    /// After a fight or a spell (FUN_0041093c): for a player unit that gained EXP and lives, the rewards panel at
+    /// (200,64), 240 wide — 「ｎの経験値を獲得」, 「ｎ,肉を獲得」, each item 「〜を獲得」 — with the gold and items counted in;
+    /// then, if it gained a level, the level-up panel at (140,64), 360 wide, with LEVELUP.WAV (FUN_00414d40): 「〜はレベルｎに
+    /// なった」, each raised stat 「〜がｎポイント上昇した」, each spell learned 「〜を習得した」.
+    /// </summary>
     void ShowGrowth(ExchangeResult r)
     {
-        // kill rewards (the original adds them after the battle): gold 「n,肉を獲得」 (WORD 61), items 「〜を獲得」 (62)
-        if (r.RewardGold > 0)
-        {
-            _state.Gold += r.RewardGold;
-            Popup($"{Wide(r.RewardGold)}{Word(61)}");
-        }
-        foreach (var item in r.RewardItems)
-        {
-            _state.AddItem(item, 1);
-            if (item >= 0 && item < _db.Items.Length) Popup($"{_db.Items[item].Name}{Word(62)}");
-        }
         foreach (var (u, exp) in r.ExpGained)
-            Popup($"{Wide(exp)}{Word(60)}");             // 「１７の経験値を獲得」: no name, full-width digits (T22)
-        foreach (var (u, _) in r.LevelUps)
-            Popup($"{u.Name}{Word(70)}{u.Level}{Word(71)}", sound: Sfx.LevelUp);   // "はレベル" n "になった"
-        foreach (var (u, spells) in r.Learned)
-            foreach (var m in spells)
-                Popup($"{u.Name}は{m.Name}{Word(73)}");         // "を習得した"
+        {
+            if (u.Dead) continue;
+            var lines = new List<string> { $"{Wide(exp)}{Word(60)}" };
+            if (r.RewardGold > 0) lines.Add($"{Wide(r.RewardGold)}{Word(61)}");
+            lines.AddRange(r.RewardItems.Where(it => it >= 0 && it < _db.Items.Length).Select(it => $"{_db.Items[it].Name}{Word(62)}"));
+            ShowPanel(lines, 200, 20);
+            _state.Gold = Math.Min(9_999_999, _state.Gold + r.RewardGold);
+            foreach (var item in r.RewardItems) _state.AddItem(item, 1);
+            if (!r.LevelUps.TryGetValue(u, out var up)) continue;
+            var lv = new List<string> { $"{u.Name}{Word(70)}{Wide(u.Level)}{Word(71)}" };
+            int[] words = { 2, 3, 8, 9, 10, 11 };   // ＨＰ ＴＰ 攻撃補正値 特殊補正値 命中回避値 耐久力
+            for (int k = 0; k < 6; k++)
+                if (up[k] > 0 && StatLine(words[k], up[k]) is { } s) lv.Add(s);
+            if (r.Learned.TryGetValue(u, out var spells)) lv.AddRange(spells.Select(m => $"{m.Name}{Word(73)}"));
+            ShowPanel(lv, 140, 30, Sfx.LevelUp);
+        }
     }
 
     Point _turnMenuAt;
 
+    /// <summary>
+    /// The action and turn menus' panels: (the longest entry's bytes + 1) / 2 (at least 2) + 2 units of 12 px wide, a 16-px
+    /// row per entry plus one high. The action menu (FUN_004171e0) one tile right of the unit's, at its top: past x 552 it
+    /// goes 104 px left (the unit's other side), past y 368 64 px up. The turn menu (FUN_00418614) 7 units wide, one tile
+    /// left of the clicked tile at its top, kept inside the frame (FUN_0041855c).
+    /// </summary>
     Rectangle MenuRect()
     {
-        int w = _menu.Max(m => _ui.SmallText.Measure(m)) + 24, h = _menu.Length * 16 + 16;
-        // the turn menu (FUN_00418614): 7 × 12 px by 6 rows, one tile left of the clicked tile, at its top, kept inside
-        // the frame (FUN_0041855c; the T recordings show it at x 240 for the tile at 272); the action menu beside the unit
-        var p = _sel is null ? _turnMenuAt - new Point(32, 0)
-            : _s.ScreenPos(_sel.X + 1, _sel.Y, ViewportRect).ToPoint() + new Point(8, 0);
-        if (_sel is null) p.X = Math.Clamp(p.X, ErumaniGame.ViewX, ErumaniGame.ViewX + ErumaniGame.ViewWidth - w);
-        else if (p.X + w > ErumaniGame.ViewX + ErumaniGame.ViewWidth) p.X -= w + MapSession.Tile + 16;
-        p.Y = Math.Clamp(p.Y, ErumaniGame.ViewY, ErumaniGame.ViewY + ErumaniGame.ViewHeight - h);
-        return new Rectangle(p.X, p.Y, w, h);
+        int h = (_menu.Length + 1) * 16;
+        if (_sel is null)
+        {
+            const int tw = 7 * 12;
+            return new Rectangle(Math.Clamp(_turnMenuAt.X - 32, 16, 624 - tw), Math.Clamp(_turnMenuAt.Y, 16, 464 - h), tw, h);
+        }
+        int units = Math.Max(4, _menu.Max(m => Bin.Sjis.GetByteCount(m)) + 1) / 2 + 2;
+        var t = _s.ScreenPos(_sel.X, _sel.Y, ViewportRect).ToPoint();
+        int x = t.X + MapSession.Tile, y = t.Y;
+        if (x > 624 - 6 * 12) x -= 6 * 12 + 32;   // the exe checks against its first guess of the width, 6 units
+        if (y > 464 - h) y -= h - 32;
+        return new Rectangle(x, y, units * 12, h);
     }
+
+    /// <summary>A menu row's bar (FUN_004144f4): from 6 px left of the text (x + 12) to 6 px past the entries' width.</summary>
+    static Rectangle MenuBarRect(Rectangle menu, int row) => new(menu.X + 6, menu.Y + 8 + row * 16, menu.Width - 12, 16);
 
     static readonly Rectangle ViewportRect = new(ErumaniGame.ViewX, ErumaniGame.ViewY, ErumaniGame.ViewWidth, ErumaniGame.ViewHeight);
 
+    /// <summary>The row under the pointer (FUN_00413100) or the keys' row; a click counts on a row only.</summary>
     int MenuNavigate(BattleInput i, Point mouseVirtual)
     {
         if (i.Up) _menuIndex = (_menuIndex + _menu.Length - 1) % _menu.Length;
         if (i.Down) _menuIndex = (_menuIndex + 1) % _menu.Length;
         var r = MenuRect();
-        if (i.MouseMoved && r.Contains(mouseVirtual)) _menuIndex = Math.Clamp((mouseVirtual.Y - r.Y - 8) / 16, 0, _menu.Length - 1);
-        if (i.Confirm || (i.Click && r.Contains(mouseVirtual)))
+        int hover = Enumerable.Range(0, _menu.Length).FirstOrDefault(k => MenuBarRect(r, k).Contains(mouseVirtual), -1);
+        if (i.MouseMoved && hover >= 0) _menuIndex = hover;
+        if ((i.Confirm && !i.Click) || (i.Click && hover >= 0))
         {
             if (_menuEnabled[_menuIndex]) { Sfx.Click(); return _menuIndex; }
             Sfx.Buzzer();
@@ -1054,30 +1327,43 @@ public sealed class BattleController
 
     public Point MouseVirtual { get; set; }
 
+    /// <summary>
+    /// FUN_0040f0ac. A right click undoes the move (allowed until the unit acts), every pass-by / stop-on mark going too,
+    /// and goes back to the map with the pointer where the move ended. 攻撃 shows the weapon's reach with the pointer on
+    /// the unit (FUN_00417188, FUN_00411620), even when nobody is in it; 行動終了 puts the pointer back where the move ended.
+    /// </summary>
     void UpdateActionMenu(BattleInput i)
     {
         if (i.Cancel || i.RightClick)
         {
-            // undo the move (allowed until the unit acts); every pass-by / stop-on mark goes too (FUN_0040f0ac)
             _sel!.X = _selFrom.X;
             _sel.Y = _selFrom.Y;
             _passMarks.Clear();
             _stopMarks.Clear();
-            _state_ = State.Selected;
+            _sel = null;
+            _state_ = State.Idle;
+            RestorePointer(1);
             return;
         }
         int pick = MenuNavigate(i, MouseVirtual);
-        if (pick == 0) { _state_ = State.Targeting; _forecastArmed = null; _cursor = new Point(_targets[0].X, _targets[0].Y); }
+        if (pick == 0)
+        {
+            _attackFromMenu = true;
+            _forecastArmed = null;
+            PointAt(_sel!);
+            _state_ = State.Targeting;
+        }
         else if (pick == 1) OpenSpellList();
-        else if (pick == 2) OpenEquipList();
+        else if (pick == 2) OpenEquipSlots();
         else if (pick == 3) OpenItemList();
-        else if (pick == 4) FinishAction();
+        else if (pick == 4) { RestorePointer(1); FinishAction(); }
     }
 
+    /// <summary>A right click goes back to the action menu (FUN_00410190): to 攻撃 if that's where the targets came from, else 行動終了.</summary>
     void UpdateTargeting(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { OpenActionMenuAgain(); return; }
-        if (i.Left || i.Up || i.Right || i.Down)
+        if (i.Cancel || i.RightClick) { OpenActionMenu(_attackFromMenu ? 0 : 4); return; }
+        if ((i.Left || i.Up || i.Right || i.Down) && _targets.Count > 0)
         {
             int k = _targets.FindIndex(t => t.X == _cursor.X && t.Y == _cursor.Y);
             k = (k + ((i.Right || i.Down) ? 1 : _targets.Count - 1)) % _targets.Count;
@@ -1181,12 +1467,6 @@ public sealed class BattleController
         }
     }
 
-    void OpenActionMenuAgain()
-    {
-        BuildActionMenu();
-        _state_ = State.ActionMenu;
-    }
-
     void DoAttack(BattleUnit atk, BattleUnit def)
     {
         var met = OpposingOf(atk, new[] { def });
@@ -1220,32 +1500,36 @@ public sealed class BattleController
         RunScenes();
     }
 
-    readonly Queue<Action?> _popupSounds = new();
+    /// <summary>A one-line message of the client's own (strike results with the battle scenes off).</summary>
+    void Popup(string text, BattleUnit? kill = null, Action? sound = null) =>
+        _panels.Enqueue(new Panel(new[] { text }, 0, Math.Max(20, (_ui.SmallText.Measure(text) + 32 + 11) / 12), kill,
+            sound ?? (kill is not null ? Sfx.Down : null), Auto: true));
 
-    void Popup(string text, BattleUnit? kill = null, Action? sound = null)
+    /// <summary>One of the original's message panels (nothing when there are no lines).</summary>
+    void ShowPanel(IEnumerable<string> lines, int x, int units, Action? sound = null)
     {
-        _popups.Enqueue(text);
-        _popupKills.Enqueue(kill);
-        _popupSounds.Enqueue(sound ?? (kill is not null ? Sfx.Down : null));
+        var l = lines.ToArray();
+        if (l.Length > 0) _panels.Enqueue(new Panel(l, x, units, null, sound, Auto: false));
     }
 
     void NextPopup()
     {
-        if (_popupKill is not null) { _s.Ghosts.Remove(_popupKill); _popupKill = null; }
-        if (_popups.Count > 0) { _popup = _popups.Dequeue(); _popupKill = _popupKills.Dequeue(); _popupSounds.Dequeue()?.Invoke(); _popupFrames = 0; _state_ = State.Showing; }
+        if (_panel?.Kill is { } k) _s.Ghosts.Remove(k);
+        if (_panels.Count > 0) { _panel = _panels.Dequeue(); _panel.Sound?.Invoke(); _panelFrames = 0; _state_ = State.Showing; }
         else
         {
             // everything shown: the fight's "after" events, then the checkpoint (FUN_0041093c)
-            _popup = null;
+            _panel = null;
             _sel = null;
             AfterFight();
         }
     }
 
+    /// <summary>The original's panels wait for a click (FUN_0041093c, FUN_00410a88, FUN_0040fd7c); fast-forward moves them on.</summary>
     void UpdateShowing(BattleInput i)
     {
-        _popupFrames += i.FastForward ? 4 : 1;
-        if (i.Confirm || i.Click || _popupFrames > 60) NextPopup();
+        _panelFrames++;
+        if (i.Confirm || i.Click || (i.FastForward && _panelFrames > 4) || (_panel?.Auto == true && _panelFrames > 60)) NextPopup();
     }
 
     void FinishAction()
@@ -1257,21 +1541,35 @@ public sealed class BattleController
         _state_ = State.Idle;   // the turn only ends from the menu (T19a)
     }
 
+    /// <summary>
+    /// The turn menu (FUN_00418614) on a click on an empty tile, the pointer's place kept (slot 0) and the pointer on the
+    /// first entry. WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了 (the original's test
+    /// play adds デバッグ, which isn't part of the game).
+    /// </summary>
     void OpenTurnMenu()
     {
-        // WORD.DAT: 19 ターン終了, 20 全体マップ, 21 セーブする, 22 ロードする, 23 ゲーム終了 (the original's test play
-        // adds デバッグ, which isn't part of the game)
+        SavePointer(0);
         _menu = new[] { Word(19), Word(20), Word(21), Word(22), Word(23) };
         _menuEnabled = new[] { true, true, true, true, true };
         _menuIndex = 0;
         _turnMenuAt = _s.ScreenPos(_cursor.X, _cursor.Y, ViewportRect).ToPoint();
         _sel = null;
         _state_ = State.TurnMenu;
+        _pointMenu = true;
     }
 
+    /// <summary>Back to the turn menu from one of its questions or lists, the pointer on <paramref name="row"/> (FUN_00418614 again).</summary>
+    void ReopenTurnMenu(int row)
+    {
+        _menuIndex = row;
+        _state_ = State.TurnMenu;
+        _pointMenu = true;
+    }
+
+    /// <summary>A right click closes it, the pointer going back where it was opened (FUN_004104e4).</summary>
     void UpdateTurnMenu(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { _state_ = State.Idle; return; }
+        if (i.Cancel || i.RightClick) { _state_ = State.Idle; RestorePointer(0); return; }
         switch (MenuNavigate(i, MouseVirtual))
         {
             case 0: OpenConfirm(52, State.EndTurnConfirm); break;   // ターンを終了します (FUN_00418824)
@@ -1299,15 +1597,17 @@ public sealed class BattleController
         _quit.Set(new[] { Word(45), Word(46) });   // はい / いいえ
         _quit.Index = 0;
         _state_ = state;
+        _pointMenu = true;
     }
 
+    /// <summary>FUN_00410618: はい ends the turn, the pointer going back where the turn menu was opened; いいえ or a right click go back to ターン終了.</summary>
     void UpdateEndTurnConfirm(BattleInput i)
     {
-        if (i.Cancel || i.RightClick) { _state_ = State.TurnMenu; return; }
+        if (i.Cancel || i.RightClick) { ReopenTurnMenu(0); return; }
         if (_quit.Navigate(i, MouseVirtual) is var c and >= 0)
         {
-            if (c == 0) EndPlayerTurn();
-            else _state_ = State.TurnMenu;
+            if (c == 0) { RestorePointer(0); EndPlayerTurn(); }
+            else ReopenTurnMenu(0);
         }
     }
 
@@ -1442,23 +1742,22 @@ public sealed class BattleController
 
     public void DrawUi(SpriteBatch sb, Rectangle viewport, int frame)
     {
-        bool showCursor = _state_ is State.Idle or State.Selected or State.Targeting or State.Aiming or State.MedicineTarget;
-        if (showCursor && _s.Field.InBounds(_cursor.X, _cursor.Y))
+        if (CursorShown())
         {
+            // SYSTEM.BMP's dashed square, its dashes moving on every 2 ticks: (96,0), (64,32), (96,32) (FUN_004132a8)
             var p = _s.ScreenPos(_cursor.X, _cursor.Y, viewport).ToPoint();
-            _ui.Frame(sb, new Rectangle(p.X, p.Y, 32, 32), Color.Black);
-            _ui.Frame(sb, new Rectangle(p.X + 1, p.Y + 1, 30, 30), Color.White, 2);
-            if (_s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
-            if (_state_ != State.Targeting) DrawTerrainInfo(sb);
+            int phase = frame / 4 % 3;
+            if (_tex.Get("SYSTEM.BMP") is { } sys)
+                sb.Draw(sys, p.ToVector2(), new Rectangle(phase == 1 ? 64 : 96, phase == 0 ? 0 : 32, 32, 32), Color.White);
+            if (_state_ == State.Idle && _s.Field.UnitAt(_cursor.X, _cursor.Y) is { } u) DrawHoverLabel(sb, u, p);
         }
-        if (_state_ is State.ActionMenu or State.TurnMenu) DrawMenu(sb, frame);
+        bool terrain = _state_ is State.Idle or State.Selected or State.Aiming or State.MedicineTarget;
+        if (terrain && _s.Field.InBounds(_cursor.X, _cursor.Y)) DrawTerrainInfo(sb);   // modern addition (FE-style)
+        if (_state_ is State.ActionMenu or State.TurnMenu && !_s.Panning) DrawMenu(sb, frame);
         if (_state_ == State.Targeting && _sel is not null && _targets.FirstOrDefault(t => t.X == _cursor.X && t.Y == _cursor.Y) is { } ft)
             DrawForecast(sb, _sel, ft);
         if (_state_ == State.WholeMap)
-            _s.DrawWholeMap(sb, _ui, _s.Field.Alive.Select(u => (u.X, u.Y, u.Side switch
-            {
-                Side.Ally => new Color(48, 96, 248), Side.Enemy => new Color(232, 40, 40), _ => new Color(240, 200, 40),
-            })));
+            _s.DrawWholeMap(sb, _ui, _s.Field.Alive.Where(u => !u.Hidden).Select(u => (u.X, u.Y, u.Side switch { Side.Enemy => 0, Side.Ally => 1, _ => 2 })), frame);
         if (_state_ == State.Files) _files.Draw(sb, _ui, true, frame);
         if (_state_ is State.QuitConfirm or State.EndTurnConfirm)
         {
@@ -1469,59 +1768,101 @@ public sealed class BattleController
             _ui.Fill(sb, new Rectangle(qr.X + 12, qr.Y + 31, qr.Width - 24, 1), dark);    // the etched rule under the question
             _ui.Fill(sb, new Rectangle(qr.X + 12, qr.Y + 32, qr.Width - 24, 1), light);
         }
-        if (_state_ is State.SpellList or State.ItemList or State.EquipList) DrawList(sb, frame);
-        if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup);
+        if (_state_ is State.SpellList or State.ItemList or State.EquipList or State.EquipSlots) DrawList(sb, frame);
+        if (_state_ == State.UseConfirm) DrawUseConfirm(sb, frame);
+        if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel);
         if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit);
-        if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _popup is not null) DrawPopup(sb, _popup); }
+        if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel); }
         // the caption over everything, the screen frame included (FUN_0041421c draws it at y 192 on the whole screen)
         if (_telop is not null && _tex.Get(_telop) is { } t) sb.Draw(t, new Vector2(TelopX(_telopTick), 192), Color.White);
     }
 
-    /// <summary>Name and "HP／max" above the hovered unit (screenshot 5; font and offsets provisional).</summary>
-    void DrawHoverLabel(SpriteBatch sb, BattleUnit u, Point tile)
+    /// <summary>
+    /// The tile cursor (FUN_004132a8): on the map while it waits for the player; with a unit chosen only on the tiles it
+    /// can move to (not for a unit of the computer's), while choosing a target or an aim only on tiles in range.
+    /// </summary>
+    bool CursorShown()
     {
-        string hp = $"{u.Hp}／{u.MaxHp}";
-        var name = _ui.SmallText.Get(u.Name);
-        var num = _ui.SmallText.Get(hp);
-        void Outlined(Texture2D? t, Vector2 at)
+        if (!_s.Field.InBounds(_cursor.X, _cursor.Y)) return false;
+        var c = (_cursor.X, _cursor.Y);
+        return _state_ switch
         {
-            if (t is null) return;
-            foreach (var d in new[] { new Vector2(-1, 0), new Vector2(1, 0), new Vector2(0, -1), new Vector2(0, 1) })
-                sb.Draw(t, at + d, Color.Black);
-            sb.Draw(t, at, Color.White);
-        }
-        Outlined(name, new Vector2(tile.X - 4, tile.Y - 32));
-        Outlined(num, new Vector2(tile.X - 4, tile.Y - 18));
+            State.Idle => true,
+            State.Selected => _reach is not null && _reach.ContainsKey(c) && _sel is { Side: not Side.Enemy },
+            State.Targeting => _sel is not null && _s.Field.Stats(_sel) is var st
+                && Math.Abs(_cursor.X - _sel.X) + Math.Abs(_cursor.Y - _sel.Y) is var d && d >= st.RangeMin && d <= st.RangeMax,
+            State.Aiming => _aimRange.Contains(c),
+            State.MedicineTarget => _sel is not null && _aimItem is not null
+                && Math.Abs(_cursor.X - _sel.X) + Math.Abs(_cursor.Y - _sel.Y) <= _aimItem.S.MedRange,
+            _ => false,
+        };
     }
 
+    /// <summary>
+    /// The hovered unit's name and "HP／max" while the map waits (FUN_00413918): 12-px text in its side's light colour
+    /// (ally blue, enemy red, neutral yellow) with a 1-px outline in the dark one; the name centred 34 px above the tile,
+    /// the numbers ("%2d／%2d") 20 px above it, both kept inside the frame and put below the tile near the top.
+    /// </summary>
+    void DrawHoverLabel(SpriteBatch sb, BattleUnit u, Point tile)
+    {
+        var (light, dark) = Ui.Ui.Modern ? (Color.White, Color.Black)
+            : Ui.Ui.EdgeColors(u.Side switch { Side.Enemy => Ui.Ui.PanelColor.Red, Side.Neutral => Ui.Ui.PanelColor.Yellow, _ => Ui.Ui.PanelColor.Blue });
+        void Outlined(string s, int x, int y)
+        {
+            if (_ui.SmallText.Get(s) is not { } t) return;
+            int w = Bin.Sjis.GetByteCount(s) * 6;
+            x = Math.Min(Math.Max(x, 16), 624 - w);
+            if (y < 14) y += 68;
+            // GDI's text origin is a pixel up and left of the client's text images (as everywhere else)
+            var at = new Vector2(x + 1, y + 2);
+            foreach (var d in new[] { new Vector2(1, 0), new Vector2(0, 1), new Vector2(-1, 0), new Vector2(0, -1) })
+                sb.Draw(t, at + d, dark);
+            sb.Draw(t, at, light);
+        }
+        Outlined(u.Name, tile.X + 14 - Bin.Sjis.GetByteCount(u.Name) * 6 / 2, tile.Y - 34);
+        Outlined($"{u.Hp,2}／{u.MaxHp,2}", tile.X - 1, tile.Y - 20);
+    }
+
+    /// <summary>The action or turn menu (FUN_00414344, FUN_004144f4): entries at x + 12, 16-px rows from y + 8, the bar on the chosen one.</summary>
     void DrawMenu(SpriteBatch sb, int frame)
     {
         var r = MenuRect();
         _ui.Panel(sb, r);
-        bool modern = Ui.Ui.Modern;
         for (int i = 0; i < _menu.Length; i++)
         {
-            // the selected row: the flashing green bar of the original's menus (screenshot), or the modern accent bar
-            var row = new Rectangle(r.X + 4, r.Y + 8 + i * 16, r.Width - 8, 17);
-            if (i == _menuIndex)
-            {
-                if (modern) _ui.ModernHighlight(sb, row, frame);
-                else _ui.Fill(sb, row, frame / 8 % 2 == 0 ? new Color(160, 248, 96) : new Color(248, 248, 248));
-            }
-            var c = !_menuEnabled[i] ? (modern ? (i == _menuIndex ? new Color(196, 204, 222) : new Color(110, 116, 132)) : new Color(120, 140, 120))
-                : i == _menuIndex ? (modern ? Color.White : new Color(0, 32, 0)) : Ui.Ui.PanelText;
+            var c = _ui.MenuRow(sb, MenuBarRect(r, i), i == _menuIndex, _menuEnabled[i], frame);
             if (_ui.SmallText.Get(_menu[i]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + i * 16), c);
         }
     }
 
+    /// <summary>The item or spell a list row stands for (the description window's subject), if any.</summary>
+    (string Name, string Desc, Item? Item)? RowSubject(int i)
+    {
+        if (i < 0 || i >= _menu.Length) return null;
+        switch (_state_)
+        {
+            case State.SpellList: return (_spells[i].Name, _spells[i].Desc, null);
+            case State.ItemList: return (_items[i].Name, _items[i].Desc, _items[i]);
+            case State.EquipList: return _equipRows[i] is { } e ? (e.Name, e.Desc, e) : null;   // （装備をはずす）: nothing
+            case State.EquipSlots:
+                int held = i switch { 0 => _sel?.Weapon ?? -1, 1 => _sel?.Armor ?? -1, _ => _sel?.Accessory ?? -1 };
+                return held >= 0 && held < _db.Items.Length ? (_db.Items[held].Name, _db.Items[held].Desc, _db.Items[held]) : null;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A list (FUN_00414344 / FUN_004144f4): each row's text at the panel's x + 12, 16-px rows from y + 8; greyed rows can't be
+    /// picked. Item and equipment lists have a footer below their 12th row (always for items, for equipment when there's
+    /// more than one page): an etched rule, 「ページ ｎ／ｍ」 and the arrows from SYSTEM.BMP (y 304: ◁ x 0, ▷ x 32). The hovered
+    /// entry's 「name：」 and description fill the window at (80,32) 480×48 (FUN_004142d4).
+    /// </summary>
     void DrawList(SpriteBatch sb, int frame)
     {
-        bool items = ItemLike;
-        var r = items ? ItemListRect : SpellListRect();
+        var r = ListRect();
         _ui.Panel(sb, r);
-        var bar = frame / 8 % 2 == 0 ? new Color(160, 248, 96) : new Color(248, 248, 248);   // flashing (T21)
-        int first = items ? _itemPage * ItemRows : 0;
-        int count = items ? Math.Min(ItemRows, _menu.Length - first) : _menu.Length;
+        int first = Paged ? _itemPage * ItemRows : 0;
+        int count = Paged ? Math.Min(ItemRows, _menu.Length - first) : _menu.Length;
         void T(string s, int x, int y, Color c, bool right = false)
         {
             if (_ui.SmallText.Get(s) is not { } tx) return;
@@ -1531,51 +1872,41 @@ public sealed class BattleController
         {
             int i = first + k;
             var row = RowRect(i);
-            bool hot = i == _menuIndex;
-            bool modern = Ui.Ui.Modern;
-            if (hot && modern) _ui.ModernHighlight(sb, row, frame);
-            else if (hot) _ui.Fill(sb, row, bar);
-            var c = hot ? (modern ? Color.White : new Color(0, 32, 0)) : !_menuEnabled[i] ? (modern ? new Color(110, 116, 132) : new Color(120, 140, 120)) : Ui.Ui.PanelText;
-            T(_menu[i], row.X + 8, row.Y + 2, c);
-            if (_state_ == State.EquipList) T(_items[i].Index == _sel?.Weapon ? Word(89) : $"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
-            else if (items) T($"× {_state.ItemCount(_items[i].Index)}", row.Right - 8, row.Y + 2, c, right: true);
-            else
-            {
-                T(Word(3), row.X + 140, row.Y + 2, c);                                     // ＴＰ
-                T($"{_spells[i].MpCost}／{_sel?.Mp ?? 0}", row.Right - 8, row.Y + 2, c, right: true);
-            }
+            T(_menu[i], r.X + 13, row.Y + 2, _ui.MenuRow(sb, row, i == _menuIndex, _menuEnabled[i], frame));
         }
-        if (items)
+        int pages = Math.Max(1, (_menu.Length + ItemRows - 1) / ItemRows);
+        if (_state_ == State.ItemList || (_state_ == State.EquipList && pages > 1))
         {
-            int pages = Math.Max(1, (_menu.Length + ItemRows - 1) / ItemRows);
-            _ui.Fill(sb, new Rectangle(r.X + 12, r.Bottom - 32, r.Width - 24, 1), Ui.Ui.PanelText);
-            T(Word(63), r.X + 12, r.Bottom - 24, Ui.Ui.PanelText);                                   // ページ
-            T($"{_itemPage + 1,2}／{pages,2}", r.X + 60, r.Bottom - 24, Ui.Ui.PanelText);
-            // page arrows: SYSTEM.BMP 16x16 icons at y 304 (x 0 left, x 16 right)
+            var (light, dark) = Ui.Ui.EdgeColors(Ui.Ui.PanelColor.Green);
+            _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + ItemRows * 16 + 15, r.Width - 24, 1), dark);
+            _ui.Fill(sb, new Rectangle(r.X + 12, r.Y + ItemRows * 16 + 16, r.Width - 24, 1), light);
+            int fy = r.Y + ItemRows * 16 + 24;
+            T(Word(63), r.X + 13, fy + 2, Ui.Ui.PanelText);                                   // ページ
+            T($"{_itemPage + 1,2}／{pages,2}", r.X + 61, fy + 2, Ui.Ui.PanelText);
             if (_tex.Get("SYSTEM.BMP") is { } sys)
             {
-                sb.Draw(sys, new Vector2(r.Right - 55, r.Bottom - 27), new Rectangle(0, 304, 16, 16), Color.White);
-                sb.Draw(sys, new Vector2(r.Right - 31, r.Bottom - 27), new Rectangle(16, 304, 16, 16), Color.White);
+                sb.Draw(sys, new Vector2(r.Right - 54, fy), new Rectangle(0, 304, 16, 16), Color.White);
+                sb.Draw(sys, new Vector2(r.Right - 30, fy), new Rectangle(32, 304, 16, 16), Color.White);
             }
         }
-        // description of the hovered entry
-        if (_menuIndex >= 0 && _menuIndex < _menu.Length)
+        // the description window stays while the list is open, empty over a row with nothing to describe
+        var d = new Rectangle(80, 32, 480, 48);
+        _ui.Panel(sb, d);
+        if (RowSubject(_menuIndex) is { } sub)
         {
-            string desc = items ? _items[_menuIndex].Desc : _spells[_menuIndex].Desc;
-            var d = new Rectangle(80, 32, 480, 48);
-            _ui.Panel(sb, d);
-            T($"{_menu[_menuIndex]}：", d.X + 16, d.Y + 10, Ui.Ui.PanelText);
-            if (items) T(Ui.ItemInfo.Summary(_items[_menuIndex], _db), d.Right - 16, d.Y + 10, Ui.Ui.StatText, right: true);
-            T(desc, d.X + 16, d.Y + 26, Ui.Ui.PanelText);
+            T($"{sub.Name}：", d.X + 13, d.Y + 10, Ui.Ui.PanelText);
+            if (sub.Item is { } it) T(Ui.ItemInfo.Summary(it, _db), d.Right - 16, d.Y + 10, Ui.Ui.StatText, right: true);   // modern addition
+            T(sub.Desc, d.X + 13, d.Y + 26, Ui.Ui.PanelText);
         }
     }
 
-    /// <summary>Green bar like the original's EXP message (240x33 at (200,64)).</summary>
-    void DrawPopup(SpriteBatch sb, string text)
+    /// <summary>A message panel (see <see cref="Panel"/>); the text at GDI's (+12, +8), as the T22 recording shows it.</summary>
+    void DrawPanel(SpriteBatch sb, Panel p)
     {
-        int w = Math.Max(240, _ui.SmallText.Measure(text) + 32);
-        var r = new Rectangle(320 - w / 2, 64, w, 33);
+        int w = p.Units * 12;
+        var r = new Rectangle(p.Auto ? 320 - w / 2 : p.X, 64, w, (p.Lines.Length + 1) * 16);
         _ui.Panel(sb, r);
-        if (_ui.SmallText.Get(text) is { } t) sb.Draw(t, new Vector2(r.X + 16, r.Y + 11), Ui.Ui.PanelText);
+        for (int k = 0; k < p.Lines.Length; k++)
+            if (_ui.SmallText.Get(p.Lines[k]) is { } t) sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + k * 16), Ui.Ui.PanelText);
     }
 }

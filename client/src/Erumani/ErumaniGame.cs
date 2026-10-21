@@ -294,6 +294,7 @@ public sealed class ErumaniGame : Game
         ApplyGameplay();
         _battle.PlayMapBgm = slot => _audio.PlayBgm(map.Bgm[slot]);
         _battle.PlaySound = _audio.PlaySe;
+        _battle.WarpPointer = WarpMouse;
         _battle.SlotExists = n => File.Exists(SaveFile.PathFor(_folder, n));
         _battle.SaveRequested = n =>
         {
@@ -387,13 +388,28 @@ public sealed class ErumaniGame : Game
         bool rclick = mouseHere && m.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
         int wheel = IsActive && _opts.Screenshot is null ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
         bool mouseMoved = m.Position != _prevMouse.Position;
+        if (_warpedTo is { } warped) { if (m.Position == warped) mouseMoved = false; _warpedTo = null; }
 
-        if (_runner?.Choice is { } ch && mouseMoved)
+        // a character choice (FUN_0042523c, FUN_00413100): it opens with the pointer on its first option; the option under
+        // the pointer is the one chosen, and a click off the options does nothing
+        if (_runner?.Choice is { } ch)
         {
             var cr = ChoiceRect(ch);
-            _choiceActive = cr.Contains(_mouseVirtual);
-            if (_choiceActive) _runner.HoverChoice((_mouseVirtual.Y - cr.Y - 8) / 16);
+            if (!ReferenceEquals(ch, _choiceShown))
+            {
+                _choiceShown = ch;
+                _choiceActive = true;
+                WarpMouse(ChoiceRow(cr, 0).Center);
+            }
+            int hover = Enumerable.Range(0, ch.Length).FirstOrDefault(i => ChoiceRow(cr, i).Contains(_mouseVirtual), -1);
+            if (mouseMoved)
+            {
+                _choiceActive = hover >= 0;
+                if (hover >= 0) _runner.HoverChoice(hover);
+            }
+            if (click && hover < 0) click = false;
         }
+        else _choiceShown = null;
         if (_controls.Pressed(GameAction.Fullscreen) || (alt && Pressed(Keys.Enter)))
         {
             _settings.Fullscreen = !_settings.Fullscreen;
@@ -425,6 +441,13 @@ public sealed class ErumaniGame : Game
 
         var input = new EventInput(confirm, cancel, up, down, ff);
         if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, false);   // scripted runs ignore real input
+        // "choice+N": the shot N frames after the next character choice comes up, left unanswered
+        if (_opts.Screenshot is not null && _runner?.Choice is not null && _script.FirstOrDefault(s => s.StartsWith("choice+")) is { } choiceTok)
+        {
+            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, choiceTok)));
+            _shotAt = _frame + int.Parse(choiceTok[7..]);
+            _shotAdvance = 0;
+        }
         if (_opts.Screenshot is not null && _shotAdvance != 0 && (_battle is { WaitingForClick: true } || _battle is { EventRunning: true } && _runner is { Message: not null } or { Choice: not null } or { WaitingForButton: true }))
         {
             if (_runner is { Choice: { } options } && _choose.TryDequeue(out var pick))
@@ -549,6 +572,7 @@ public sealed class ErumaniGame : Game
             else Step(k, input with { Confirm = false, Up = false, Down = false, Cancel = false },
                 battleInput with { Confirm = false, Cancel = false, Up = false, Down = false, Left = false, Right = false, Click = false, RightClick = false, MouseMoved = false });
         }
+        EdgeScroll(m, mouseHere);
         _prevKeys = k;
         _prevMouse = m;
         base.Update(gameTime);
@@ -582,10 +606,19 @@ public sealed class ErumaniGame : Game
             _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, fxTok)));
             _shotAt = _frame + int.Parse(fxTok[3..]);
         }
+        // "panel+N": the shot N frames after the next message panel comes up (it then waits; nothing clicks it)
+        var panelTok = _script.FirstOrDefault(s => s.StartsWith("panel+"));
+        if (panelTok is not null && _battle?.PanelShowing == true)
+        {
+            _script = new Queue<string>(_script.Where(s => !ReferenceEquals(s, panelTok)));
+            _shotAt = _frame + int.Parse(panelTok[6..]);
+            _shotAdvance = 0;
+            bi = bi with { Confirm = false };
+        }
         bool idle = _camp is not null || _title is not null || _battle is { Busy: false } && _runner is { Message: null, Choice: null };
         _idleFrames = idle ? _idleFrames + 1 : 0;
         if (!idle || _script.Count == 0 || _script.Peek().StartsWith("telop") || _script.Peek().StartsWith("wipe") || _script.Peek().StartsWith("fx+")
-            || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
+            || _script.Peek().StartsWith("panel+") || _script.Peek().StartsWith("choice+") || _script.Peek() == "logos" || ++_scriptWait < 10) return bi;
         _scriptWait = 0;
         _idleFrames = 0;
         var tok = _script.Dequeue();
@@ -636,17 +669,31 @@ public sealed class ErumaniGame : Game
             OnMapEnded();
         }
 
-        // camera: WASD, or the mouse at the viewport's edge (provisional), when nothing is animating
+        // camera: WASD (a modern addition) when nothing is animating; the mouse scrolls through the frame (EdgeScroll)
         if (_battle.Busy) return;
         const int speed = 8;
-        var mv = _mouseVirtual;
-        bool inView = IsActive && mv.X >= 0 && mv.Y >= 0 && mv.X < VirtualWidth && mv.Y < VirtualHeight;
         bool keys = !_battle.MenuOpen && _runner?.Choice is null;
-        if ((keys && _controls.Down(GameAction.CameraLeft)) || (inView && mv.X < ViewX + 4)) _session.Camera.X -= speed;
-        if ((keys && _controls.Down(GameAction.CameraRight)) || (inView && mv.X >= ViewX + ViewWidth - 4)) _session.Camera.X += speed;
-        if ((keys && _controls.Down(GameAction.CameraUp)) || (inView && mv.Y < ViewY + 4)) _session.Camera.Y -= speed;
-        if ((keys && _controls.Down(GameAction.CameraDown)) || (inView && mv.Y >= ViewY + ViewHeight - 4)) _session.Camera.Y += speed;
+        if (keys && _controls.Down(GameAction.CameraLeft)) _session.Camera.X -= speed;
+        if (keys && _controls.Down(GameAction.CameraRight)) _session.Camera.X += speed;
+        if (keys && _controls.Down(GameAction.CameraUp)) _session.Camera.Y -= speed;
+        if (keys && _controls.Down(GameAction.CameraDown)) _session.Camera.Y += speed;
         _session.ClampCamera();
+    }
+
+    /// <summary>
+    /// FUN_0040dee0: in the player's phase, while the map waits for a unit, a target or an aim (where the frame's arrows
+    /// show) and the view isn't panning, the left button held with the pointer on the frame scrolls the view that way.
+    /// </summary>
+    void EdgeScroll(MouseState m, bool mouseHere)
+    {
+        if (_session is null || _battle is null) return;
+        int dx = 0, dy = 0;
+        if (_opts.Screenshot is null && mouseHere && m.LeftButton == ButtonState.Pressed && _battle.ScrollArrows && !_session.Panning)
+        {
+            dx = _mouseVirtual.X < ViewX ? -1 : _mouseVirtual.X >= ViewX + ViewWidth ? 1 : 0;
+            dy = _mouseVirtual.Y < ViewY ? -1 : _mouseVirtual.Y >= ViewY + ViewHeight ? 1 : 0;
+        }
+        _session.EdgeScroll(dx, dy);
     }
 
     void OnMapEnded()
@@ -893,15 +940,23 @@ public sealed class ErumaniGame : Game
     Rectangle _dest = new(0, 0, VirtualWidth, VirtualHeight);
     Point _mouseVirtual;
 
-    /// <summary>Moves the mouse pointer to a 640×480 position, as FUN_00409d24 does, while the pointer is in the active window.</summary>
+    /// <summary>
+    /// Moves the mouse pointer to a 640×480 position, as FUN_00409d24 does, while the pointer is in the active window; the
+    /// move isn't the player's, so it changes no hovered row or tile (the game set those already).
+    /// </summary>
     void WarpMouse(Point v)
     {
         if (_opts.Screenshot is not null || !IsActive || _dest.Width == 0) return;
         var m = Mouse.GetState();
         var cb = Window.ClientBounds;
         if (m.X < 0 || m.Y < 0 || m.X >= cb.Width || m.Y >= cb.Height) return;
-        Mouse.SetPosition(_dest.X + v.X * _dest.Width / VirtualWidth, _dest.Y + v.Y * _dest.Height / VirtualHeight);
+        var p = new Point(_dest.X + v.X * _dest.Width / VirtualWidth, _dest.Y + v.Y * _dest.Height / VirtualHeight);
+        Mouse.SetPosition(p.X, p.Y);
+        _warpedTo = p;
     }
+
+    /// <summary>Where <see cref="WarpMouse"/> last put the pointer (window pixels), until the next frame has seen it.</summary>
+    Point? _warpedTo;
 
     /// <summary>Window pixel -> 640x480 virtual pixel.</summary>
     Point ToVirtual(Point p) => _dest.Width == 0 ? p : new Point(
@@ -998,17 +1053,26 @@ public sealed class ErumaniGame : Game
             _ui.DrawText(_sb, msg.Lines[i], new Vector2(x + 17, y + 11 + i * Ui.Ui.LineHeight), Ui.Ui.TextColor);
     }
 
-    // Measured on the 11話 camp menu (T17b): green SYSTEM.BMP panel, 1-px light/dark edges,
-    // white MS Gothic 12 px regular (text pixels match), origin (+13, +10), 16 px lines, width = text + 24.
-    // The panel's bottom sits at y 303, just above the bottom message window. Its x was 208
-    // for a 168-px panel; the rule behind that (centre 292?) is provisional.
+    /// <summary>The bar shows on the choice's row: the pointer is on it (it starts on the first), or keys moved it.</summary>
     bool _choiceActive;
+    string[]? _choiceShown;
 
+    /// <summary>
+    /// A character choice (FUN_0042523c): a green panel ((the longest option's bytes + 1) / 2 + 2) × 12 px wide and a 16-px
+    /// row per option plus one high, at x 320 − units × 8 (208 for the 11話 camp menu's 168 px, T17b). Under a message
+    /// window still up at the bottom (y 304) it sits on that window; with one at the top or centre the exe's sum
+    /// (16 × the window's height + its y) overshoots and the clamp puts it at the frame's bottom; with none it is centred
+    /// on y 240. Kept inside the frame (FUN_0041855c). Text MS Gothic 12 px at (+13, +10), 16-px lines (T17b).
+    /// </summary>
     Rectangle ChoiceRect(string[] opts)
     {
-        int w = opts.Max(o => _ui.SmallText.Measure(o)) + 24, h = opts.Length * 16 + 16;
-        return new Rectangle(292 - w / 2, 304 - h, w, h);
+        int units = opts.Max(o => Bin.Sjis.GetByteCount(o) + 1) / 2 + 2, w = units * 12, h = (opts.Length + 1) * 16;
+        int y = _runner?.LastMessage is { } m ? (m.Window == 2 ? 304 - h : 464 - h) : 240 - h / 2;
+        return new Rectangle(Math.Clamp(320 - units * 8, 16, 624 - w), Math.Clamp(y, 16, 464 - h), w, h);
     }
+
+    /// <summary>An option's bar (FUN_004144f4), the span the pointer chooses it in (FUN_00413100).</summary>
+    static Rectangle ChoiceRow(Rectangle r, int i) => new(r.X + 6, r.Y + 8 + i * 16, r.Width - 12, 16);
 
     void DrawChoice()
     {
@@ -1017,11 +1081,8 @@ public sealed class ErumaniGame : Game
         _ui.Panel(_sb, r);
         for (int i = 0; i < opts.Length; i++)
         {
-            var pos = new Vector2(r.X + 13, r.Y + 10 + i * 16);
-            // The reference shows no highlight while the mouse is elsewhere; the hover/keyboard
-            // highlight colour is provisional.
-            var c = _choiceActive && i == _runner.ChoiceIndex ? new Color(255, 255, 120) : Ui.Ui.PanelText;
-            if (_ui.SmallText.Get(opts[i]) is { } t) _sb.Draw(t, pos, c);
+            var c = _ui.MenuRow(_sb, ChoiceRow(r, i), _choiceActive && i == _runner.ChoiceIndex, true, _frame);
+            if (_ui.SmallText.Get(opts[i]) is { } t) _sb.Draw(t, new Vector2(r.X + 13, r.Y + 10 + i * 16), c);
         }
     }
 

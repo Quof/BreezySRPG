@@ -301,6 +301,28 @@ public sealed class MapSession : IMapContext
 
     public bool Panning => _panTarget is not null;
 
+    Point? _scrollTarget;
+
+    /// <summary>
+    /// FUN_00416f38 from FUN_0040dee0: while the left button is held with the pointer on the frame, the view scrolls a tile
+    /// a tick that way (16 px a frame here, as the pans); a tile begun is finished once let go. Called once a frame with
+    /// the held direction, (0, 0) when nothing is held.
+    /// </summary>
+    public void EdgeScroll(int dx, int dy)
+    {
+        if ((dx != 0 || dy != 0) && _scrollTarget is null)
+        {
+            int maxX = Math.Max(0, PixelWidth - ErumaniGame.ViewWidth), maxY = Math.Max(0, PixelHeight - ErumaniGame.ViewHeight);
+            var t = new Point(dx == 0 ? Camera.X : Math.Clamp((Camera.X / Tile + dx) * Tile, 0, maxX),
+                dy == 0 ? Camera.Y : Math.Clamp((Camera.Y / Tile + dy) * Tile, 0, maxY));
+            if (t != Camera) _scrollTarget = t;
+        }
+        if (_scrollTarget is not { } target) return;
+        Camera.X += Math.Clamp(target.X - Camera.X, -PanSpeed, PanSpeed);
+        Camera.Y += Math.Clamp(target.Y - Camera.Y, -PanSpeed, PanSpeed);
+        if (Camera == target) _scrollTarget = null;
+    }
+
     void UpdatePan()
     {
         if (_panTarget is not { } t) return;
@@ -445,25 +467,27 @@ public sealed class MapSession : IMapContext
     /// 全体マップ (original screenshot): a 352×352 green panel in the middle of the screen, the whole map shrunk
     /// (8 px a tile, smaller if it wouldn't fit) with a white grid, units as coloured squares.
     /// </summary>
-    public void DrawWholeMap(SpriteBatch sb, Ui.Ui ui, IEnumerable<(int X, int Y, Color C)> units)
+    /// <summary>
+    /// 全体マップ (FUN_00415460, FUN_0041561c): a green 352×352 panel at (144,64), the map's own chips (not the "Other"
+    /// objects') at 8 px a tile centred on (320,240), a white grid a pixel up-left of each tile, and every unit as one of
+    /// SYSTEM.BMP's 8×8 dots — side 0 enemy red, 1 ally blue, 2 neutral yellow — in four shades changing every 4 ticks.
+    /// </summary>
+    public void DrawWholeMap(SpriteBatch sb, Ui.Ui ui, IEnumerable<(int X, int Y, int Side)> units, int frame)
     {
         ui.Panel(sb, new Rectangle(144, 64, 352, 352));
         if (_chips is null) return;
-        int s = Math.Max(2, Math.Min(8, 336 / Math.Max(Map.Width, Map.Height)));
+        const int s = 8;
         int w = Map.Width * s, h = Map.Height * s;
         int ox = 320 - w / 2, oy = 240 - h / 2;
         for (int y = 0; y < Map.Height; y++)
             for (int x = 0; x < Map.Width; x++)
                 sb.Draw(_chips, new Rectangle(ox + x * s, oy + y * s, s, s), ChipRect(Map.Tiles[y, x]), Color.White);
-        foreach (var o in Others)
-            if (o.Graphic >= 0 && OtherVisible(o)) sb.Draw(_chips, new Rectangle(ox + o.X * s, oy + o.Y * s, s, s), ChipRect(o.Graphic), Color.White);
-        foreach (var (x, y, c) in units) ui.Fill(sb, new Rectangle(ox + x * s + 1, oy + y * s + 1, s - 1, s - 1), c);
-        if (s >= 4)
-        {
-            for (int x = 0; x <= Map.Width; x++) ui.Fill(sb, new Rectangle(ox + x * s, oy, 1, h + 1), Color.White);
-            for (int y = 0; y <= Map.Height; y++) ui.Fill(sb, new Rectangle(ox, oy + y * s, w + 1, 1), Color.White);
-        }
-        else ui.Frame(sb, new Rectangle(ox - 1, oy - 1, w + 2, h + 2), Color.White);
+        for (int y = 0; y <= Map.Height; y++) ui.Fill(sb, new Rectangle(ox - 1, oy + y * s - 1, w + 1, 1), Ui.Ui.PanelText);
+        for (int x = 0; x <= Map.Width; x++) ui.Fill(sb, new Rectangle(ox + x * s - 1, oy - 1, 1, h + 1), Ui.Ui.PanelText);
+        int t = frame / 8 % 4;
+        if (_tex.Get("SYSTEM.BMP") is { } sys)
+            foreach (var (x, y, side) in units)
+                sb.Draw(sys, new Vector2(ox + x * s, oy + y * s), new Rectangle(240 + t % 2 * 8, 128 + side * 16 + t / 2 * 8, 8, 8), Color.White);
     }
 
     /// <summary>Range overlay from SYSTEM.BMP's 32x32 range tiles (y 64): 0 cyan = move, 1 salmon = attack /

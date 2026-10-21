@@ -280,6 +280,27 @@ public sealed class Ui : IDisposable
     }
 
     public static readonly Color PanelText = new(248, 248, 248);
+    /// <summary>A menu entry that can't be picked (FUN_00414344: SYSTEM.BMP swatch 9).</summary>
+    public static readonly Color DisabledText = new(152, 152, 152);
+
+    /// <summary>
+    /// A menu row (FUN_00414344 / FUN_004144f4, colours from SYSTEM.BMP's swatches at y 288): the chosen row's bar —
+    /// light green under (0,32,0) text and white under (0,64,0) text, swapping every 6 game ticks, or grey (122,122,122)
+    /// under (0,32,0) text when it can't be picked; other rows white, or grey when they can't be picked. Draws the bar
+    /// and returns the text colour; the modern skin uses its accent bar.
+    /// </summary>
+    public Color MenuRow(SpriteBatch sb, Rectangle bar, bool chosen, bool enabled, int frame)
+    {
+        if (Modern)
+        {
+            if (chosen) ModernHighlight(sb, bar, frame);
+            return chosen ? (enabled ? Color.White : new Color(196, 204, 222)) : enabled ? PanelText : new Color(110, 116, 132);
+        }
+        if (!chosen) return enabled ? PanelText : DisabledText;
+        bool green = frame / 12 % 2 == 0;
+        Fill(sb, bar, !enabled ? new Color(122, 122, 122) : green ? new Color(160, 248, 96) : new Color(248, 248, 248));
+        return !enabled || green ? new Color(0, 32, 0) : new Color(0, 64, 0);
+    }
     /// <summary>Stat numbers added on panels (item summaries, terrain): a soft yellow, readable on both skins.</summary>
     public static readonly Color StatText = new(248, 232, 152);
 

@@ -7,7 +7,7 @@ public sealed class GameState
 
     public bool[] Switches { get; } = new bool[SwitchCount];
     public int[] Variables { get; } = new int[VariableCount];
-    public Dictionary<int, int> Items { get; } = new();
+    public Inventory Items { get; } = new();
     public int Gold { get; set; }
 
     /// <summary>
@@ -46,6 +46,45 @@ public sealed class GameState
         int n = Math.Clamp(ItemCount(item) + count, 0, 99);
         if (n == 0) Items.Remove(item); else Items[item] = n;
     }
+}
+
+/// <summary>
+/// The inventory as the exe keeps it (save header 0x210, FUN_0040add8 / FUN_0040ae68): (item, count) entries in the
+/// order they came in; a count changes in place, a new item takes the end, and an item used up leaves its entry, the
+/// ones after it moving up. Lists of items (battle, camp) show them in this order.
+/// </summary>
+public sealed class Inventory : IEnumerable<KeyValuePair<int, int>>
+{
+    readonly List<KeyValuePair<int, int>> _entries = new();
+
+    public int Count => _entries.Count;
+    public IEnumerable<int> Keys => _entries.Select(e => e.Key);
+
+    public bool TryGetValue(int item, out int count)
+    {
+        int i = _entries.FindIndex(e => e.Key == item);
+        count = i >= 0 ? _entries[i].Value : 0;
+        return i >= 0;
+    }
+
+    public bool ContainsKey(int item) => _entries.Exists(e => e.Key == item);
+
+    public int this[int item]
+    {
+        get => TryGetValue(item, out var n) ? n : throw new KeyNotFoundException($"item {item}");
+        set
+        {
+            int i = _entries.FindIndex(e => e.Key == item);
+            if (i >= 0) _entries[i] = new(item, value);
+            else _entries.Add(new(item, value));
+        }
+    }
+
+    public bool Remove(int item) => _entries.RemoveAll(e => e.Key == item) > 0;
+    public void Clear() => _entries.Clear();
+
+    public IEnumerator<KeyValuePair<int, int>> GetEnumerator() => _entries.GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 /// <summary>A party member's persistent state between maps.</summary>

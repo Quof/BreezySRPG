@@ -31,7 +31,7 @@ public sealed class EventRunner
 
     public string Name { get; private set; } = "";
     public MessageView? Message { get; private set; }
-    /// <summary>The message that stays visible underneath a character choice (as in the original).</summary>
+    /// <summary>The message window still up: under a character choice that came straight after its message (as in the original).</summary>
     public MessageView? LastMessage { get; private set; }
     public string[]? Choice { get; private set; }
     public int ChoiceIndex { get; private set; }
@@ -97,7 +97,7 @@ public sealed class EventRunner
 
     void SkipBlocks()
     {
-        Message = null;
+        Message = LastMessage = null;
         _waitMs = 0;
         _waitButton = false;
         _waitPan = false;
@@ -117,7 +117,9 @@ public sealed class EventRunner
             _messageAge++;
             bool auto = input.FastForward && FastForwardAdvancesText && _messageAge > 4;
             if (input.Confirm) Sfx.MessageAdvance();
-            if (input.Confirm || auto) Message = null;
+            // a message clicked away takes its window with it (FUN_0040d18c clears +0x5e18); only one a choice follows
+            // straight away stays up under it
+            if (input.Confirm || auto) Message = LastMessage = null;
             else return;
         }
         if (Choice is not null)

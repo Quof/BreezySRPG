@@ -6,6 +6,8 @@ public enum EffectKind
 {
     Damage, Miss, Resisted, Heal, MpHeal, PowerUp, DefUp, MdefUp,
     Poison, Sleep, AttackDown, DefenseDown, CurePoison, WakeUp, Cleanse, ExtraTurn,
+    /// <summary>A medicine undid a lowered attack / defense (FUN_0040b188: 「攻撃力が回復した」, 「物理防御が回復した」).</summary>
+    AttackRestored, DefenseRestored,
 }
 
 /// <summary>What a spell or item did to one unit.</summary>
@@ -98,9 +100,10 @@ public sealed partial class Battlefield
     }
 
     /// <summary>
-    /// Casts a spell at (aimX, aimY). From a magic item it costs no MP and gives no EXP (provisional).
-    /// EXP: Damage spells as attacks (kill or hit, against the highest-level unit); Degrade/Raise give
-    /// the spell's Exp Value per cast (help: "upon casting this spell").
+    /// Casts a spell at (aimX, aimY). From a magic item it costs no MP (the exe puts the caster's TP back after the
+    /// scene) but works otherwise the same, EXP included: FUN_0040fda8 calls the same FUN_0041c8c0.
+    /// EXP (FUN_0041b6ec, FUN_0041ba0c): Damage spells add an attack's worth for every enemy they hurt (kill or hit);
+    /// Degrade/Raise give the spell's Exp Value per cast. Only an ally that lives gets it.
     /// </summary>
     public ExchangeResult Cast(BattleUnit caster, Magic m, int aimX, int aimY, bool fromItem = false)
     {
@@ -110,13 +113,13 @@ public sealed partial class Battlefield
         foreach (var t in SpellTargets(caster, m, aimX, aimY))
             r.Effects.Add(Apply(caster, m, t, power));
         caster.Acted = true;
-        if (caster.Side != Side.Ally || fromItem || caster.Dead) return r;
+        if (caster.Side != Side.Ally || caster.Dead) return r;
 
-        // damage spells: EXP summed over every enemy damaged (unlike attacks, which take the largest), kills collect
-        // rewards; status / raise spells: the spell's Exp Value (FUN_0041ba0c, FUN_0041b6ec)
+        // damage spells: EXP summed over every enemy (computer unit) damaged — not neutral units or one's own side —
+        // unlike attacks, which take the largest; kills collect rewards; status / raise spells: the spell's Exp Value
         int exp = 0;
         if (m.Type == 0)
-            foreach (var e in r.Effects.Where(e => e.Kind == EffectKind.Damage && e.Amount > 0 && e.Target.Side != Side.Ally))
+            foreach (var e in r.Effects.Where(e => e.Kind == EffectKind.Damage && e.Amount > 0 && e.Target.Side == Side.Enemy))
             {
                 exp += Combat.Exp(caster.Level, e.Target.Level, e.Killed);
                 if (e.Killed) CollectReward(r, e.Target);
@@ -201,29 +204,23 @@ public sealed partial class Battlefield
     public IEnumerable<BattleUnit> MedicineTargets(BattleUnit user, Item it) =>
         Alive.Where(t => Friendly(user, t) && Dist(user.X, user.Y, t.X, t.Y) <= Math.Max(0, it.S.MedRange));
 
-    /// <summary>Medicine: HP/MP recovery, Defense/Magic Defense Up (resetting the counter, curing Defense Down), cures.</summary>
+    /// <summary>
+    /// A medicine on a unit (FUN_0040b188), its effects in the order of the original's messages: HP / TP back by the
+    /// item's amounts up to the maximum (the effect, like the message, carries the item's own amount); the defense
+    /// buffs raised to the item's values if lower; poison and sleep cured; a lowered attack, then defense, undone.
+    /// </summary>
     public ExchangeResult UseMedicine(BattleUnit user, Item it, BattleUnit t)
     {
         var r = new ExchangeResult();
         var s = it.S;
-        if (s.MedHp > 0)
-        {
-            int before = t.Hp;
-            t.Hp = Math.Min(t.MaxHp, t.Hp + s.MedHp);
-            r.Effects.Add(new Effect(t, EffectKind.Heal, t.Hp - before, false));
-        }
-        if (s.MedMp > 0)
-        {
-            int before = t.Mp;
-            t.Mp = Math.Min(t.MaxMp, t.Mp + s.MedMp);
-            r.Effects.Add(new Effect(t, EffectKind.MpHeal, t.Mp - before, false));
-        }
-        if (s.MedDefUp > 0) { t.DefUp = s.MedDefUp; r.Effects.Add(new Effect(t, EffectKind.DefUp, s.MedDefUp, false)); }
-        if (s.MedMdefUp > 0) { t.MdefUp = s.MedMdefUp; r.Effects.Add(new Effect(t, EffectKind.MdefUp, s.MedMdefUp, false)); }
+        if (s.MedHp > 0) { t.Hp = Math.Min(t.MaxHp, t.Hp + s.MedHp); r.Effects.Add(new Effect(t, EffectKind.Heal, s.MedHp, false)); }
+        if (s.MedMp > 0) { t.Mp = Math.Min(t.MaxMp, t.Mp + s.MedMp); r.Effects.Add(new Effect(t, EffectKind.MpHeal, s.MedMp, false)); }
+        if (s.MedDefUp > 0) { t.DefUp = Math.Max(t.DefUp, s.MedDefUp); r.Effects.Add(new Effect(t, EffectKind.DefUp, s.MedDefUp, false)); }
+        if (s.MedMdefUp > 0) { t.MdefUp = Math.Max(t.MdefUp, s.MedMdefUp); r.Effects.Add(new Effect(t, EffectKind.MdefUp, s.MedMdefUp, false)); }
         if (s.MedCure[0] != 0 && t.PoisonTurns > 0) { t.PoisonTurns = 0; r.Effects.Add(new Effect(t, EffectKind.CurePoison, 0, false)); }
         if (s.MedCure[1] != 0 && t.SleepTurns > 0) { t.SleepTurns = 0; r.Effects.Add(new Effect(t, EffectKind.WakeUp, 0, false)); }
-        if (s.MedCure[2] != 0 && t.PowerUp < 0) t.PowerUp = 0;
-        if (s.MedCure[3] != 0 && t.DefUp < 0) t.DefUp = 0;
+        if (s.MedCure[2] != 0 && t.PowerUp < 0) { t.PowerUp = 0; r.Effects.Add(new Effect(t, EffectKind.AttackRestored, 0, false)); }
+        if (s.MedCure[3] != 0 && t.DefUp < 0) { t.DefUp = 0; r.Effects.Add(new Effect(t, EffectKind.DefenseRestored, 0, false)); }
         user.Acted = true;
         return r;
     }
