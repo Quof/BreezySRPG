@@ -29,7 +29,9 @@ public sealed class SaveFile
     public static SaveFile? Load(string path)
     {
         if (!File.Exists(path)) return null;
-        var raw = File.ReadAllBytes(path);
+        byte[] raw;
+        try { raw = File.ReadAllBytes(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }   // locked or unreadable: as if not there
         return raw.Length == Size ? new SaveFile(raw) : null;
     }
 
@@ -165,7 +167,12 @@ public sealed class SaveFile
         }
     }
 
-    public void Write(string path) => File.WriteAllBytes(path, Raw);
+    /// <summary>Writes the file; false (nothing written, the game goes on) when it can't be, e.g. while another program holds it.</summary>
+    public bool Write(string path)
+    {
+        try { File.WriteAllBytes(path, Raw); return true; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
 
     // ---------------- battle saves ----------------
 

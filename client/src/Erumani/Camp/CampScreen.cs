@@ -637,8 +637,8 @@ public sealed class CampScreen
     {
         string path = SaveFile.PathFor(_folder, slot);
         var template = SaveFile.Load(path)?.Raw ?? _state.LastSave;
-        SaveFile.ForCamp(_state, _db, _nextIndex, Bgm, template).Write(path);
-        Saved?.Invoke(slot);
+        if (SaveFile.ForCamp(_state, _db, _nextIndex, Bgm, template).Write(path)) Saved?.Invoke(slot);
+        else Sfx.Buzzer();   // couldn't be written (another program holds the file)
         BackToMenu(4);
     }
 

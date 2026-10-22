@@ -448,6 +448,19 @@ public sealed class ErumaniGame : Game
         // window takes none while it isn't in front (the pointer is still followed, to be drawn where it is)
         var k = _opts.Screenshot is null && IsActive ? Keyboard.GetState() : default;
         var m = _opts.Screenshot is null ? Mouse.GetState() : default;
+        // "keyfuzz:N[:seed]" (a stress test): N frames of random keys and mouse buttons held and let go, fed through the same
+        // path as a real keyboard and mouse
+        // "keycalm:N": then N frames of only Esc and the mouse buttons, as a player would try to get back to the map
+        if (_opts.Screenshot is not null && _script.TryPeek(out var kf) && (kf.StartsWith("keyfuzz:") || kf.StartsWith("keycalm:")) && _frame >= _keyFuzzUntil)
+        {
+            _script.Dequeue();
+            var parts = kf.Split(':');
+            (_keyFuzzUntil, _keyFuzzRng, _keyCalm) = (_frame + int.Parse(parts[1]), new Random(parts.Length > 2 ? int.Parse(parts[2]) : 1), kf.StartsWith("keycalm:"));
+            _keyFuzzHeld.Clear();
+            Trace($"{_frame}: {parts[0]} {parts[1]} frames in {(_battle?.DebugState.Split((char)10)[0] ?? "-")}");
+        }
+        bool keyFuzz = _frame < _keyFuzzUntil;
+        if (keyFuzz) (k, m) = KeyFuzz(m);
         _controls.Update(k);
         // play time (EasySRPG95's own count): while a game is on, a map or a camp, and the window is in front
         if (IsActive && _logo < 0 && _title is null && _gameOver < 0 && (_session is not null || _camp is not null))
@@ -457,8 +470,8 @@ public sealed class ErumaniGame : Game
         bool alt = k.IsKeyDown(Keys.LeftAlt) || k.IsKeyDown(Keys.RightAlt);
         // clicks only count inside the window, and not just after it lost or regained focus (clicking another window,
         // or clicking back into this one, used to open the turn menu)
-        _activeFrames = IsActive ? _activeFrames + 1 : 0;
-        _pointerInside = Window.ClientBounds is var cb && m.X >= 0 && m.Y >= 0 && m.X < cb.Width && m.Y < cb.Height;
+        _activeFrames = IsActive || keyFuzz ? _activeFrames + 1 : 0;
+        _pointerInside = keyFuzz || Window.ClientBounds is var cb && m.X >= 0 && m.Y >= 0 && m.X < cb.Width && m.Y < cb.Height;
         bool mouseHere = _activeFrames > 6 && _pointerInside;
         // a press counts once the button has been seen up for 2 frames (about 30 ms) since the last one: a worn switch's
         // chatter (its contact opening for a few ms) isn't a second click — the original reads its click flag once a tick,
@@ -468,7 +481,7 @@ public sealed class ErumaniGame : Game
         bool rclick = mouseHere && rightDown && _rightUpFrames >= 2;
         _leftUpFrames = leftDown ? 0 : Math.Min(_leftUpFrames + 1, 1000);
         _rightUpFrames = rightDown ? 0 : Math.Min(_rightUpFrames + 1, 1000);
-        int wheel = IsActive && _opts.Screenshot is null ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
+        int wheel = (IsActive && _opts.Screenshot is null) || keyFuzz ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
         bool mouseMoved = mouseHere && m.Position != _prevMouse.Position;   // a pointer passing over the window in the background chooses nothing
         if (_warpedTo is { } warped) { if (m.Position == warped) mouseMoved = false; _warpedTo = null; }
 
@@ -504,8 +517,9 @@ public sealed class ErumaniGame : Game
             _settings.Save();
         }
         if (Pressed(Keys.F3)) _debug = !_debug;
-        if (_session is not null && Pressed(Keys.PageDown)) LoadMap((_mapPos + 1) % _mapIndices.Length);
-        if (_session is not null && Pressed(Keys.PageUp)) LoadMap((_mapPos + _mapIndices.Length - 1) % _mapIndices.Length);
+        // the developer's map keys, only while the debug overlay is up: a stray press mustn't drop a player on another map
+        if (_debug && _session is not null && Pressed(Keys.PageDown)) LoadMap((_mapPos + 1) % _mapIndices.Length);
+        if (_debug && _session is not null && Pressed(Keys.PageUp)) LoadMap((_mapPos + _mapIndices.Length - 1) % _mapIndices.Length);
 
         // keyboard: arrows move the map cursor and menus; WASD scroll the camera, and move in menus too
         bool menuOpen = _options is not null || _eventMenu is not null || _title is not null || _camp is not null || _runner?.Choice is not null || _battle?.MenuOpen == true;
@@ -533,7 +547,7 @@ public sealed class ErumaniGame : Game
         }
 
         var input = new EventInput(confirm, cancel, up, down, ff);
-        if (_opts.Screenshot is not null) input = new EventInput(false, false, false, false, ff);   // scripted runs ignore real input (ff: "ffhold")
+        if (_opts.Screenshot is not null && !keyFuzz) input = new EventInput(false, false, false, false, ff);   // scripted runs ignore real input (ff: "ffhold")
         // "choice+N" / "choiceK+N": the shot N frames after the next (the K-th) character choice comes up, left unanswered
         bool choiceUp = _runner?.Choice is not null;
         if (choiceUp && !_choiceWasUp) _choicesSeen++;
@@ -564,7 +578,7 @@ public sealed class ErumaniGame : Game
             MouseMoved: mouseMoved, Click: click, RightClick: rclick, FastForward: input.FastForward,
             Info: _controls.Pressed(GameAction.Info), Wheel: wheel);
         if (_battle is not null) _battle.MouseVirtual = _mouseVirtual;
-        if (_opts.Screenshot is not null)   // ignore the real mouse while scripted
+        if (_opts.Screenshot is not null && !keyFuzz)   // ignore the real mouse while scripted
             battleInput = Scripted(new BattleInput(input.Confirm, false, false, false, false, false, null, false, false, false, input.FastForward));
 
         // a right click during an event on the map opens a menu there — save, load, options (modern; in the original it
@@ -729,6 +743,18 @@ public sealed class ErumaniGame : Game
     /// <summary>Screenshot mode: feeds the --keys queue, one token every 10 frames while the map is idle.</summary>
     BattleInput Scripted(BattleInput bi)
     {
+        // "fuzz:N[:seed]": N frames of random input, every frame whatever the game is doing (a stress test): keys, clicks,
+        // right clicks, the wheel and the pointer anywhere; then the queue goes on as usual
+        if (_script.TryPeek(out var fz) && fz.StartsWith("fuzz:"))
+        {
+            _script.Dequeue();
+            var parts = fz.Split(':');
+            _fuzzUntil = _frame + int.Parse(parts[1]);
+            _fuzzRng = new Random(parts.Length > 2 ? int.Parse(parts[2]) : 1);
+            Trace($"{_frame}: fuzz {parts[1]} frames");
+        }
+        if (_frame < _fuzzUntil) return Fuzz();
+        if (_fuzzUntil > 0 && _frame == _fuzzUntil) { _scriptPointer = null; Trace($"{_frame}: fuzz over in {(_battle?.DebugState.Split((char)10)[0] ?? "-")}"); }
         if (_script.TryPeek(out var next) && next.StartsWith("shot+")) { _script.Dequeue(); _shotAt = _frame + int.Parse(next[5..]); }
         // telop tokens fire wherever they are in the queue: the caption may come while other input is still queued
         var telopTok = _script.FirstOrDefault(s => s.StartsWith("telop"));
@@ -824,6 +850,49 @@ public sealed class ErumaniGame : Game
     }
 
     static BattleInput Do(Action a, BattleInput bi) { a(); return bi; }
+
+    long _fuzzUntil, _keyFuzzUntil;
+    Random _keyFuzzRng = new(1);
+    readonly HashSet<Keys> _keyFuzzHeld = new();
+    bool _keyFuzzLeft, _keyFuzzRight, _keyCalm;
+    int _keyFuzzWheel;
+
+    /// <summary>
+    /// One frame of "keyfuzz": the keys a player might mash (moves, confirm, cancel, status, fast-forward, camera, backlog,
+    /// ranges, skip, options, debug overlay) and both mouse buttons, each pressed or let go now and
+    /// then, the pointer moved anywhere in the window. Not the display keys (fullscreen, scaling).
+    /// </summary>
+    (KeyboardState, MouseState) KeyFuzz(MouseState was)
+    {
+        var r = _keyFuzzRng;
+        Keys[] pool = { Keys.Up, Keys.Down, Keys.Left, Keys.Right, Keys.Z, Keys.X, Keys.Enter, Keys.Escape, Keys.Back, Keys.C,
+            Keys.LeftShift, Keys.Tab, Keys.LeftControl, Keys.W, Keys.A, Keys.S, Keys.D, Keys.L, Keys.R, Keys.Space, Keys.F1, Keys.F3 };
+        if (_keyCalm) pool = new[] { Keys.Escape };
+        foreach (var key in pool)
+            if (r.Next(100) < (key is Keys.F1 ? 1 : 6))
+                if (!_keyFuzzHeld.Remove(key)) _keyFuzzHeld.Add(key);
+        if (r.Next(100) < 15) _keyFuzzLeft = !_keyFuzzLeft;
+        if (r.Next(100) < 8) _keyFuzzRight = !_keyFuzzRight;
+        if (!_keyCalm && r.Next(100) < 4) _keyFuzzWheel += r.Next(2) == 0 ? 120 : -120;
+        // the pointer in the game's 640 × 480 (a minimized test window has no size to speak of)
+        if (r.Next(100) < 30 || _scriptPointer is null) _scriptPointer = new Point(r.Next(640), r.Next(480));
+        var pos = _scriptPointer.Value;
+        return (new KeyboardState(_keyFuzzHeld.ToArray()),
+            new MouseState(pos.X, pos.Y, _keyFuzzWheel, _keyFuzzLeft ? ButtonState.Pressed : ButtonState.Released, ButtonState.Released,
+                _keyFuzzRight ? ButtonState.Pressed : ButtonState.Released, ButtonState.Released, ButtonState.Released));
+    }
+    Random _fuzzRng = new(1);
+
+    /// <summary>One frame of the "fuzz" token's random input: each key or button pressed now and then, the pointer moved anywhere.</summary>
+    BattleInput Fuzz()
+    {
+        var r = _fuzzRng;
+        bool P(int percent) => r.Next(100) < percent;
+        if (P(30)) _mouseVirtual = (_scriptPointer = new Point(r.Next(640), r.Next(480))).Value;
+        if (_battle is not null) _battle.MouseVirtual = _mouseVirtual;
+        if (P(1)) ToggleThreat();
+        return new BattleInput(P(12), P(8), P(6), P(6), P(6), P(6), MouseTile(), true, P(12), P(8), _scriptFf || P(3), P(4), P(4) ? (P(50) ? 1 : -1) : 0);
+    }
 
     /// <summary>A scripted run's trace: kept for the .txt beside the screenshot and appended to its .log as it happens.</summary>
     void Trace(string line)
@@ -1086,11 +1155,12 @@ public sealed class ErumaniGame : Game
         string path = SaveFile.PathFor(_folder, n);
         var tone = _fx.Tone;
         int idx = _state.MapIndex;
-        SaveFile.ForBattle(_state, _db, idx, _audio.CurrentBgm ?? _session.Map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
+        bool written = SaveFile.ForBattle(_state, _db, idx, _audio.CurrentBgm ?? _session.Map.Bgm[1], _session.Field.Phase, _folder.MapPath(idx),
             _session.Field.Units, _battle.FiredSlots, SaveFile.Load(path)?.Raw ?? _state.LastSave,
             new[] { (int)tone.X, (int)tone.Y, (int)tone.Z, (int)tone.W },
             (_session.Camera.X / MapSession.Tile, _session.Camera.Y / MapSession.Tile)).Write(path);
-        NoteSave(n, scene);
+        if (written) NoteSave(n, scene);
+        else Sfx.Buzzer();   // couldn't be written (another program holds the file): the game goes on unsaved
     }
 
     /// <summary>

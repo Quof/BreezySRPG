@@ -64,6 +64,7 @@ Options:
   - `wheelup` / `wheeldown` turn the mouse wheel a notch.
   - `skip` opens the cutscene skip's question (Space) as soon as an event shows a message, `skipany` as soon as an event runs at all (mid-move, mid-pan, mid-fade); `skipyes` answers はい. `client\tools\skips.ps1` uses them.
   - `point:X.Y` puts the pointer at (X, Y) on the 640×480 screen and keeps it there, for what reads the pointer rather than a map tile (the options' rows, the camp's and the title's menus): `options,down,enter,point:320.48,wheeldown` turns the BGM volume down a step.
+  - Stress tests: `fuzz:N[:seed]` sends N frames of random game input (keys, clicks, right clicks, wheel, pointer) whatever the game is doing; `keyfuzz:N[:seed]` holds and releases random keys and mouse buttons through the real keyboard and mouse path instead (options, backlog, skip and debug keys included); `keycalm:N[:seed]` then mashes only Esc and the mouse buttons, as a player would to get back. A run that never finishes its later tokens is stuck.
   - `ffhold` / `ffrelease` hold or let go of the fast-forward key at once; `msg` waits until an event shows a message or a choice.
   - `rclick` right-clicks as soon as an event shows a message or a choice, once the `--advance` confirms are done (the event's menu: save, load, options); `rclickfx` as soon as it shows neither (a screen effect, a move, a pan, a wait). With the menu up, the other keys work it: `enter` saves, `down,enter` loads, `down,down,enter` opens the options; in the save screen `enter` picks the file (a save made in an event starts on file 9).
 
@@ -116,7 +117,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 | F4 or Alt+Enter | fullscreen |
 | F5 | switch pixel-perfect / fit scaling |
 | F3 | debug overlay (map, BGM, event log) |
-| PageUp / PageDown | previous / next map (developer) |
+| PageUp / PageDown | previous / next map (developer; only while the F3 overlay is up) |
 
 ## Options (modern features)
 
