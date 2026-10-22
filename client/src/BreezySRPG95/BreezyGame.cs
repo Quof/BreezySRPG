@@ -114,6 +114,7 @@ public sealed class BreezyGame : Game
 
     protected override void LoadContent()
     {
+        _folder.ReadAhead("BMP");   // the pictures into memory in the background
         _db = Database.Load(_folder);
         if (_db.Words.Length > 63) Camp.MenuList.PageLabel = _db.Words[63];   // ページ
         _tex = new Textures(GraphicsDevice, _folder) { Missing = f => ReportMissing("BMP/" + f) };

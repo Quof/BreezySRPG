@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Srpg95.Data;
 
 /// <summary>
@@ -54,7 +56,41 @@ public sealed class GameFolder
     public byte[] ReadData(string relative) =>
         File.ReadAllBytes(FindIn(Root, relative) ?? throw new FileNotFoundException($"missing game file {relative}", Path.Combine(Root, relative)));
 
-    public IndexedBitmap? Bitmap(string fileName) => Find("BMP/" + fileName) is { } p ? IndexedBitmap.Load(p) : null;
+    public IndexedBitmap? Bitmap(string fileName) => Find("BMP/" + fileName) is { } p ? IndexedBitmap.Decode(Read(p), p) : null;
+
+    /// <summary>Files read ahead (<see cref="ReadAhead"/>), by path, kept: a picture is made again at other settings.</summary>
+    readonly ConcurrentDictionary<string, byte[]> _readAhead = new(StringComparer.OrdinalIgnoreCase);
+
+    byte[] Read(string path) => _readAhead.TryGetValue(path, out var b) ? b : File.ReadAllBytes(path);
+
+    /// <summary>
+    /// Reads a folder's files (BMP) into memory in the background: the game's, then the RTP's the game doesn't replace
+    /// (22–190 MB for the games here, plus up to 125 MB of the RTP's). Pictures are read the first time they're shown, and
+    /// on a slow or sleeping drive (a USB disk) that kept the game waiting; read ahead, only their making is left.
+    /// </summary>
+    public void ReadAhead(string name)
+    {
+        string? game = FindIn(Root, name), rtp = RtpRoot is null ? null : FindIn(RtpRoot, name);   // here: _dirs isn't thread-safe
+        Task.Run(() =>
+        {
+            var own = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var dir in new[] { game, rtp })
+            {
+                if (dir is null || !Directory.Exists(dir)) continue;
+                try
+                {
+                    foreach (var path in Directory.EnumerateFiles(dir))
+                    {
+                        string file = Path.GetFileName(path);
+                        if (dir == rtp && own.Contains(file)) continue;   // the game's own is the one shown
+                        if (dir == game) own.Add(file);
+                        try { _readAhead.TryAdd(path, File.ReadAllBytes(path)); } catch (Exception) { }   // read when it's shown instead
+                    }
+                }
+                catch (Exception) { }
+            }
+        });
+    }
 
     public string MapPath(int mapIndex) => FindIn(Root, $"MAP/SMAP_{mapIndex + 1:000}.DAT")
         ?? throw new FileNotFoundException($"map {mapIndex} (SMAP_{mapIndex + 1:000}.DAT) not found");
