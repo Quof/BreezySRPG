@@ -33,6 +33,8 @@ public sealed class MenuList
     /// <summary>Right-aligned columns (the client's options screen): text per item, right edge at ColumnX from the panel's left.</summary>
     public string[][]? Columns;
     public int[] ColumnX = Array.Empty<int>();
+    /// <summary>The first header row's column titles, right-aligned at <see cref="ColumnX"/> as the columns are.</summary>
+    public string[]? HeaderColumns;
     /// <summary>WORD.DAT 63 「ページ」, set once the game's words are loaded.</summary>
     public static string PageLabel = "ページ";
     /// <summary>The page arrow last clicked (0 ◁, 1 ▷) and the frames it still shows pressed (3 ticks, FUN_0041f27c).</summary>
@@ -58,6 +60,7 @@ public sealed class MenuList
     {
         Items = items;
         Enabled = enabled ?? items.Select(_ => true).ToArray();
+        (Columns, HeaderColumns) = (null, null);   // a list's columns go with its items: whoever sets them sets them after
         Index = Math.Clamp(Index, 0, Math.Max(0, items.Length - 1));
     }
 
@@ -96,6 +99,9 @@ public sealed class MenuList
         {
             if (Header[h] == "-") EtchedRule(sb, ui, Rect, RowY(h));
             else T(Header[h], Rect.X + 12, RowY(h), white);
+            if (h == 0 && HeaderColumns is { } titles)
+                for (int col = 0; col < titles.Length && col < ColumnX.Length; col++)
+                    if (ui.SmallText.Get(titles[col]) is { } ht) ht.Draw(sb, new Vector2(Rect.X + ColumnX[col] - ht.Width, Ui.Ui.Line16Y(ht, RowY(0))), white);
         }
         for (int k = First; k < First + Shown; k++)
         {
@@ -569,11 +575,15 @@ public sealed class CampScreen
         // 「  %-22s」 アイテム, the price's word centred in 8 and then 9 bytes' worth of spaces, 「%8s」 所持数 (FUN_00421220)
         string price = W(sell ? 29 : 28);   // 下取り額 / 値段
         int len = Bin.Sjis.GetByteCount(price);
+        // the restyled skins' fonts aren't fixed-width, so spaces can't line the columns up: the price and the count go in
+        // columns of their own, right-aligned under their titles where the original's fixed-width text ends them
+        bool columns = Ui.Ui.Restyled;
         _list.Header = new[]
         {
-            $"  {Pad(W(18), 22)}{new string(' ', Math.Max(0, 8 - len) / 2)}{price}{new string(' ', Math.Max(0, 9 - len) / 2)}{PadLeft(W(30), 8)}",
+            columns ? $"  {W(18)}" : $"  {Pad(W(18), 22)}{new string(' ', Math.Max(0, 8 - len) / 2)}{price}{new string(' ', Math.Max(0, 9 - len) / 2)}{PadLeft(W(30), 8)}",
             "-",
         };
+        _list.ColumnX = columns ? new[] { 204, 252 } : Array.Empty<int>();
         _list.Index = 0;
         RefreshShop();
         _pointMenu = true;
@@ -585,13 +595,17 @@ public sealed class CampScreen
         _rowItems = sell
             ? _state.Items.Where(kv => kv.Value > 0 && kv.Key >= 0 && kv.Key < _db.Items.Length).Select(kv => kv.Key).ToList()
             : _next.ShopItems.Where(id => id >= 0 && id < _db.Items.Length).ToList();
+        string Price(Item it) => sell && it.Price == 0 ? "－" : $"{(sell ? SellPrice(it) : it.Price)}";
         string Row(int id)
         {
             var it = _db.Items[id];
-            string price = sell && it.Price == 0 ? "        －" : $"{(sell ? SellPrice(it) : it.Price),10}";
-            return $"{Pad(it.Name, 22)}{price}{_state.ItemCount(id),8}";
+            return Ui.Ui.Restyled ? it.Name : $"{Pad(it.Name, 22)}{Price(it),10}{_state.ItemCount(id),8}";
         }
         _list.Set(_rowItems.Select(Row).ToArray(), sell ? _rowItems.Select(id => _db.Items[id].Price > 0).ToArray() : null);
+        _list.Columns = Ui.Ui.Restyled
+            ? new[] { _rowItems.Select(id => Price(_db.Items[id])).ToArray(), _rowItems.Select(id => $"{_state.ItemCount(id)}").ToArray() }
+            : null;
+        _list.HeaderColumns = Ui.Ui.Restyled ? new[] { W(sell ? 29 : 28), W(30) } : null;   // 値段 or 下取り額, 所持数
         _list.CanPick = sell ? null : k => _db.Items[_rowItems[k]].Price <= _state.Gold && _state.ItemCount(_rowItems[k]) < 99;
     }
 
