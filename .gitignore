@@ -4,6 +4,10 @@
 # Other SRPG Maker 95 games tested with the client, and their archives
 /昴の騎士/
 /闇鍋企画/
+/01闇鍋企画前編/
+/02闇鍋企画完結編/
+# a local folder of the user's, not part of the project
+/easysrpg/
 /ＯtoＺ/
 /ＯtoＺscan/
 /*.zip
