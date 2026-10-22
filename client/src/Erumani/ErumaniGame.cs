@@ -408,6 +408,7 @@ public sealed class ErumaniGame : Game
             _battle.PlayerScenesOnly = _settings.BattleSceneMode == BattleSceneMode.PlayerUnits;
             _battle.FastForwardSkipsScenes = _settings.FastForwardSkipsScenes;
             _battle.SkipEnemyTurn = _settings.SkipEnemyTurn;
+            _battle.AutoEndTurn = _settings.AutoEndTurn;
             _battle.CombatMusic = _settings.CombatBgm;
             _battle.ActionMenuFromTop = _settings.ActionMenuFromTop;
         }

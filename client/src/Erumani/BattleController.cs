@@ -954,8 +954,20 @@ public sealed class BattleController
         _statusTop = Math.Clamp(_statusTop, Math.Max(0, _statusSkill - Ui.StatusWindow.SkillRows + 1), _statusSkill);
     }
 
+    /// <summary>
+    /// Every unit the player moves has acted this turn (an asleep one can't, and counts as done), and at least one did: an
+    /// army that only slept, or a map without one, doesn't end turn after turn by itself.
+    /// </summary>
+    bool TurnIsOver()
+    {
+        var mine = _s.Field.Alive.Where(u => u.Side == Side.Ally).ToList();
+        return mine.Any(u => u.Acted) && mine.All(u => u.Acted || u.SleepTurns > 0);
+    }
+
     void UpdateIdle(BattleInput i)
     {
+        // the auto end turn option: no ターン終了 question, straight to the computer's phase once the map is waiting again
+        if (AutoEndTurn && _s.Field.AllyPhase && TurnIsOver()) { EndPlayerTurn(); return; }
         MoveCursor(i);
         var u = _s.Field.UnitAt(_cursor.X, _cursor.Y);
         if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; (_statusItem, _statusPage, _statusSkill, _statusTop) = (-1, 0, 0, 0); _state_ = State.Status; return; }
@@ -2078,6 +2090,8 @@ public sealed class BattleController
 
     /// <summary>Option: the enemy phase resolves without walking, panning, battle scenes or result popups (events still play).</summary>
     public bool SkipEnemyTurn { get; set; }
+    /// <summary>Option (modern): the player's turn ends by itself once every unit of theirs has acted (<see cref="TurnIsOver"/>).</summary>
+    public bool AutoEndTurn { get; set; }
     /// <summary>Option (modern): off, a fight plays the phase's music instead of the map's battle BGM (BattleMusic).</summary>
     public bool CombatMusic { get; set; } = true;
     bool Quiet => SkipEnemyTurn && !_s.Field.AllyPhase;

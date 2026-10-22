@@ -73,6 +73,7 @@ public sealed class Settings
     public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button or the confirm key fast-forwards (after 0.4 s; 1 s in a cutscene)
     public bool MouseInput { get; set; } = true;          // off: the mouse does nothing (keyboard only)
     public bool EdgeScrollHover { get; set; } = true;     // the pointer on the screen frame scrolls the map, no button held
+    public bool AutoEndTurn { get; set; }                 // the turn ends by itself once every unit of the player's has acted
     public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
     public UiSkin Skin { get; set; }                      // the windows, menus and text box: the original look or a restyled one
     /// <summary>The on/off setting earlier versions saved (on = <see cref="UiSkin.Modern"/>); read, never written.</summary>
@@ -109,7 +110,7 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off
+        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off, ERUMANI_AUTOENDTURN=on
             return new Settings
             {
                 Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("ERUMANI_SKIN"), true, out var skin) ? skin
@@ -118,6 +119,7 @@ public sealed class Settings
                 Language = Enum.TryParse<UiLanguage>(Environment.GetEnvironmentVariable("ERUMANI_LANGUAGE"), true, out var lang) ? lang : UiLanguage.English,
                 SaveScreen = Enum.TryParse<SaveScreen>(Environment.GetEnvironmentVariable("ERUMANI_SAVESCREEN"), true, out var saves) ? saves : SaveScreen.Extended,
                 CombatBgm = !string.Equals(Environment.GetEnvironmentVariable("ERUMANI_COMBATBGM"), "off", StringComparison.OrdinalIgnoreCase),
+                AutoEndTurn = string.Equals(Environment.GetEnvironmentVariable("ERUMANI_AUTOENDTURN"), "on", StringComparison.OrdinalIgnoreCase),
             };
         foreach (var path in Candidates())
         {

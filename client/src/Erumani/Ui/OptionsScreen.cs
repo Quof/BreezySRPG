@@ -159,6 +159,7 @@ public sealed class OptionsScreen
     {
         Choice(T("Battle animations", "戦闘演出"), () => new[] { T("On", "ON"), T("Player units only", "自軍ユニットのみ"), T("Simple", "簡易演出") },
             () => (int)_s.BattleSceneMode, i => _s.BattleSceneMode = (BattleSceneMode)i),
+        Toggle(T("End the turn when every unit has acted", "全員行動後に自動でターン終了"), () => _s.AutoEndTurn, v => _s.AutoEndTurn = v),
         Toggle(T("Skip enemy turn", "敵ターンスキップ"), () => _s.SkipEnemyTurn, v => _s.SkipEnemyTurn = v),
         Choice(T("Fast-forward key", "早送りキー"), () => new[] { T("Hold", "押している間"), T("Toggle", "切り替え") },
             () => (int)_s.FastForwardMode, i => _s.FastForwardMode = (FastForwardMode)i),
