@@ -16,8 +16,32 @@ public sealed class Ui : IDisposable
     /// <summary>Message / window text: dark on the original's light green windows, light on the restyled dark ones.</summary>
     public static Color TextColor => Skin switch
     {
-        UiSkin.Original => new Color(16, 16, 0), UiSkin.Gilded => new Color(250, 250, 250), _ => new Color(236, 240, 248),
+        UiSkin.Original => MessageInk, UiSkin.Gilded => new Color(250, 250, 250), _ => new Color(236, 240, 248),
     };
+
+    /// <summary>
+    /// The colours the exe reads from the game's SYSTEM.BMP when it starts (FUN_004035e4): 16 swatches on row 288, 16 px
+    /// apart, and the message text's from pixel (48,32) inside the balloon. Most games keep the RTP's (below); some
+    /// change them with the balloon (Kenjyutsu: white text on a navy balloon, yellow and white panel edges).
+    /// </summary>
+    static Color[] _swatches =
+    {
+        new(248, 216, 192), new(0, 0, 48), new(248, 216, 192), new(64, 0, 0), new(248, 248, 224), new(40, 40, 8),
+        new(248, 248, 224), new(0, 32, 0), new(248, 248, 248), new(152, 152, 152), new(248, 248, 248), new(0, 64, 0),
+        new(160, 248, 96), new(0, 32, 0), new(122, 122, 122), new(0, 32, 0),
+    };
+    static Color MessageInk = new(16, 16, 0);
+
+    /// <summary>Swatch <paramref name="i"/> (0–15) of the game's SYSTEM.BMP.</summary>
+    public static Color Swatch(int i) => _swatches[i];
+
+    static void ReadSwatches(IndexedBitmap? sys)
+    {
+        if (sys is null || sys.Width < 256 || sys.Height < 289) return;
+        Color At(int x, int y) { uint c = sys.Palette[sys.Pixels[y * sys.Width + x]]; return new Color((byte)(c >> 16), (byte)(c >> 8), (byte)c); }
+        _swatches = Enumerable.Range(0, 16).Select(i => At(i * 16, 288)).ToArray();
+        MessageInk = At(48, 32);
+    }
 
     /// <summary>The interface's look (options): the original's, or a restyled one with smooth fonts and dark windows.</summary>
     public static UiSkin Skin { get; set; }
@@ -54,6 +78,7 @@ public sealed class Ui : IDisposable
     {
         _device = device;
         _tex = tex;
+        ReadSwatches(tex.Bitmap("SYSTEM.BMP"));
         Text = new GdiText(device);
         SmallText = new GdiText(device, 12, 400, "BREEZY_SMALLFONT");
         NameText = new GdiText(device, 16, 700, "BREEZY_FONT");
@@ -489,19 +514,15 @@ public sealed class Ui : IDisposable
     public enum PanelColor { Blue = 0, Red = 1, Yellow = 2, Green = 3 }
 
     /// <summary>
-    /// Light/dark edge colours per panel colour (FUN_0041203c): the SYSTEM.BMP swatches FUN_004035e4 reads on row 288,
-    /// 16 px apart, (light, dark) pairs in Blue/Red/Yellow/Green order. Blue's light one is (248,216,192) on that row
-    /// (the rows below it are (240,248,248)); recording r1's blue and red panels have edges of the same brightness.
+    /// Light/dark edge colours per panel colour (FUN_0041203c): swatches 2c and 2c + 1, in Blue/Red/Yellow/Green order
+    /// (the RTP's blue light one is (248,216,192) on that row, the rows below it (240,248,248); recording r1's blue and red
+    /// panels have edges of the same brightness). Green's pair is also the etched rules' (FUN_00414344: dark, then light).
     /// </summary>
-    static readonly (Color Light, Color Dark)[] Edges =
-    {
-        (new(248, 216, 192), new(0, 0, 48)), (new(248, 216, 192), new(64, 0, 0)),
-        (new(248, 248, 224), new(40, 40, 8)), (new(248, 248, 224), new(0, 32, 0)),
-    };
+    static (Color Light, Color Dark) Edges(PanelColor c) => (Swatch((int)c * 2), Swatch((int)c * 2 + 1));
 
     public static (Color Light, Color Dark) EdgeColors(PanelColor c) => Skin switch
     {
-        UiSkin.Original => Edges[(int)c],
+        UiSkin.Original => Edges(c),
         UiSkin.Gilded => (Gold * 0.75f, new Color(0, 0, 0) * 0.55f),
         _ => (new Color(255, 255, 255) * 0.22f, new Color(0, 0, 0) * 0.5f),
     };
@@ -523,22 +544,24 @@ public sealed class Ui : IDisposable
                 int w = Math.Min(64, r.Right - x), h = Math.Min(64, r.Bottom - y);
                 sb.Draw(sys, new Vector2(x, y), new Rectangle(tx, 224, w, h), Color.White);
             }
-        var (light, dark) = Edges[(int)color];
+        var (light, dark) = Edges(color);
         Fill(sb, new Rectangle(r.X, r.Y, r.Width, 1), light);
         Fill(sb, new Rectangle(r.X, r.Y, 1, r.Height), light);
         Fill(sb, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), dark);
         Fill(sb, new Rectangle(r.Right - 1, r.Y, 1, r.Height), dark);
     }
 
-    public static readonly Color PanelText = new(248, 248, 248);
+    /// <summary>Text on panels (swatch 8 in the original skin; the restyled skins' white).</summary>
+    public static Color PanelText => Skin == UiSkin.Original ? Swatch(8) : new Color(248, 248, 248);
     /// <summary>A menu entry that can't be picked (FUN_00414344: SYSTEM.BMP swatch 9).</summary>
-    public static readonly Color DisabledText = new(152, 152, 152);
+    public static Color DisabledText => Swatch(9);
 
     /// <summary>
     /// A menu row (FUN_00414344 / FUN_004144f4, colours from SYSTEM.BMP's swatches at y 288): the chosen row's bar —
-    /// light green under (0,32,0) text and white under (0,64,0) text, swapping every 6 game ticks, or grey (122,122,122)
-    /// under (0,32,0) text when it can't be picked; other rows white, or grey when they can't be picked. Draws the bar
-    /// and returns the text colour; the modern skin uses its accent bar.
+    /// swatch 12 under swatch 13 text and swatch 10 under 11 (the RTP's light green under (0,32,0), white under
+    /// (0,64,0)), swapping every 6 game ticks, or 14 under 15 (grey under (0,32,0)) when it can't be picked; other rows
+    /// swatch 8, or 9 when they can't be picked. Draws the bar and returns the text colour; the modern skin uses its
+    /// accent bar.
     /// </summary>
     public Color MenuRow(SpriteBatch sb, Rectangle bar, bool chosen, bool enabled, int frame)
     {
@@ -554,8 +577,8 @@ public sealed class Ui : IDisposable
         }
         if (!chosen) return enabled ? PanelText : DisabledText;
         bool green = frame / 12 % 2 == 0;
-        Fill(sb, bar, !enabled ? new Color(122, 122, 122) : green ? new Color(160, 248, 96) : new Color(248, 248, 248));
-        return !enabled || green ? new Color(0, 32, 0) : new Color(0, 64, 0);
+        Fill(sb, bar, Swatch(!enabled ? 14 : green ? 12 : 10));
+        return Swatch(!enabled ? 15 : green ? 13 : 11);
     }
 
     /// <summary>Stat numbers added on panels (item summaries, terrain): a soft yellow, readable on both skins.</summary>
