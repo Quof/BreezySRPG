@@ -97,6 +97,8 @@ public sealed class BattleController
     int _panelFrames;
     AiPlan? _plan;
     BattleUnit? _statusUnit;
+    /// <summary>The status window's page (modern): 0 the stats and equipment, 1 the abilities; the chosen ability and the list's first row shown.</summary>
+    int _statusPage, _statusSkill, _statusTop;
     /// <summary>The status window's equipment box the status key picked (−1 none).</summary>
     int _statusItem = -1;
 
@@ -150,7 +152,7 @@ public sealed class BattleController
     public bool MenuOpen => _state_ is State.WholeMap or State.ActionMenu or State.TurnMenu or State.SpellList or State.ItemList or State.Files
         or State.EquipList or State.EndTurnConfirm or State.EquipSlots or State.UseConfirm;
     /// <summary>The wheel is the map's own, not the backlog's: a menu's, or the spell forecast's while a spell is aimed (FocusAim).</summary>
-    public bool UsesWheel => MenuOpen || _state_ == State.Aiming;
+    public bool UsesWheel => MenuOpen || _state_ is State.Aiming or State.Status;
     /// <summary>A click would move things on: a battle scene's death message, or COMPLETE!! from its 60th tick.</summary>
     public bool WaitingForClick => _scene?.WaitingForClick == true || _state_ == State.Showing
         || (_telop == CompleteTelop && _telopTick >= 60 && _ending == MapOutcome.None);
@@ -855,11 +857,7 @@ public sealed class BattleController
             case State.Showing: UpdateShowing(input); break;
             case State.TurnMenu: UpdateTurnMenu(input); break;
             case State.EnemyPhase: UpdateEnemyPhase(input); break;
-            case State.Status:
-                // the status key again steps through the equipment's boxes (modern); cancel, a click or confirm closes it all
-                if (input.Info && !input.Cancel) { _statusItem = Ui.StatusWindow.NextShown(_statusUnit!, _statusItem); Sfx.Click(); }
-                else if (input.Confirm || input.Cancel || input.Click || input.RightClick) _state_ = State.Idle;
-                break;
+            case State.Status: UpdateStatus(input); break;
             case State.SpellList: UpdateSpellList(input); break;
             case State.ItemList: UpdateItemList(input); break;
             case State.EquipList: UpdateEquipList(input); break;
@@ -925,11 +923,42 @@ public sealed class BattleController
     /// <see cref="EnemyAi.Hits"/>) — while acted or sleeping units do nothing; a right
     /// click (or the info key) opens the status window; a click on an empty tile opens the turn menu (a right click there too, modern).
     /// </summary>
+    /// <summary>
+    /// The status window (FUN_00412448 shows it, a click or cancel closes it). Modern: ← / →, the wheel or the confirm key
+    /// (not a click) turn to the other page; on the stats page the status key steps through the equipment's boxes, on the
+    /// abilities page it (and ↑ ↓) steps through the abilities, as the pointer resting on one does.
+    /// </summary>
+    void UpdateStatus(BattleInput i)
+    {
+        if (i.Cancel || i.Click || i.RightClick) { _state_ = State.Idle; return; }
+        if (i.Left || i.Right || i.Wheel != 0 || i.Confirm)
+        {
+            _statusPage = 1 - _statusPage;
+            _statusItem = -1;
+            Sfx.Click();
+            return;
+        }
+        if (_statusPage == 0)
+        {
+            if (i.Info) { _statusItem = Ui.StatusWindow.NextShown(_statusUnit!, _statusItem); Sfx.Click(); }
+            return;
+        }
+        int count = Ui.StatusWindow.Skills(_s.Field, _statusUnit!).Count;
+        if (count == 0) return;
+        int was = _statusSkill;
+        if (i.Info || i.Down) _statusSkill = (_statusSkill + 1) % count;
+        if (i.Up) _statusSkill = (_statusSkill + count - 1) % count;
+        if (i.MouseMoved && Ui.StatusWindow.SkillRowAt(Ui.StatusWindow.Default, MouseVirtual) is var row and >= 0 && _statusTop + row < count)
+            _statusSkill = _statusTop + row;
+        if (_statusSkill != was && (i.Info || i.Down || i.Up)) Sfx.Click();
+        _statusTop = Math.Clamp(_statusTop, Math.Max(0, _statusSkill - Ui.StatusWindow.SkillRows + 1), _statusSkill);
+    }
+
     void UpdateIdle(BattleInput i)
     {
         MoveCursor(i);
         var u = _s.Field.UnitAt(_cursor.X, _cursor.Y);
-        if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; _statusItem = -1; _state_ = State.Status; return; }
+        if ((i.RightClick || i.Info) && u is not null) { _statusUnit = u; (_statusItem, _statusPage, _statusSkill, _statusTop) = (-1, 0, 0, 0); _state_ = State.Status; return; }
         // a right click on an empty tile opens the turn menu too (modern; the original does nothing there)
         if (i.RightClick && i.MouseTile is not null) { Sfx.Click(); OpenTurnMenu(); return; }
         if (!Pick(i)) return;
@@ -2285,7 +2314,9 @@ public sealed class BattleController
         if (_state_ is State.SpellList or State.ItemList or State.EquipList or State.EquipSlots) DrawList(sb, frame);
         if (_state_ == State.UseConfirm) _useMenu.Draw(sb, _ui, true, frame);
         if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel);
-        if (_state_ == State.Status && _statusUnit is not null) Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit, shown: _statusItem, mouse: MouseVirtual);
+        if (_state_ == State.Status && _statusUnit is not null)
+            Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit, shown: _statusItem, mouse: MouseVirtual,
+                page: _statusPage, skill: _statusSkill, top: _statusTop, arrows: true, frame: frame);
         if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel); }
         // the caption over everything, the screen frame included (FUN_0041421c draws it at y 192 on the whole screen)
         if (_telop is not null && _tex.Get(_telop) is { } t) sb.Draw(t, new Vector2(TelopX(_telopTick), 192), Color.White);

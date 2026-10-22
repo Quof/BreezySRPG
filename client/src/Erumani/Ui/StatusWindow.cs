@@ -19,16 +19,34 @@ namespace Erumani.Ui;
 /// - the face, 128 × 128, at (124, 92) in a sunken frame (123, 91)–(252, 220).
 /// Modern additions: a piece of equipment's stats in a small box under its name, while the pointer is on the name or
 /// when the status key picked it (<paramref name="shown"/>); the restyled skins draw the class once in a 14-px bold, as
-/// the original's doubled 12 px blurs in a smooth face.
+/// the original's doubled 12 px blurs in a smooth face. On the battle map, pulsing arrows at the sides lead to a second
+/// page (modern): the unit's abilities, each with its TP cost, the chosen one's name and description in a box above.
 /// </summary>
 public static class StatusWindow
 {
     public static readonly Rectangle Default = new(188, 96, 264, 288);
 
+    /// <summary>The abilities page's rows: as many as fit under the header.</summary>
+    public const int SkillRows = 12;
+    const int SkillTop = 88;
+
+    /// <summary>The abilities a unit knows, as the page lists them.</summary>
+    public static List<Magic> Skills(Battlefield field, BattleUnit u) => field.KnownSpells(u).ToList();
+
+    /// <summary>The abilities page's row under <paramref name="p"/> (0 the first row shown), or −1.</summary>
+    public static int SkillRowAt(Rectangle r, Point p)
+    {
+        if (p.X < r.X + 8 || p.X >= r.Right - 8 || p.Y < r.Y + SkillTop) return -1;
+        int row = (p.Y - r.Y - SkillTop) / 16;
+        return row < SkillRows ? row : -1;
+    }
+
     /// <param name="shown">the equipment slot whose box shows (0 weapon, 1 armour, 2 accessory), −1 none</param>
     /// <param name="mouse">the pointer: on an item's name, that item's box shows instead</param>
+    /// <param name="page">0 the stats and equipment, 1 the abilities (with <paramref name="skill"/> chosen, the list from <paramref name="top"/>)</param>
+    /// <param name="arrows">the pulsing arrows to the other page (the battle map's window)</param>
     public static void Draw(SpriteBatch sb, Ui ui, Textures tex, Database db, Battlefield field, BattleUnit u, Rectangle? at = null,
-        int shown = -1, Point? mouse = null)
+        int shown = -1, Point? mouse = null, int page = 0, int skill = 0, int top = 0, bool arrows = false, int frame = 0)
     {
         var r = at ?? Default;
         var colour = u.Side switch { Side.Neutral => Ui.PanelColor.Yellow, Side.Enemy => Ui.PanelColor.Red, _ => Ui.PanelColor.Blue };
@@ -40,20 +58,24 @@ public static class StatusWindow
         void T(string s, int x, int y) => ui.Text12(sb, s, r.X + x, r.Y + y, text);
         void Line(int x, int y, int w, int h, Color c) => ui.Fill(sb, new Rectangle(r.X + x, r.Y + y, w, h), c);
 
+        if (arrows) Arrows(sb, ui, r, frame);
         int face = db.Units[Math.Clamp(u.Unit, 0, db.Units.Length - 1)].Face;
-        if (face > 0 && tex.Get($"FACE_{face:000}.BMP") is { } f) sb.Draw(f, new Vector2(r.X + 124, r.Y + 92), Color.White);
+        if (page == 0 && face > 0 && tex.Get($"FACE_{face:000}.BMP") is { } f) sb.Draw(f, new Vector2(r.X + 124, r.Y + 92), Color.White);
         if (Ui.Gilded)
         {
             // a gilded frame round the face and a divider under the name, in place of the etched lines
-            ui.GildedFrame(sb, new Rectangle(r.X + 120, r.Y + 88, 136, 136));
+            if (page == 0) ui.GildedFrame(sb, new Rectangle(r.X + 120, r.Y + 88, 136, 136));
             ui.GoldRule(sb, r.X + 8, r.Y + 36, 248);
         }
         else
         {
-            Line(123, 91, 130, 1, dark);
-            Line(123, 220, 130, 1, light);
-            Line(123, 91, 1, 130, dark);
-            Line(252, 91, 1, 130, light);
+            if (page == 0)
+            {
+                Line(123, 91, 130, 1, dark);
+                Line(123, 220, 130, 1, light);
+                Line(123, 91, 1, 130, dark);
+                Line(252, 91, 1, 130, light);
+            }
 
             Line(8, 7, 246, 1, light);
             Line(8, 36, 246, 1, dark);
@@ -76,6 +98,8 @@ public static class StatusWindow
         T($"  {u.Hp,2}／{u.MaxHp,2}", 60, 64);
         T(Word(3), 144, 64);
         T($"  {u.Mp,2}／{u.MaxMp,2}", 192, 64);
+
+        if (page == 1) { SkillsPage(sb, ui, field, u, r, skill, top, text, colour); return; }
 
         int[] vals = { st.Attack, st.Speed, st.Defense, st.MagicDefense, st.Str, st.Mag, st.Skl, st.Sta };
         int[] rows = { 88, 104, 120, 136, 160, 176, 192, 208 };
@@ -106,6 +130,50 @@ public static class StatusWindow
         else if (Ui.Gilded) ui.Fill(sb, box, new Color(8, 10, 18));
         ui.Panel(sb, box, colour);
         for (int k = 0; k < lines.Count; k++) ui.Text12(sb, lines[k], box.X + 12, box.Y + 8 + 16 * k, text);
+    }
+
+    /// <summary>
+    /// The abilities page: each ability's name (??? when it has none) and TP cost, a row each, the chosen one marked; its
+    /// name and description (??? when there is none) in a box just above the window.
+    /// </summary>
+    static void SkillsPage(SpriteBatch sb, Ui ui, Battlefield field, BattleUnit u, Rectangle r, int skill, int top, Color text, Ui.PanelColor colour)
+    {
+        var skills = Skills(field, u);
+        static string Named(string s) => string.IsNullOrWhiteSpace(s) ? "???" : s.Trim();
+        if (skills.Count == 0) { ui.Text12(sb, Lang.T("No abilities", "技なし"), r.X + 12, r.Y + SkillTop, text); return; }
+        for (int row = 0; row < SkillRows && top + row < skills.Count; row++)
+        {
+            int i = top + row, y = r.Y + SkillTop + 16 * row;
+            if (i == skill) ui.Fill(sb, new Rectangle(r.X + 8, y - 1, r.Width - 16, 16), text * 0.25f);
+            ui.Text12(sb, Named(skills[i].Name), r.X + 12, y, text);
+            ui.Text12(sb, $"{Lang.T("TP", "ＴＰ")} {skills[i].MpCost,2}", r.X + 196, y, text);
+        }
+        // more above or below: a small mark at the list's edge
+        if (top > 0) ui.Text12(sb, "▲", r.Right - 24, r.Y + SkillTop - 14, text);
+        if (top + SkillRows < skills.Count) ui.Text12(sb, "▼", r.Right - 24, r.Y + SkillTop + 16 * SkillRows - 2, text);
+
+        if (skill < 0 || skill >= skills.Count) return;
+        var m = skills[skill];
+        string[] lines = { Named(m.Name) + "：", Named(m.Desc) };
+        int w = Math.Max(r.Width, lines.Max(ui.Measure12) + 24), h = 16 * lines.Length + 16;
+        var box = new Rectangle(Math.Clamp(r.X, 4, 636 - w), Math.Max(4, r.Y - h - 4), w, h);
+        if (Ui.Modern) ui.ModernBox(sb, box, new Color(8, 10, 18), 8, 1f, shadow: false);
+        else if (Ui.Gilded) ui.Fill(sb, box, new Color(8, 10, 18));
+        ui.Panel(sb, box, colour);
+        for (int k = 0; k < lines.Length; k++) ui.Text12(sb, lines[k], box.X + 12, box.Y + 8 + 16 * k, text);
+    }
+
+    /// <summary>Arrows at the window's sides, just outside it, that grow and shrink a pixel every few ticks: another page.</summary>
+    static void Arrows(SpriteBatch sb, Ui ui, Rectangle r, int frame)
+    {
+        int size = 5 + new[] { 0, 1, 2, 1 }[frame / 8 % 4];
+        int cy = r.Y + r.Height / 2;
+        var c = new Color(236, 228, 120);
+        for (int i = 0; i < size; i++)
+        {
+            ui.Fill(sb, new Rectangle(r.X - 3 - size + i, cy - i, 1, 2 * i + 1), c);
+            ui.Fill(sb, new Rectangle(r.Right + 2 + size - i, cy - i, 1, 2 * i + 1), c);
+        }
     }
 
     /// <summary>The status key again: the next piece of equipment the unit holds (weapon, armour, accessory), then none.</summary>

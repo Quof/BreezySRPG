@@ -473,6 +473,10 @@ public sealed class ErumaniGame : Game
         _activeFrames = IsActive || keyFuzz ? _activeFrames + 1 : 0;
         _pointerInside = keyFuzz || Window.ClientBounds is var cb && m.X >= 0 && m.Y >= 0 && m.X < cb.Width && m.Y < cb.Height;
         bool mouseHere = _activeFrames > 6 && _pointerInside;
+        // the "mouse input" option off (modern): the mouse does nothing at all — no clicks, no wheel, no pointer, nothing
+        // shown for what it rests on — and the keyboard alone plays (F1 still opens the options to turn it back on)
+        bool mouseOff = !_settings.MouseInput && _opts.Screenshot is null;
+        if (mouseOff) (mouseHere, _pointerInside, _mouseVirtual) = (false, false, new Point(-10000, -10000));
         // a press counts once the button has been seen up for 2 frames (about 30 ms) since the last one: a worn switch's
         // chatter (its contact opening for a few ms) isn't a second click — the original reads its click flag once a tick,
         // which merges such presses too
@@ -481,7 +485,7 @@ public sealed class ErumaniGame : Game
         bool rclick = mouseHere && rightDown && _rightUpFrames >= 2;
         _leftUpFrames = leftDown ? 0 : Math.Min(_leftUpFrames + 1, 1000);
         _rightUpFrames = rightDown ? 0 : Math.Min(_rightUpFrames + 1, 1000);
-        int wheel = (IsActive && _opts.Screenshot is null) || keyFuzz ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
+        int wheel = !mouseOff && ((IsActive && _opts.Screenshot is null) || keyFuzz) ? (m.ScrollWheelValue - _prevMouse.ScrollWheelValue) / 120 : 0;
         bool mouseMoved = mouseHere && m.Position != _prevMouse.Position;   // a pointer passing over the window in the background chooses nothing
         if (_warpedTo is { } warped) { if (m.Position == warped) mouseMoved = false; _warpedTo = null; }
 
@@ -1633,7 +1637,7 @@ public sealed class ErumaniGame : Game
     /// </summary>
     void WarpMouse(Point v)
     {
-        if (_opts.Screenshot is not null || !IsActive || _dest.Width == 0) return;
+        if (_opts.Screenshot is not null || !IsActive || _dest.Width == 0 || !_settings.MouseInput) return;
         var m = Mouse.GetState();
         var cb = Window.ClientBounds;
         if (m.X < 0 || m.Y < 0 || m.X >= cb.Width || m.Y >= cb.Height) return;
