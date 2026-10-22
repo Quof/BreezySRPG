@@ -50,10 +50,29 @@ public sealed class OptionsScreen
 
     public bool Done { get; private set; }
 
-    public OptionsScreen(Settings settings, Ui ui, string gameRoot, Action apply)
+    /// <summary>In a game (not on the title): タイトルへ戻る and ゲーム終了 on the main page, each asking first.</summary>
+    readonly Action? _toTitle, _quit;
+    readonly string[] _yesNo;
+    /// <summary>The はい / いいえ question up, and what はい does.</summary>
+    Camp.MenuList? _confirm;
+    Action? _onYes;
+
+    public OptionsScreen(Settings settings, Ui ui, string gameRoot, Action apply, Action? toTitle = null, Action? quit = null, string[]? yesNo = null)
     {
-        (_s, _ui, _gameRoot, _apply) = (settings, ui, gameRoot, apply);
+        (_s, _ui, _gameRoot, _apply, _toTitle, _quit) = (settings, ui, gameRoot, apply, toTitle, quit);
+        _yesNo = yesNo ?? new[] { "Yes", "No" };
         Open(Page.Main);
+    }
+
+    /// <summary>A はい / いいえ question in the screen's middle; はい does <paramref name="then"/> and closes the options.</summary>
+    void Ask(string question, Action then)
+    {
+        int w = Math.Max(150, _ui.Measure12(question) + 36);
+        _confirm = new Camp.MenuList { Rect = new Rectangle(320 - w / 2, 196, w, 80), Header = new[] { question, "-" }, ItemX = w / 2 - 18, ItemWidth = 36 };
+        _confirm.Set(_yesNo);
+        _confirm.Index = 1;   // いいえ first: a stray confirm doesn't leave the game
+        _onYes = then;
+        Sfx.Click();
     }
 
     void Open(Page page, int index = 0)
@@ -72,10 +91,18 @@ public sealed class OptionsScreen
                 new(T("Audio", "サウンド"), () => "", Activate: () => Open(Page.Audio)),
                 new(T("Gameplay", "ゲーム"), () => "", Activate: () => Open(Page.Gameplay)),
                 new(T("Controls", "操作"), () => "", Activate: () => Open(Page.Controls)),
-                new("", () => ""),
-                new(T("Back", "戻る"), () => "", Activate: () => Done = true),
             },
         };
+        if (page == Page.Main)
+        {
+            if (_toTitle is { } title)
+                _rows.Add(new(T("Return to title", "タイトルへ戻る"), () => "",
+                    Activate: () => Ask(T("Return to the title screen?", "タイトルへ戻りますか？"), title)));
+            if (_quit is { } quit)
+                _rows.Add(new(T("Close the game", "ゲーム終了"), () => "",
+                    Activate: () => Ask(T("Close the game?", "ゲームを終了しますか？"), quit)));
+            _rows.Add(new(T("Back", "戻る"), () => "", Activate: () => Done = true));
+        }
         if (page != Page.Main) _rows.AddRange(new[] { new Row("", () => ""), new Row(T("Back", "戻る"), () => "", Activate: () => Open(Page.Main)) });
         _list.Index = page == Page.Main && index == 0 ? _mainIndex : index;
         Refresh();
@@ -257,6 +284,15 @@ public sealed class OptionsScreen
     /// <param name="held">the left button is down (a bar's drag goes on)</param>
     public void Update(BattleInput i, Point mouse, Controls controls, bool held = false)
     {
+        if (_confirm is { } q)
+        {
+            if (i.Cancel || i.RightClick) { _confirm = null; Sfx.Cancel(); return; }
+            int answer = q.Navigate(i, mouse);
+            if (answer < 0) return;
+            _confirm = null;
+            if (answer == 0) { Done = true; _onYes?.Invoke(); }
+            return;
+        }
         // a volume bar under drag: the level follows the pointer and is heard at once; saved when let go
         if (_dragRow >= 0)
         {
@@ -352,6 +388,12 @@ public sealed class OptionsScreen
             if (Ui.Modern) _ui.ModernBox(sb, drop.Rect, new Color(8, 10, 18), 10, 1f, shadow: false);
             else _ui.Fill(sb, drop.Rect, new Color(8, 10, 18));
             drop.Draw(sb, _ui, true, frame);
+        }
+        if (_confirm is { } q)
+        {
+            if (Ui.Modern) _ui.ModernBox(sb, q.Rect, new Color(8, 10, 18), 10, 1f, shadow: false);
+            else _ui.Fill(sb, q.Rect, new Color(8, 10, 18));
+            q.Draw(sb, _ui, true, frame);
         }
     }
 }

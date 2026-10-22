@@ -199,6 +199,8 @@ public sealed class ErumaniGame : Game
         _runner = null;
         _battle = null;
         _pendingMap = _pendingCamp = null;
+        _eventMenu = null;
+        _skipPrompt = null;   // back from the options' タイトルへ戻る in the middle of an event too
         _gameOver = -1;
         _audio.PlayBgm("");
         _backlog.Clear();
@@ -386,7 +388,11 @@ public sealed class ErumaniGame : Game
 
     // ---------------- settings ----------------
 
-    void OpenOptions() => _options = new Ui.OptionsScreen(_settings, _ui, _folder.Root, ApplySettings);
+    /// <summary>The options; in a game (not on the title) with タイトルへ戻る and ゲーム終了, each fading out first as the title's choices do.</summary>
+    void OpenOptions() => _options = _title is not null
+        ? new Ui.OptionsScreen(_settings, _ui, _folder.Root, ApplySettings, yesNo: Ui.Lang.YesNo(_db))
+        : new Ui.OptionsScreen(_settings, _ui, _folder.Root, ApplySettings,
+            toTitle: () => AfterFade(10, OpenTitle), quit: () => AfterFade(10, Exit), yesNo: Ui.Lang.YesNo(_db));
 
     void ApplySettings()
     {

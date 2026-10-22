@@ -121,7 +121,7 @@ Default keys (SRPG Studio style); all can be rebound under Options → Controls.
 
 ## Options (modern features)
 
-F1 opens them anywhere; the title screen, the camp menu and a map's turn menu list them as 環境設定 (Options; above ゲーム終了 on the title and in the camp, last on the turn menu, which has no ゲーム終了: the window's close button quits); during an event (a cutscene), a right click's menu has them too (see [Saving in the middle of an event](#saving-in-the-middle-of-an-event)), and the event carries on where it was once they're closed. A setting with several values steps through them with ← / → and opens a drop-down list of them on a click or Enter.
+F1 opens them anywhere; the title screen, the camp menu and a map's turn menu list them as 環境設定 (Options; above ゲーム終了 on the title and in the camp, last on the turn menu, which has no ゲーム終了: the window's close button quits); during an event (a cutscene), a right click's menu has them too (see [Saving in the middle of an event](#saving-in-the-middle-of-an-event)), and the event carries on where it was once they're closed. A setting with several values steps through them with ← / → and opens a drop-down list of them on a click or Enter. Opened in a game (not from the title), the main page also has タイトルへ戻る (Return to title) and ゲーム終了 (Close the game) above 戻る, each asking はい / いいえ first (いいえ chosen).
 
 | Section | Settings |
 |---|---|
