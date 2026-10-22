@@ -37,6 +37,8 @@ public sealed class BattleController
     BattleUnit? _sel;
     (int X, int Y) _selFrom;
     Dictionary<(int X, int Y), (int Cost, (int X, int Y) From)>? _reach;
+    /// <summary>The selected unit's movement as shown: <see cref="_reach"/> and the tiles of the units it could walk through.</summary>
+    HashSet<(int X, int Y)>? _reachShown;
     /// <summary>A clicked enemy's attack range around its movement (modern): what it could hit from where it can stop, past <see cref="_reach"/>.</summary>
     List<(int X, int Y)>? _reachHits;
     List<BattleUnit> _targets = new();
@@ -981,12 +983,12 @@ public sealed class BattleController
         _selFrom = (u.X, u.Y);
         _reach = _s.Field.Reachable(u);
         _viewOnly = u.Side != Side.Ally;
-        // its attack range around its movement (modern), any side's unit: its weapon's reach and its harmful spells' areas
-        // from every tile it can stop on — not on its own side's units (enemies against everyone else), which it never
-        // attacks: their tiles stay clear, as other units' do in a movement range
-        bool enemy = u.Side == Side.Enemy;
-        _reachHits = EnemyAi.Hits(_s.Field, u, _reach.Keys)
-            .Where(t => !_reach.ContainsKey(t) && !(_s.Field.UnitAt(t.X, t.Y) is { } o && (o.Side == Side.Enemy) == enemy)).ToList();
+        // shown as if its friends weren't there (modern): the blue takes in the tiles of units it could walk through
+        // within its movement (the other side's still block its way, so what lies past them stays out), and around it the
+        // red is what it could hit from where it can stop — its weapon's reach and its harmful spells' areas — whoever
+        // stands there
+        _reachShown = _s.Field.Flood(u, _s.Field.Stats(u).Movement).Keys.ToHashSet();
+        _reachHits = EnemyAi.Hits(_s.Field, u, _reach.Keys).Where(t => !_reachShown.Contains(t)).ToList();
         _state_ = State.Selected;
     }
 
@@ -2198,7 +2200,7 @@ public sealed class BattleController
         switch (_state_)
         {
             case State.Selected when _reach is not null:
-                _s.DrawRange(sb, viewport, _reach.Keys, 0, frame);
+                _s.DrawRange(sb, viewport, _reachShown ?? _reach.Keys.ToHashSet(), 0, frame);
                 if (_reachHits is not null) _s.DrawRange(sb, viewport, _reachHits, 1, frame);
                 break;
             case State.Targeting when _sel is not null:
