@@ -93,7 +93,7 @@ Music plays through **GeneralUser GS** (v2.0.3, by S. Christian Collins, [schris
 dotnet publish client/src/BreezySRPG95 -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o client/publish
 ```
 
-The icon is 昴の騎士's face graphic FACE_003 (its author released the face graphics for reuse), made into `src/BreezySRPG95/Icon.ico` by `client/tools/make_icon.py`.
+The icon is 昴の騎士's face graphic FACE_003, made into `src/BreezySRPG95/Icon.ico` by `client/tools/make_icon.py`.
 
 The project, its folder (`src/BreezySRPG95`) and its namespace are all called BreezySRPG95 (it was EasySRPG95 before, and Erumani while it played only えるまに); settings and save notes from the earlier names carry over.
 

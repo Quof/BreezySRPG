@@ -47,7 +47,7 @@
     <Error Condition="'$(_SoundFontHash)' != '$(SoundFontSha256)'" Text="GeneralUser-GS.sf2 download didn't match the expected SHA-256." />
   </Target>
 
-  <!-- The icon: 昴の騎士's FACE_003 (its author released the face graphics for reuse) on a gold-rimmed tile, made by
+  <!-- The icon: 昴の騎士's FACE_003 on a gold-rimmed tile, made by
        client/tools/make_icon.py -->
   <ItemGroup>
     <EmbeddedResource Include="Icon.ico" LogicalName="Icon.ico" />
