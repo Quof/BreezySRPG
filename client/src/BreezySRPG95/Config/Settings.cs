@@ -115,7 +115,7 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent)   // scripted runs: BREEZY_SKIN=original|modern|gilded (or the older BREEZY_MODERN=1), BREEZY_UIFONT, BREEZY_LANGUAGE, BREEZY_SAVESCREEN, BREEZY_COMBATBGM=off, BREEZY_AUTOENDTURN=on, BREEZY_WEAKNESS=on|colorblind, BREEZY_BATTLESCENES=on|playerunits|simple, BREEZY_FFSKIPSCENES=on, BREEZY_UNITSPEED=1|2|4
+        if (!persistent)   // scripted runs: BREEZY_SKIN=original|modern|gilded (or the older BREEZY_MODERN=1), BREEZY_UIFONT, BREEZY_LANGUAGE, BREEZY_SAVESCREEN, BREEZY_COMBATBGM=off, BREEZY_AUTOENDTURN=on, BREEZY_WEAKNESS=on|colorblind, BREEZY_BATTLESCENES=on|playerunits|simple, BREEZY_FFSKIPSCENES=on, BREEZY_UNITSPEED=1|2|4, BREEZY_SKIPENEMY=on
             return new Settings
             {
                 Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("BREEZY_SKIN"), true, out var skin) ? skin
@@ -129,6 +129,7 @@ public sealed class Settings
                 BattleSceneMode = Enum.TryParse<BattleSceneMode>(Environment.GetEnvironmentVariable("BREEZY_BATTLESCENES"), true, out var scenes) ? scenes : BattleSceneMode.On,
                 FastForwardSkipsScenes = string.Equals(Environment.GetEnvironmentVariable("BREEZY_FFSKIPSCENES"), "on", StringComparison.OrdinalIgnoreCase),
                 UnitSpeed = int.TryParse(Environment.GetEnvironmentVariable("BREEZY_UNITSPEED"), out var walk) ? walk : 2,
+                SkipEnemyTurn = string.Equals(Environment.GetEnvironmentVariable("BREEZY_SKIPENEMY"), "on", StringComparison.OrdinalIgnoreCase),
             };
         foreach (var path in Candidates())
         {
