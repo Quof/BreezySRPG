@@ -2273,10 +2273,11 @@ public sealed class BattleController
         var (stops, _, tiles) = Threat();
         var fill = new Color(208, 24, 32) * 0.36f;
         var edge = new Color(255, 84, 84) * 0.95f;
-        // the movement range's own shades, SYSTEM.BMP's range block 0 (the same in every game here and the RTP): the
+        // the movement range's own shades, the game's SYSTEM.BMP range block 0 (cyan in most games, green in some): the
         // darker one fills, the lighter one draws the line
-        var moveFill = new Color(128, 176, 176) * 0.6f;
-        var moveEdge = new Color(176, 216, 248) * 0.95f;
+        var (dark, light) = _s.RangeShades(0);
+        var moveFill = dark * 0.6f;
+        var moveEdge = light * 0.95f;
         const int T = MapSession.Tile;
         foreach (var (x, y) in tiles)
         {

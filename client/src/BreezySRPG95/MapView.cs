@@ -540,22 +540,60 @@ public sealed class MapSession : IMapContext
 
     /// <summary>
     /// A range overlay (FUN_004132a8) from SYSTEM.BMP's 64 × 64 range blocks at y 64 (copied into a sheet by FUN_00411d74):
-    /// 0 cyan, 1 salmon, 2 orange, 3 blue. A tile shows the 32 × 32 window at the phase (tick / 2) × 2 px down and right,
-    /// wrapping at 64 (the blocks repeat every 32 px, and every 16 diagonally), so the checker drifts up-left; in stripes
+    /// 0 cyan, 1 salmon, 2 orange, 3 blue. Each block covers 2 × 2 map tiles: a tile shows the 32 × 32 window at its
+    /// quarter of the block (odd columns and rows the right and lower half) plus the phase (tick / 2) × 2 px down and
+    /// right, wrapping at 64, so the pattern drifts up-left. A plain checker (えるまに) repeats every 32 px and looks the same
+    /// on every tile; a block with a picture in it (Kenjyutsu's 移動 / 射程 / 攻撃 / 同盟) reads across the tiles. In stripes
     /// only the tile's odd pixel rows are drawn (FUN_00406c38), the map showing between them, and "solid" uses every row
-    /// (FUN_00406ad8). The blocks hold no transparent pixels.
+    /// (FUN_00406ad8); both leave out palette index 0.
     /// </summary>
     public void DrawRange(SpriteBatch sb, Rectangle viewport, IEnumerable<(int X, int Y)> tiles, int colour, int frame, bool solid = false)
     {
-        var sys = _tex.Get("SYSTEM.BMP", transparent: false);
+        var sys = _tex.Get("SYSTEM.BMP");
         if (sys is null) return;
-        int phase = frame / 4 * 2 % 16;   // the colour block is two identical 32-px tiles wide, so x + phase never runs off it
+        const int Block = 2 * Tile;
+        int phase = frame / 4 * 2 % Block;
         foreach (var (x, y) in tiles)
         {
             var p = ScreenPos(x, y, viewport);
+            int sx = (phase + (x & 1) * Tile) % Block, sy = (phase + (y & 1) * Tile) % Block;
+            int left = Math.Min(Tile, Block - sx);   // the window runs off the block's right edge and wraps to its left
             for (int row = solid ? 0 : 1; row < Tile; row += solid ? 1 : 2)
-                sb.Draw(sys, p + new Vector2(0, row), new Rectangle(colour * 64 + phase, 64 + (row + phase) % Tile, Tile, 1), Color.White);
+            {
+                int srcY = 64 + (sy + row) % Block;
+                sb.Draw(sys, p + new Vector2(0, row), new Rectangle(colour * Block + sx, srcY, left, 1), Color.White);
+                if (left < Tile)
+                    sb.Draw(sys, p + new Vector2(left, row), new Rectangle(colour * Block, srcY, Tile - left, 1), Color.White);
+            }
         }
+    }
+
+    readonly Dictionary<int, (Color Dark, Color Light)> _rangeShades = new();
+
+    /// <summary>
+    /// The two colours a range block is mostly made of, the darker first (えるまに's cyan checker: (128,176,176) and
+    /// (176,216,248); Kenjyutsu's green 移動: (72,200,48) and (120,232,80)), for overlays drawn in the game's own shades.
+    /// </summary>
+    public (Color Dark, Color Light) RangeShades(int colour)
+    {
+        if (_rangeShades.TryGetValue(colour, out var shades)) return shades;
+        var counts = new Dictionary<byte, int>();
+        var bmp = _tex.Bitmap("SYSTEM.BMP");
+        if (bmp is not null && bmp.Width >= (colour + 1) * 2 * Tile && bmp.Height >= 64 + 2 * Tile)
+            for (int y = 64; y < 64 + 2 * Tile; y++)
+                for (int x = colour * 2 * Tile; x < (colour + 1) * 2 * Tile; x++)
+                    if (bmp.Pixels[y * bmp.Width + x] is var i and not 0)
+                        counts[i] = counts.GetValueOrDefault(i) + 1;
+        var top = counts.OrderByDescending(c => c.Value).Take(2)
+            .Select(c => new Color((byte)(bmp!.Palette[c.Key] >> 16), (byte)(bmp.Palette[c.Key] >> 8), (byte)bmp.Palette[c.Key]))
+            .OrderBy(c => c.R * 299 + c.G * 587 + c.B * 114).ToList();
+        shades = top.Count switch
+        {
+            0 => (new Color(128, 176, 176), new Color(176, 216, 248)),   // no block: the RTP's cyan
+            1 => (top[0], top[0]),
+            _ => (top[0], top[1]),
+        };
+        return _rangeShades[colour] = shades;
     }
 
     /// <summary>A sheet's frame cycle (DAT_0043328c, DAT_004332a4): the column of each of 6 phases.</summary>

@@ -25,6 +25,9 @@ public sealed class Textures(GraphicsDevice device, GameFolder game) : IDisposab
         return t;
     }
 
+    /// <summary>A bitmap's palette indices and colours, as the game has it (null if it isn't there).</summary>
+    public IndexedBitmap? Bitmap(string fileName) => game.Bitmap(fileName);
+
     readonly Dictionary<string, Texture2D?> _silhouettes = new();
 
     /// <summary>The sprite sheet with every opaque pixel white (the battle scene's hit flash, FUN_00419574).</summary>
