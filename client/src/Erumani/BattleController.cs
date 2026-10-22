@@ -1766,7 +1766,8 @@ public sealed class BattleController
     /// <summary>
     /// Terrain window (modern addition, Fire Emblem style) in the map's bottom-right corner for the tile under the
     /// cursor: its name, 地形効果 (hit chance taken off attacks on a unit there), the damage it takes off (effect/10)
-    /// and the HP recovered each turn. Moves to the bottom-left while the cursor is in that corner.
+    /// and the HP recovered each turn, and the move cost of entering it (the selected unit's, else each move type's).
+    /// Moves to the bottom-left while the cursor is in that corner.
     /// </summary>
     void DrawTerrainInfo(SpriteBatch sb)
     {
@@ -1776,6 +1777,14 @@ public sealed class BattleController
         var lines = new List<(string Label, string Value)> { (Word(75), $"{Signed(ter.DefenseBonus)}%") };
         if (ter.DefenseBonus / 10 != 0) lines.Add(("被ダメージ", Signed(-(ter.DefenseBonus / 10))));
         if (ter.HpRecovery != 0) lines.Add(("HP回復", $"{ter.HpRecovery}"));
+        // the move cost of entering the tile: the selected unit's (its class's own cost for the terrain, if it has one),
+        // else each move type's — walking, flying, special; × where it can't go
+        string Cost(int c) => c <= 0 ? "×" : $"{c}";
+        if (_sel is { } mover && _state_ is State.Selected)
+            lines.Add((Ui.Lang.T("Move cost", "移動コスト"), Cost(_s.Field.MoveCost(mover, _cursor.X, _cursor.Y))));
+        else if (ter.MoveCost.Length >= 3)
+            lines.Add((Ui.Lang.T("Move", "移動"), Ui.Lang.T($"W{Cost(ter.MoveCost[0])} F{Cost(ter.MoveCost[1])} S{Cost(ter.MoveCost[2])}",
+                $"歩{Cost(ter.MoveCost[0])} 飛{Cost(ter.MoveCost[1])} 特{Cost(ter.MoveCost[2])}")));
         const int w = 136;
         int h = 30 + lines.Count * 16 + 4;
         var p = _s.ScreenPos(_cursor.X, _cursor.Y, ViewportRect);
