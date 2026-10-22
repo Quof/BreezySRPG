@@ -9,7 +9,7 @@ namespace BreezySRPG95.Runtime;
 /// <summary>
 /// What BreezySRPG95 keeps about a save beyond SAVEn.DAT, none of which SRPG Maker 95 has: the play time, a picture of
 /// the screen when it was saved, and for a save made in the middle of an event the rest of that event (<see
-/// cref="SceneSave"/>). They live in an "BreezySRPG95" folder beside the saves — SAVEn.png and saves.json — so the save
+/// cref="SceneSave"/>). They live in a "BreezySRPG95" folder beside the saves — SAVEn.png and saves.json — so the save
 /// files stay exactly the original's. A note counts only while its save file is the one it was written with (the
 /// file's hash): a slot the original game saved over since shows none.
 /// </summary>

@@ -11,6 +11,8 @@
 /ＯtoＺ/
 /ＯtoＺscan/
 /*.zip
+# release notes written for GitHub's release page
+/release-notes-*.md
 /*.rar
 
 # Generated parser output (rebuild with re/srpg95_data.py)
