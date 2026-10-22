@@ -399,6 +399,7 @@ public sealed class ErumaniGame : Game
         _audio.MusicVolume = _settings.MusicVolume / 100f;
         _audio.SoundVolume = _settings.SoundVolume / 100f;
         _audio.MessageSound = _settings.ConfirmSound != ConfirmSound.Off;
+        _audio.LoopAtMarkers = _settings.LoopMarkers;
         _audio.AdvanceSound = _settings.ConfirmSound == ConfirmSound.On;
         _audio.SetSoundFont(_settings.Music == MusicEngine.SoundFont ? _settings.ResolveSoundFont(_folder.Root) : null);
         ApplyGameplay();

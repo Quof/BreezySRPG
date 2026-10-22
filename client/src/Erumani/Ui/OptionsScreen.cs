@@ -180,6 +180,7 @@ public sealed class OptionsScreen
             Choice(T("SoundFont", "サウンドフォント"), () => fonts.Select(FontName).ToArray(),
                 () => Math.Max(0, fonts.IndexOf(_s.ResolveSoundFont(_gameRoot))),
                 i => _s.SoundFont = fonts[i] == Settings.BuiltIn ? null : Path.GetFileName(fonts[i])),
+            Toggle(T("Loop at loop markers (SoundFont)", "ループ位置で繰り返す（サウンドフォント）"), () => _s.LoopMarkers, v => _s.LoopMarkers = v),
             Toggle(T("Combat BGM", "戦闘BGM"), () => _s.CombatBgm, v => _s.CombatBgm = v),
             Choice(T("Confirm sound (thunk)", "決定音"), () => new[] { T("On", "ON"), T("Gameplay only", "メッセージ送り以外"), T("Off", "OFF") },
                 () => (int)_s.ConfirmSound, i => _s.ConfirmSound = (ConfirmSound)i),

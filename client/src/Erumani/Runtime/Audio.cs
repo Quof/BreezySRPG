@@ -146,7 +146,11 @@ public sealed class Audio(GameFolder game) : IDisposable
         {
             try
             {
-                _sequencer.Play(midiBytes is not null ? new MidiFile(new MemoryStream(midiBytes)) : new MidiFile(path), loop: true);
+                // with the loop marker option, a track that has an RPG Maker loop marker (controller 111) repeats from
+                // there, as RPG Maker 2000/2003 plays it; otherwise (and as the original does) from its start
+                var bytes = midiBytes ?? File.ReadAllBytes(path);
+                var loopType = LoopAtMarkers && MidiTrim.LoopStart(bytes) is not null ? MidiFileLoopType.RpgMaker : MidiFileLoopType.None;
+                _sequencer.Play(new MidiFile(new MemoryStream(bytes), loopType), loop: true);
                 _stream = new DynamicSoundEffectInstance(Rate, AudioChannels.Stereo) { Volume = Math.Clamp(_musicVolume, 0, 1) };
                 FeedSynth();
                 _stream.Play();
@@ -277,6 +281,9 @@ public sealed class Audio(GameFolder game) : IDisposable
         if (Muted || file.Length == 0) return;
         Sound(file)?.Play(Math.Clamp(SoundVolume, 0, 1), 0, 0);
     }
+
+    /// <summary>Option (modern): MIDI tracks with an RPG Maker loop marker repeat from it (the SoundFont synthesizer only).</summary>
+    public bool LoopAtMarkers { get; set; }
 
     public void Click() { if (MessageSound) { PlaySe("CLICK.WAV"); _clickAt = Environment.TickCount64; } }
 

@@ -58,6 +58,7 @@ public sealed class Settings
     public int SoundVolume { get; set; } = 80;
     public MusicEngine Music { get; set; } = MusicEngine.SoundFont;
     public string? SoundFont { get; set; }                // null = the built-in GeneralUser GS; else a file name in soundfonts/ or a full path
+    public bool LoopMarkers { get; set; }                 // MIDI tracks repeat from their RPG Maker loop marker (SoundFont only)
     public ConfirmSound ConfirmSound { get; set; }        // the CLICK.WAV "thunk" on confirms and text advances
     /// <summary>The on/off confirm sound earlier versions saved (off = <see cref="ConfirmSound.Off"/>); read, never written.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? MessageSound { get; set; }

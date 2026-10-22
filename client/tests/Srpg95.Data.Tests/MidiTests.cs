@@ -95,4 +95,23 @@ public class MidiTests
         }
         if (checkedFiles > 0) Assert.True(checkedFiles > 50);
     }
+
+    [Fact]
+    public void An_RPG_Maker_loop_marker_is_found_before_the_last_note_only()
+    {
+        var mids = GameMidis().ToList();
+        // ＯtoＺ's 2003繰り返される戦い.mid loops from 13.9 s (controller 111); trimmed, as much earlier as its lead-in was
+        if (mids.FirstOrDefault(f => f.EndsWith("2003繰り返される戦い.mid") && f.Contains("ＯtoＺ")) is { } battle)
+        {
+            var bytes = File.ReadAllBytes(battle);
+            var lead = MidiTrim.Silence(bytes)!.Value.Lead;
+            Assert.Equal(13.9, MidiTrim.LoopStart(bytes)!.Value, 1);
+            Assert.Equal(13.9 - lead, MidiTrim.LoopStart(MidiTrim.Trim(bytes))!.Value, 1);
+            // MeltySynth reads it for its RPG Maker loop
+            Assert.True(new MidiFile(new MemoryStream(MidiTrim.Trim(bytes)), MidiFileLoopType.RpgMaker).Length > TimeSpan.Zero);
+        }
+        // えるまに's ミッションクリアー.MID has its marker at its very end: a fanfare that loops nothing
+        if (mids.FirstOrDefault(f => Path.GetFileName(f) == "ミッションクリアー.MID") is { } fanfare)
+            Assert.Null(MidiTrim.LoopStart(File.ReadAllBytes(fanfare)));
+    }
 }

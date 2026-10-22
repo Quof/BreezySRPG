@@ -28,6 +28,24 @@ public static class MidiTrim
         catch (Exception) { return null; }
     }
 
+    /// <summary>
+    /// The RPG Maker loop marker (the first controller 111) in seconds from the start, when there's one before the last
+    /// note: a marker at or after it (some fanfares end on one) loops nothing and doesn't count. Null for none.
+    /// </summary>
+    public static double? LoopStart(byte[] smf)
+    {
+        try
+        {
+            if (Read(smf) is not { } r) return null;
+            long? mark = r.Tracks.SelectMany(t => t).Where(e => !e.Meta && e.Bytes.Length > 2 && (e.Bytes[0] & 0xF0) == 0xB0 && e.Bytes[1] == 111)
+                .Select(e => (long?)e.Tick).Min();
+            long lastOn = r.Tracks.SelectMany(t => t).Where(e => !e.Meta && e.Bytes.Length > 2 && (e.Bytes[0] & 0xF0) == 0x90 && e.Bytes[2] > 0)
+                .Select(e => e.Tick).DefaultIfEmpty(0).Max();
+            return mark is { } m && m < lastOn ? r.Seconds(m) : null;
+        }
+        catch (Exception) { return null; }
+    }
+
     sealed record Parsed(int HeaderLen, List<List<Event>> Tracks, long FirstOn, long LastSound, long Last, int Notes,
         Func<long, double> Seconds, Func<double, long> TickAt);
 
