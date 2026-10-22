@@ -76,6 +76,7 @@ public sealed class Settings
     public bool MouseInput { get; set; } = true;          // off: the mouse does nothing (keyboard only)
     public bool EdgeScrollHover { get; set; } = true;     // the pointer on the screen frame scrolls the map, no button held
     public WeaknessOrbs WeaknessOrbs { get; set; }       // the class's attribute weaknesses as orbs on the status window's portrait
+    public int UnitSpeed { get; set; } = 2;               // units walk on the battle map at this many times the original's pace
     public bool AutoEndTurn { get; set; }                 // the turn ends by itself once every unit of the player's has acted
     public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
     public UiSkin Skin { get; set; }                      // the windows, menus and text box: the original look or a restyled one
@@ -113,7 +114,7 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off, ERUMANI_AUTOENDTURN=on, ERUMANI_WEAKNESS=on|colorblind, ERUMANI_BATTLESCENES=on|playerunits|simple, ERUMANI_FFSKIPSCENES=on
+        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off, ERUMANI_AUTOENDTURN=on, ERUMANI_WEAKNESS=on|colorblind, ERUMANI_BATTLESCENES=on|playerunits|simple, ERUMANI_FFSKIPSCENES=on, ERUMANI_UNITSPEED=1|2|4
             return new Settings
             {
                 Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("ERUMANI_SKIN"), true, out var skin) ? skin
@@ -126,6 +127,7 @@ public sealed class Settings
                 WeaknessOrbs = Enum.TryParse<WeaknessOrbs>(Environment.GetEnvironmentVariable("ERUMANI_WEAKNESS"), true, out var orbs) ? orbs : WeaknessOrbs.Off,
                 BattleSceneMode = Enum.TryParse<BattleSceneMode>(Environment.GetEnvironmentVariable("ERUMANI_BATTLESCENES"), true, out var scenes) ? scenes : BattleSceneMode.On,
                 FastForwardSkipsScenes = string.Equals(Environment.GetEnvironmentVariable("ERUMANI_FFSKIPSCENES"), "on", StringComparison.OrdinalIgnoreCase),
+                UnitSpeed = int.TryParse(Environment.GetEnvironmentVariable("ERUMANI_UNITSPEED"), out var walk) ? walk : 2,
             };
         foreach (var path in Candidates())
         {

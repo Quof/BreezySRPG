@@ -166,6 +166,8 @@ public sealed class OptionsScreen
         Choice(T("Weakness orbs (unit status)", "弱点属性の表示（ユニット情報）"), () => new[] { T("Off", "OFF"), T("On", "ON"), T("Colorblind (letters)", "色覚サポート（文字付き）") },
             () => (int)_s.WeaknessOrbs, i => _s.WeaknessOrbs = (WeaknessOrbs)i),
         Toggle(T("End the turn when every unit has acted", "全員行動後に自動でターン終了"), () => _s.AutoEndTurn, v => _s.AutoEndTurn = v),
+        Choice(T("Unit movement speed", "ユニット移動速度"), () => WalkSpeeds.Select(n => n == 1 ? T("×1 (original)", "×1（オリジナル）") : $"×{n}").ToArray(),
+            () => Math.Max(0, Array.IndexOf(WalkSpeeds, _s.UnitSpeed)), i => _s.UnitSpeed = WalkSpeeds[i]),
         Toggle(T("Skip enemy turn", "敵ターンスキップ"), () => _s.SkipEnemyTurn, v => _s.SkipEnemyTurn = v),
         Choice(T("Fast-forward key", "早送りキー"), () => new[] { T("Hold", "押している間"), T("Toggle", "切り替え") },
             () => (int)_s.FastForwardMode, i => _s.FastForwardMode = (FastForwardMode)i),
@@ -181,6 +183,8 @@ public sealed class OptionsScreen
     };
 
     static readonly int[] Speeds = { 2, 3, 4, 6, 8 };
+    /// <summary>Unit movement speeds: divisors of a step's 16 frames, so every step is whole frames.</summary>
+    static readonly int[] WalkSpeeds = { 1, 2, 4 };
 
     static string ActionName(GameAction a) => a switch
     {

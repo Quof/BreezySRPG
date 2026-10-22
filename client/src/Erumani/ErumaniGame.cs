@@ -402,6 +402,7 @@ public sealed class ErumaniGame : Game
     void ApplyGameplay()
     {
         Ui.StatusWindow.Orbs = _settings.WeaknessOrbs;
+        if (_session is not null) _session.WalkSpeed = _settings.UnitSpeed;
         if (_runner is not null) _runner.FastForwardAdvancesText = _settings.FastForwardAdvancesText;
         if (_battle is not null)
         {

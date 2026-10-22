@@ -18,6 +18,7 @@ public sealed class UnitVisual
     public Vector2 Offset;
     public Vector2 StepFrom;   // pixel offset at the start of the current step
     public int StepFrames;
+    public int StepLength;     // the frames this step takes in all
 }
 
 /// <summary>Runtime state of one battle map: the rules battlefield plus drawing and animation.</summary>
@@ -26,6 +27,9 @@ public sealed class MapSession : IMapContext
     public const int Tile = Chipset.ChipSize;   // 32 px
     /// <summary>A step takes 8 ticks of the original's 30 Hz loop (FUN_0040ecf0, FUN_00424a68): 16 frames here.</summary>
     const int FramesPerTile = 16;
+
+    /// <summary>Option (modern): how many times the original's pace units walk on the battle map (event moves keep the original's).</summary>
+    public int WalkSpeed { get; set; } = 2;
     /// <summary>The view in tiles: 608×448 px.</summary>
     const int ViewTilesX = 19, ViewTilesY = 14;
 
@@ -462,14 +466,15 @@ public sealed class MapSession : IMapContext
             if (v.StepFrames > 0)
             {
                 v.StepFrames--;
-                v.Offset = v.StepFrom * v.StepFrames / FramesPerTile;
+                v.Offset = v.StepFrom * v.StepFrames / Math.Max(1, v.StepLength);
                 if (v.StepFrames == 0 && v.Running.Count == 0) v.Scripted = false;
                 continue;
             }
             if (v.Running.Count == 0) { v.Scripted = false; continue; }
             int s = v.Running.Dequeue();
             bool moved = Step(u, v, s);
-            v.StepFrames = FramesPerTile;
+            // a tile per 8 ticks (16 frames) as the original walks; faster with the movement speed option, but not an event's moves
+            v.StepFrames = v.StepLength = v.Scripted ? FramesPerTile : Math.Max(1, FramesPerTile / Math.Max(1, WalkSpeed));
             v.Offset = v.StepFrom = moved ? new Vector2(-StepDelta[s % 4].X, -StepDelta[s % 4].Y) * Tile : Vector2.Zero;
         }
     }
@@ -564,6 +569,18 @@ public sealed class MapSession : IMapContext
     /// every 3 ticks; any other row 0 every 4 — or, once it has acted, frame 0 with SYSTEM.BMP's END on its tile — and a
     /// poisoned or (instead) sleeping one SYSTEM.BMP's PSN / SLP, a new frame every 4 ticks.
     /// </summary>
+    /// <summary>
+    /// A sprite cut to the map's view (modern: the original draws units over the screen frame, so a unit on the view's
+    /// edge, or the camera moved, let the 64-px sprite spill onto the frame).
+    /// </summary>
+    static void Clipped(SpriteBatch sb, Texture2D tex, Vector2 at, Rectangle src, Rectangle view)
+    {
+        var dest = new Rectangle((int)MathF.Floor(at.X), (int)MathF.Floor(at.Y), src.Width, src.Height);
+        var cut = Rectangle.Intersect(dest, view);
+        if (cut.Width <= 0 || cut.Height <= 0) return;
+        sb.Draw(tex, cut, new Rectangle(src.X + cut.X - dest.X, src.Y + cut.Y - dest.Y, cut.Width, cut.Height), Color.White);
+    }
+
     public void DrawUnits(SpriteBatch sb, Rectangle viewport, int frame, BattleUnit? facing = null)
     {
         var sys = _tex.Get("SYSTEM.BMP");
@@ -580,11 +597,11 @@ public sealed class MapSession : IMapContext
             bool stepping = Stepping(v), chosen = !stepping && u == facing && v.Facing > 0;
             int row = stepping || chosen ? v.Facing : 0;
             int col = stepping ? FrameCycle[tick / 2 % 6] : chosen ? FrameCycle[tick / 3 % 6] : u.Acted ? 0 : FrameCycle[tick / 4 % 6];
-            sb.Draw(sheet, pos - new Vector2(16, 16), new Rectangle(col * 64, row * 64, 64, 64), Color.White);
+            Clipped(sb, sheet, pos - new Vector2(16, 16), new Rectangle(col * 64, row * 64, 64, 64), viewport);
             if (stepping || chosen || sys is null) continue;
-            if (u.Acted) sb.Draw(sys, pos + new Vector2(6, 19), new Rectangle(70, 19, 22, 10), Color.White);   // END
+            if (u.Acted) Clipped(sb, sys, pos + new Vector2(6, 19), new Rectangle(70, 19, 22, 10), viewport);   // END
             if (u.SleepTurns > 0 || u.PoisonTurns > 0)
-                sb.Draw(sys, pos, new Rectangle(tick / 4 % 4 * 32 + (u.SleepTurns > 0 ? 128 : 0), 192, 32, 32), Color.White);
+                Clipped(sb, sys, pos, new Rectangle(tick / 4 % 4 * 32 + (u.SleepTurns > 0 ? 128 : 0), 192, 32, 32), viewport);
         }
     }
 }
