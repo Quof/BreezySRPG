@@ -113,7 +113,7 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off, ERUMANI_AUTOENDTURN=on, ERUMANI_WEAKNESS=on|colorblind
+        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off, ERUMANI_AUTOENDTURN=on, ERUMANI_WEAKNESS=on|colorblind, ERUMANI_BATTLESCENES=on|playerunits|simple, ERUMANI_FFSKIPSCENES=on
             return new Settings
             {
                 Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("ERUMANI_SKIN"), true, out var skin) ? skin
@@ -124,6 +124,8 @@ public sealed class Settings
                 CombatBgm = !string.Equals(Environment.GetEnvironmentVariable("ERUMANI_COMBATBGM"), "off", StringComparison.OrdinalIgnoreCase),
                 AutoEndTurn = string.Equals(Environment.GetEnvironmentVariable("ERUMANI_AUTOENDTURN"), "on", StringComparison.OrdinalIgnoreCase),
                 WeaknessOrbs = Enum.TryParse<WeaknessOrbs>(Environment.GetEnvironmentVariable("ERUMANI_WEAKNESS"), true, out var orbs) ? orbs : WeaknessOrbs.Off,
+                BattleSceneMode = Enum.TryParse<BattleSceneMode>(Environment.GetEnvironmentVariable("ERUMANI_BATTLESCENES"), true, out var scenes) ? scenes : BattleSceneMode.On,
+                FastForwardSkipsScenes = string.Equals(Environment.GetEnvironmentVariable("ERUMANI_FFSKIPSCENES"), "on", StringComparison.OrdinalIgnoreCase),
             };
         foreach (var path in Candidates())
         {
