@@ -56,7 +56,7 @@ public class MidiTests
     }
 
     [Fact]
-    public void Long_silence_at_a_tracks_ends_is_trimmed_to_three_seconds()
+    public void Silence_at_a_tracks_ends_is_trimmed_away()
     {
         // ＯtoＺ map 3's legend.mid: 1.3 s before its first note, 26.5 s after its last
         var legend = GameMidis().FirstOrDefault(f => Path.GetFileName(f) == "legend.mid");
@@ -67,14 +67,18 @@ public class MidiTests
         var trimmed = MidiTrim.Trim(bytes);
         var (lead2, tail2, notes2) = MidiTrim.Silence(trimmed)!.Value;
         Assert.Equal(notes, notes2);
-        Assert.Equal(lead, lead2, 2);                                   // the start's 1.3 s kept
-        Assert.Equal(MidiTrim.MaxSilenceSeconds - lead, tail2, 1);      // the end gets the rest of the 3 s
+        Assert.Equal(0, lead2, 2);   // it starts on its first note
+        Assert.Equal(0, tail2, 2);   // and ends on its last
         double before = new MidiFile(new MemoryStream(bytes)).Length.TotalSeconds, after = new MidiFile(new MemoryStream(trimmed)).Length.TotalSeconds;
-        Assert.Equal(before - tail + tail2, after, 1);
+        Assert.Equal(before - lead - tail, after, 1);
+        // a limit keeps that much of the two together, the start's first
+        var kept = MidiTrim.Silence(MidiTrim.Trim(bytes, 3))!.Value;
+        Assert.Equal(lead, kept.Lead, 2);
+        Assert.Equal(3 - lead, kept.Tail, 1);
     }
 
     [Fact]
-    public void Every_games_midis_keep_their_notes_and_at_most_three_seconds_of_silence()
+    public void Every_games_midis_keep_their_notes_and_lose_their_silence()
     {
         int checkedFiles = 0;
         foreach (var f in GameMidis())

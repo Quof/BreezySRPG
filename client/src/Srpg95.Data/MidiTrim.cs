@@ -1,15 +1,16 @@
 namespace Srpg95.Data;
 
 /// <summary>
-/// Long silences at a MIDI file's start and end (modern: the original plays the file as it is). A looping track with
-/// seconds of nothing before its first note or after its last one leaves a long gap at every repeat (ＯtoＺ's
-/// legend.mid ends in 26 s of silence); this keeps at most <c>maxSilence</c> seconds of the two together: the start's
-/// first, the end's with what's left. Everything before the cut (programs, controllers, tempo) moves to the new start
-/// in its order; nothing after the new end is kept but each track's end.
+/// Silence at a MIDI file's start and end (modern: the original plays the file as it is). A looping track with
+/// seconds of nothing before its first note or after its last one leaves a gap at every repeat (ＯtoＺ's legend.mid
+/// ends in 26 s of silence); this cuts it all by default: the track starts on its first note and ends on its last note's
+/// note-off, the synthesizer's fading tail of it cut by the repeat (<c>maxSilence</c> keeps up to that many seconds of the two together, the start's first). Everything before
+/// the cut (programs, controllers, tempo, loop markers) moves to the new start in its order; nothing after the new end
+/// is kept but each track's end.
 /// </summary>
 public static class MidiTrim
 {
-    public const double MaxSilenceSeconds = 3;
+    public const double MaxSilenceSeconds = 0;
 
     sealed record Event(long Tick, byte[] Bytes, bool Meta, int MetaType);
 
