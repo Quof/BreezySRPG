@@ -370,18 +370,20 @@ public sealed class Ui : IDisposable
             // the speaker in a box of its own above the text box, the two apart; the text box stays where it is without one,
             // so the text is level either way
             var (who, said) = SplitSpeaker(lines);
-            int mx = left ? 192 : right ? 32 : 112, top = windowY + 16;
+            int mx = left ? 192 : right ? 32 : 112, bottom = windowY + 143;
             int bw = Math.Min(BalloonWidth - 2, 17 + TextWidth(said) + 17);
             int bx = left ? mx + 1 : right ? mx + BalloonWidth - 1 - bw : 320 - bw / 2;
+            // the text box from 28 px below the area's top (room for the name box above it), its bottom fixed; lines that
+            // don't fit grow it upwards, the name box going up with it
+            int top = Math.Min(windowY + 16 + 28, bottom - (11 + said.Count * LineHeight + 9));
             if (who is not null)
             {
                 int w = Math.Max(96, NameText.Measure(who) + 32);
-                var nr = new Rectangle(bx, top, w, 24);
+                var nr = new Rectangle(bx, top - 28, w, 24);
                 ModernBox(sb, nr, ModernBase, 8, 0.92f);
                 if (NameText.Get(who) is { } t) ShadowText(sb, NameText, who, new Vector2(nr.X + (w - t.Width) / 2, nr.Y + (nr.Height - t.LayoutHeight) / 2), Color.White);
             }
-            if (who is not null || said.Count <= 4) top += 28;   // five lines without a name need the room
-            ModernBox(sb, new Rectangle(bx, top, bw, windowY + 143 - top), ModernBase, 12, 0.92f);
+            ModernBox(sb, new Rectangle(bx, top, bw, bottom - top), ModernBase, 12, 0.92f);
             for (int i = 0; i < said.Count; i++) DrawText(sb, said[i], new Vector2(bx + 17, top + 11 + i * LineHeight), TextColor);
             return;
         }

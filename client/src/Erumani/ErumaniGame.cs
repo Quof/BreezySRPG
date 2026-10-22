@@ -617,7 +617,7 @@ public sealed class ErumaniGame : Game
         {
             _frame++;
             _audio.Update();
-            _options.Update(battleInput, _mouseVirtual, _controls);
+            _options.Update(battleInput, _mouseVirtual, _controls, mouseHere && leftDown);
             if (_options.Done) _options = null;
             EndUpdate(gameTime, k, m);
             return;

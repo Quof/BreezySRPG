@@ -20,9 +20,11 @@ public sealed class OptionsScreen
     /// A row: its label and value. <see cref="Change"/> steps a toggle or a choice (−1 / +1); a choice also lists its values
     /// (<see cref="Choices"/>, the current one <see cref="Chosen"/>) for the drop-down, which sets one with <see cref="Pick"/>;
     /// <see cref="Activate"/> opens a page or runs a command. <see cref="Wheel"/>: the wheel steps it too (a volume).
+    /// <see cref="Level"/> / <see cref="SetLevel"/>: a 0–100 bar in the value column that a click sets and a drag slides.
     /// </summary>
     sealed record Row(string Label, Func<string> Value, Action<int>? Change = null, Action? Activate = null,
-        Func<string[]>? Choices = null, Func<int>? Chosen = null, Action<int>? Pick = null, bool Wheel = false);
+        Func<string[]>? Choices = null, Func<int>? Chosen = null, Action<int>? Pick = null, bool Wheel = false,
+        Func<int>? Level = null, Action<int>? SetLevel = null);
 
     static Row Choice(string label, Func<string[]> names, Func<int> chosen, Action<int> pick) =>
         new(label, () => names().ElementAtOrDefault(chosen()) ?? "",
@@ -142,8 +144,10 @@ public sealed class OptionsScreen
         string FontName(string f) => f == Settings.BuiltIn ? T("GeneralUser GS (built-in)", "GeneralUser GS（内蔵）") : Path.GetFileName(f);
         return new()
         {
-            new(T("BGM volume", "BGMの音量"), () => $"{_s.MusicVolume}%", d => _s.MusicVolume = Math.Clamp(_s.MusicVolume + 10 * d, 0, 100), Wheel: true),
-            new(T("SE volume", "SEの音量"), () => $"{_s.SoundVolume}%", d => _s.SoundVolume = Math.Clamp(_s.SoundVolume + 10 * d, 0, 100), Wheel: true),
+            new(T("BGM volume", "BGMの音量"), () => "", d => _s.MusicVolume = Math.Clamp(_s.MusicVolume + 10 * d, 0, 100), Wheel: true,
+                Level: () => _s.MusicVolume, SetLevel: v => _s.MusicVolume = v),
+            new(T("SE volume", "SEの音量"), () => "", d => _s.SoundVolume = Math.Clamp(_s.SoundVolume + 10 * d, 0, 100), Wheel: true,
+                Level: () => _s.SoundVolume, SetLevel: v => _s.SoundVolume = v),
             Choice(T("MIDI playback", "MIDI再生"), () => new[] { T("Windows MIDI (original)", "Windows MIDI（オリジナル）"), T("SoundFont", "サウンドフォント") },
                 () => (int)_s.Music, i => _s.Music = (MusicEngine)i),
             Choice(T("SoundFont", "サウンドフォント"), () => fonts.Select(FontName).ToArray(),
@@ -237,8 +241,27 @@ public sealed class OptionsScreen
         Sfx.Click();
     }
 
-    public void Update(BattleInput i, Point mouse, Controls controls)
+    /// <summary>The bar being dragged (−1 none): it follows the pointer while the left button is held.</summary>
+    int _dragRow = -1;
+    const int BarX = 236, BarW = 150;
+
+    /// <summary>Row <paramref name="k"/>'s bar, as the pointer catches it (a little beyond its ends).</summary>
+    Rectangle BarHit(int k) { var r = _list.Row(k); return new Rectangle(_list.Rect.X + BarX - 6, r.Y, BarW + 12, r.Height); }
+
+    int LevelAt(int x) => Math.Clamp((int)MathF.Round((x - _list.Rect.X - BarX) * 100f / BarW), 0, 100);
+
+    /// <param name="held">the left button is down (a bar's drag goes on)</param>
+    public void Update(BattleInput i, Point mouse, Controls controls, bool held = false)
     {
+        // a volume bar under drag: the level follows the pointer and is heard at once; saved when let go
+        if (_dragRow >= 0)
+        {
+            if (held && _rows.ElementAtOrDefault(_dragRow) is { SetLevel: { } slide }) { slide(LevelAt(mouse.X)); _apply(); return; }
+            _dragRow = -1;
+            Sfx.Click();
+            Changed();
+            return;
+        }
         if (_waiting is { } a)
         {
             if (i.RightClick) { _waiting = null; Refresh(); return; }
@@ -274,6 +297,14 @@ public sealed class OptionsScreen
             Changed();
             return;
         }
+        // a click on a volume bar sets it there and starts a drag
+        if (i.Click && _drop is null && Enumerable.Range(0, _rows.Count).FirstOrDefault(k => _rows[k].Level is not null && BarHit(k).Contains(mouse), -1) is var b and >= 0)
+        {
+            (_list.Index, _dragRow) = (b, b);
+            _rows[b].SetLevel!(LevelAt(mouse.X));
+            _apply();
+            return;
+        }
         int pick = _list.Navigate(i, mouse);
         if (pick < 0) return;
         var r = _rows[pick];
@@ -294,6 +325,21 @@ public sealed class OptionsScreen
             int x = _list.Rect.X + _list.ColumnX[0] + 6, y = bar.Y + 6;
             var c = Ui.Gilded ? Ui.Gold : Ui.Modern ? Ui.Accent : Ui.PanelText;
             for (int t = 0; t < 3; t++) _ui.Fill(sb, new Rectangle(x + t, y + t, 7 - 2 * t, 1), c);
+        }
+        // the volume bars: a track, the part up to the level filled, a knob at the level, the percentage at the values' edge
+        for (int k = 0; k < _rows.Count; k++)
+        {
+            if (_rows[k].Level is not { } level) continue;
+            var row = _list.Row(k);
+            int v = Math.Clamp(level(), 0, 100), x = _list.Rect.X + BarX, cy = row.Y + row.Height / 2;
+            var accent = Ui.Gilded ? Ui.Gold : Ui.Modern ? Ui.Accent : Ui.PanelText;
+            _ui.Fill(sb, new Rectangle(x, cy - 2, BarW, 4), Color.Black * 0.55f);
+            _ui.Fill(sb, new Rectangle(x, cy - 2, BarW * v / 100, 4), accent);
+            int kx = x + BarW * v / 100;
+            _ui.Fill(sb, new Rectangle(kx - 3, cy - 6, 7, 12), Color.Black * 0.6f);
+            _ui.Fill(sb, new Rectangle(kx - 2, cy - 5, 5, 10), k == _dragRow ? Color.White : accent);
+            if (_ui.SmallText.Get($"{v}%") is { } pct)
+                pct.Draw(sb, new Vector2(_list.Rect.X + _list.ColumnX[0] - pct.Width, Ui.Line16Y(pct, row.Y)), Ui.PanelText);
         }
         _ui.SmallText.Get(PageTitle)?.Draw(sb, new Vector2(_list.Rect.X + 8, _list.Rect.Y - 16), Ui.Gilded ? Ui.GoldLight : Ui.PanelText);
         if (_drop is { } drop)
