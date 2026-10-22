@@ -159,6 +159,8 @@ public sealed class OptionsScreen
     {
         Choice(T("Battle animations", "戦闘演出"), () => new[] { T("On", "ON"), T("Player units only", "自軍ユニットのみ"), T("Simple", "簡易演出") },
             () => (int)_s.BattleSceneMode, i => _s.BattleSceneMode = (BattleSceneMode)i),
+        Choice(T("Weakness orbs (unit status)", "弱点属性の表示（ユニット情報）"), () => new[] { T("Off", "OFF"), T("On", "ON"), T("Colorblind (letters)", "色覚サポート（文字付き）") },
+            () => (int)_s.WeaknessOrbs, i => _s.WeaknessOrbs = (WeaknessOrbs)i),
         Toggle(T("End the turn when every unit has acted", "全員行動後に自動でターン終了"), () => _s.AutoEndTurn, v => _s.AutoEndTurn = v),
         Toggle(T("Skip enemy turn", "敵ターンスキップ"), () => _s.SkipEnemyTurn, v => _s.SkipEnemyTurn = v),
         Choice(T("Fast-forward key", "早送りキー"), () => new[] { T("Hold", "押している間"), T("Toggle", "切り替え") },

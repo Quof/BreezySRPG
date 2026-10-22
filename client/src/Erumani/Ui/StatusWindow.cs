@@ -1,3 +1,4 @@
+using Erumani.Config;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Srpg95.Data;
@@ -21,10 +22,16 @@ namespace Erumani.Ui;
 /// when the status key picked it (<paramref name="shown"/>); the restyled skins draw the class once in a 14-px bold, as
 /// the original's doubled 12 px blurs in a smooth face. On the battle map, pulsing arrows at the sides lead to a second
 /// page (modern): the unit's abilities, each with its TP cost, the chosen one's name and description in a box above.
+/// With the weakness orbs option, an orb for each attribute the unit's class is weak to (CLASS.DAT +0x254) runs down the
+/// portrait's top-right corner, A to F: red, yellow, green, blue, white, black (with the letter on it, for colour-blind
+/// players). The gilded frame hugs the portrait.
 /// </summary>
 public static class StatusWindow
 {
     public static readonly Rectangle Default = new(188, 96, 264, 288);
+
+    /// <summary>The weakness orbs option (Options > Gameplay).</summary>
+    public static WeaknessOrbs Orbs { get; set; }
 
     /// <summary>The abilities page's rows: as many as fit under the header.</summary>
     public const int SkillRows = 12;
@@ -64,7 +71,7 @@ public static class StatusWindow
         if (Ui.Gilded)
         {
             // a gilded frame round the face and a divider under the name, in place of the etched lines
-            if (page == 0) ui.GildedFrame(sb, new Rectangle(r.X + 120, r.Y + 88, 136, 136));
+            if (page == 0) ui.GildedFrame(sb, new Rectangle(r.X + 123, r.Y + 91, 130, 130));   // flush with the portrait
             ui.GoldRule(sb, r.X + 8, r.Y + 36, 248);
         }
         else
@@ -82,6 +89,7 @@ public static class StatusWindow
             Line(8, 7, 1, 28, light);
             Line(255, 7, 1, 28, dark);
         }
+        if (page == 0) WeaknessOrbs(sb, ui, field, u, r.X + 124, r.Y + 92);
         // the name through GDI's DrawText (FUN_00407954), its corner at the rectangle's
         ui.NameText.Get(u.Name)?.Draw(sb, new Vector2(r.X + 12, r.Y + 14), text);
 
@@ -161,6 +169,74 @@ public static class StatusWindow
         else if (Ui.Gilded) ui.Fill(sb, box, new Color(8, 10, 18));
         ui.Panel(sb, box, colour);
         for (int k = 0; k < lines.Length; k++) ui.Text12(sb, lines[k], box.X + 12, box.Y + 8 + 16 * k, text);
+    }
+
+    const int OrbSize = 16;
+    static readonly Color[] OrbColours =
+        { new(214, 40, 40), new(238, 202, 40), new(52, 170, 70), new(46, 96, 218), new(238, 238, 238), new(34, 34, 40) };
+    static readonly Texture2D?[] _orbs = new Texture2D?[6];
+
+    /// <summary>
+    /// The orbs of the attributes the unit's class is weak to, down the portrait's top-right corner (portrait at
+    /// <paramref name="fx"/>, <paramref name="fy"/>): A at the top, each next one just below; all six stay within it.
+    /// </summary>
+    static void WeaknessOrbs(SpriteBatch sb, Ui ui, Battlefield field, BattleUnit u, int fx, int fy)
+    {
+        if (Orbs == Config.WeaknessOrbs.Off) return;
+        var weak = field.Class(u).Weakness;
+        int x = fx + 128 - OrbSize - 3, y = fy + 3;
+        for (int a = 0; a < 6 && a < weak.Length; a++)
+        {
+            if (weak[a] == 0) continue;
+            sb.Draw(_orbs[a] ??= MakeOrb(sb.GraphicsDevice, OrbColours[a]), new Vector2(x, y), Color.White);
+            if (Orbs == Config.WeaknessOrbs.Colorblind)
+            {
+                string letter = ((char)('A' + a)).ToString();
+                var ink = a is 1 or 2 or 4 ? new Color(16, 16, 20) : Color.White;   // dark on yellow, green and white
+                ui.Text12(sb, letter, x + (OrbSize - ui.Measure12(letter)) / 2, y + 2, ink);
+            }
+            y += OrbSize + 2;
+        }
+    }
+
+    /// <summary>A shaded orb: lit from the top left with a small shine, a darker rim (light on the black one) so it reads on any portrait.</summary>
+    static Texture2D MakeOrb(GraphicsDevice gd, Color c)
+    {
+        const int n = OrbSize, ss = 4;
+        float rad = n / 2f - 0.5f, cx = n / 2f, cy = n / 2f;
+        var baseV = c.ToVector3();
+        bool dark = baseV.Length() < 0.3f;
+        var rim = dark ? new Vector3(0.55f, 0.55f, 0.6f) : baseV * 0.45f;
+        var px = new Color[n * n];
+        for (int py = 0; py < n; py++)
+            for (int pxl = 0; pxl < n; pxl++)
+            {
+                var sum = Vector3.Zero;
+                float cover = 0;
+                for (int sy = 0; sy < ss; sy++)
+                    for (int sx = 0; sx < ss; sx++)
+                    {
+                        float x = pxl + (sx + 0.5f) / ss, y = py + (sy + 0.5f) / ss;
+                        float d = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                        if (d > rad) continue;
+                        cover++;
+                        Vector3 col;
+                        if (d > rad - 1.1f) col = rim;
+                        else
+                        {
+                            float lit = 1 - MathF.Sqrt((x - cx + 2.5f) * (x - cx + 2.5f) + (y - cy + 2.5f) * (y - cy + 2.5f)) / (2 * rad);
+                            col = baseV * (0.62f + 0.6f * lit);
+                            float shine = MathF.Sqrt((x - cx + 2.6f) * (x - cx + 2.6f) + (y - cy + 3f) * (y - cy + 3f));
+                            if (shine < 2.2f) col = Vector3.Lerp(col, Vector3.One, 0.75f * (1 - shine / 2.2f));
+                        }
+                        sum += Vector3.Clamp(col, Vector3.Zero, Vector3.One);
+                    }
+                float a = cover / (ss * ss);
+                px[py * n + pxl] = cover == 0 ? Color.Transparent : new Color(sum / cover * a) { A = (byte)(a * 255) };   // premultiplied
+            }
+        var t = new Texture2D(gd, n, n);
+        t.SetData(px);
+        return t;
     }
 
     /// <summary>Arrows at the window's sides, just outside it, that grow and shrink a pixel every few ticks: another page.</summary>

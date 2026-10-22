@@ -27,6 +27,8 @@ public enum FastForwardMode { Hold, Toggle }
 public enum ConfirmSound { On, GameplayOnly, Off }
 /// <summary>戦闘演出: every fight's battle scene, only those of a player-side unit's action (allies, guests and neutral units), or none (the result popups alone).</summary>
 public enum BattleSceneMode { On, PlayerUnits, Simple }
+/// <summary>The unit status window's weakness orbs: none, coloured orbs, or coloured orbs with their attribute's letter.</summary>
+public enum WeaknessOrbs { Off, On, Colorblind }
 
 /// <summary>
 /// Player settings (modern features; none of this exists in the original), kept in %APPDATA%\EasySRPG95\settings.json
@@ -73,6 +75,7 @@ public sealed class Settings
     public bool FastForwardMouse { get; set; } = true;    // holding the left mouse button or the confirm key fast-forwards (after 0.4 s; 1 s in a cutscene)
     public bool MouseInput { get; set; } = true;          // off: the mouse does nothing (keyboard only)
     public bool EdgeScrollHover { get; set; } = true;     // the pointer on the screen frame scrolls the map, no button held
+    public WeaknessOrbs WeaknessOrbs { get; set; }       // the class's attribute weaknesses as orbs on the status window's portrait
     public bool AutoEndTurn { get; set; }                 // the turn ends by itself once every unit of the player's has acted
     public bool SkipEnemyTurn { get; set; }               // resolve the enemy phase instantly (no walking, scenes or popups)
     public UiSkin Skin { get; set; }                      // the windows, menus and text box: the original look or a restyled one
@@ -110,7 +113,7 @@ public sealed class Settings
 
     public static Settings Load(bool persistent)
     {
-        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off, ERUMANI_AUTOENDTURN=on
+        if (!persistent)   // scripted runs: ERUMANI_SKIN=original|modern|gilded (or the older ERUMANI_MODERN=1), ERUMANI_UIFONT, ERUMANI_LANGUAGE, ERUMANI_SAVESCREEN, ERUMANI_COMBATBGM=off, ERUMANI_AUTOENDTURN=on, ERUMANI_WEAKNESS=on|colorblind
             return new Settings
             {
                 Skin = Enum.TryParse<UiSkin>(Environment.GetEnvironmentVariable("ERUMANI_SKIN"), true, out var skin) ? skin
@@ -120,6 +123,7 @@ public sealed class Settings
                 SaveScreen = Enum.TryParse<SaveScreen>(Environment.GetEnvironmentVariable("ERUMANI_SAVESCREEN"), true, out var saves) ? saves : SaveScreen.Extended,
                 CombatBgm = !string.Equals(Environment.GetEnvironmentVariable("ERUMANI_COMBATBGM"), "off", StringComparison.OrdinalIgnoreCase),
                 AutoEndTurn = string.Equals(Environment.GetEnvironmentVariable("ERUMANI_AUTOENDTURN"), "on", StringComparison.OrdinalIgnoreCase),
+                WeaknessOrbs = Enum.TryParse<WeaknessOrbs>(Environment.GetEnvironmentVariable("ERUMANI_WEAKNESS"), true, out var orbs) ? orbs : WeaknessOrbs.Off,
             };
         foreach (var path in Candidates())
         {
