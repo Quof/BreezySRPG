@@ -140,6 +140,25 @@ public static class StatusWindow
         for (int k = 0; k < lines.Count; k++) ui.Text12(sb, lines[k], box.X + 12, box.Y + 8 + 16 * k, text);
     }
 
+    static string Named(string s) => string.IsNullOrWhiteSpace(s) ? "???" : s.Trim();
+
+    /// <summary>
+    /// Draws a unit's window off the screen — both pages, as they first open, so its text, face, orbs and boxes are all
+    /// made before the player opens it (the abilities page's box above the window would come back onto the screen, so only
+    /// its lines are made).
+    /// </summary>
+    public static void Warm(SpriteBatch sb, Ui ui, Textures tex, Database db, Battlefield field, BattleUnit u, int frame)
+    {
+        var off = new Rectangle(-2000, -2000, Default.Width, Default.Height);
+        Draw(sb, ui, tex, db, field, u, off, arrows: true, frame: frame);
+        Draw(sb, ui, tex, db, field, u, off, page: 1, skill: -1, arrows: true, frame: frame);
+        if (Skills(field, u) is [var m, ..])
+        {
+            ui.Text12(sb, Named(m.Name) + "：", off.X, off.Y, Color.White);
+            ui.Text12(sb, Named(m.Desc), off.X, off.Y, Color.White);
+        }
+    }
+
     /// <summary>
     /// The abilities page: each ability's name (??? when it has none) and TP cost, a row each, the chosen one marked; its
     /// name and description (??? when there is none) in a box just above the window.
@@ -147,7 +166,6 @@ public static class StatusWindow
     static void SkillsPage(SpriteBatch sb, Ui ui, Battlefield field, BattleUnit u, Rectangle r, int skill, int top, Color text, Ui.PanelColor colour)
     {
         var skills = Skills(field, u);
-        static string Named(string s) => string.IsNullOrWhiteSpace(s) ? "???" : s.Trim();
         if (skills.Count == 0) { ui.Text12(sb, Lang.T("No abilities", "技なし"), r.X + 12, r.Y + SkillTop, text); return; }
         for (int row = 0; row < SkillRows && top + row < skills.Count; row++)
         {

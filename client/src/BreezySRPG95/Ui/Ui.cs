@@ -190,22 +190,22 @@ public sealed class Ui : IDisposable
         if (Modern) { ModernBox(sb, r, ModernBase, 10, 0.92f); return; }
         if (Gilded) { GildedBox(sb, r, GildedNavy, 0.86f); return; }
         // Built on demand per size; menus are few.
-        if (!_windows.TryGetValue((r.Width, r.Height), out var t))
-            _windows[(r.Width, r.Height)] = t = BuildWindow(r.Width, r.Height);
+        if (!_windows.TryGet((r.Width, r.Height), out var t)) t = _windows.Add((r.Width, r.Height), BuildWindow(r.Width, r.Height));
         sb.Draw(t, r.Location.ToVector2(), Color.White);
     }
-    readonly Dictionary<(int, int), Texture2D> _windows = new();
+    readonly TextureCache<(int, int)> _windows = new(16L << 20);
 
     // ---------------- modern interface ----------------
 
-    readonly Dictionary<(int W, int H, int R, Color Fill, float A), Texture2D> _modern = new();
+    /// <summary>The modern boxes by size and look (the message box's height changes with its lines).</summary>
+    readonly TextureCache<(int W, int H, int R, Color Fill, float A)> _modern = new(32L << 20);
 
     /// <summary>A soft-shadowed, rounded, translucent box with a faint light edge and a slight top-down gradient.</summary>
     public void ModernBox(SpriteBatch sb, Rectangle r, Color fill, int radius, float alpha, bool shadow = true)
     {
         if (r.Width <= 0 || r.Height <= 0) return;
         var key = (r.Width, r.Height, radius, fill, alpha);
-        if (!_modern.TryGetValue(key, out var tex)) _modern[key] = tex = BuildRounded(r.Width, r.Height, radius, fill, alpha);
+        if (!_modern.TryGet(key, out var tex)) tex = _modern.Add(key, BuildRounded(r.Width, r.Height, radius, fill, alpha));
         if (shadow) sb.Draw(tex, new Vector2(r.X + 2, r.Y + 3), Color.Black * 0.45f);
         sb.Draw(tex, r.Location.ToVector2(), Color.White);
     }
@@ -254,16 +254,17 @@ public sealed class Ui : IDisposable
     /// <summary>Panel tints by <see cref="PanelColor"/>: the side colours of battle and status panels, navy for menus.</summary>
     static readonly Color[] GildedTints = { new(14, 28, 66), new(56, 14, 22), new(48, 38, 12), GildedNavy };
 
-    // the gold's pictures (Gilding), made at the render scale they were made for, by what they show
-    readonly Dictionary<(int W, int H, Color Fill, float A, int Pointer, int PointerY), Texture2D> _gilded = new();
-    readonly Dictionary<(int W, int H), Texture2D> _highlights = new();
-    readonly Dictionary<int, Texture2D> _rules = new();
-    readonly Dictionary<Rectangle, Texture2D> _frames = new();
-    readonly Dictionary<int, Texture2D> _arrows = new();
+    // the gold's pictures (Gilding), made at the render scale they were made for, by what they show (a message box's
+    // width follows its text, so there are many of those)
+    readonly TextureCache<(int W, int H, Color Fill, float A, int Pointer, int PointerY)> _gilded = new(64L << 20);
+    readonly TextureCache<(int W, int H)> _highlights = new(16L << 20);
+    readonly TextureCache<int> _rules = new(8L << 20);
+    readonly TextureCache<Rectangle> _frames = new(16L << 20);
+    readonly TextureCache<int> _arrows = new(4L << 20);
     int _giltScale;
 
     /// <summary>A gold picture from a cache, made (at the render scale) if it isn't there; every cache is emptied when the scale changes.</summary>
-    Texture2D Gilt<TKey>(Dictionary<TKey, Texture2D> cache, TKey key, int w, int h, Func<int, Color[]> make) where TKey : notnull
+    Texture2D Gilt<TKey>(TextureCache<TKey> cache, TKey key, int w, int h, Func<int, Color[]> make) where TKey : notnull
     {
         int k = Math.Max(1, RenderScale);
         if (k != _giltScale)
@@ -271,26 +272,19 @@ public sealed class Ui : IDisposable
             DisposeGilt();
             _giltScale = k;
         }
-        if (cache.TryGetValue(key, out var t)) return t;
-        if (cache.Count >= 96) Empty(cache);
+        if (cache.TryGet(key, out var t)) return t;
         t = new Texture2D(_device, w * k, h * k);
         t.SetData(make(k));
-        return cache[key] = t;
-    }
-
-    static void Empty<TKey>(Dictionary<TKey, Texture2D> cache) where TKey : notnull
-    {
-        foreach (var t in cache.Values) t.Dispose();
-        cache.Clear();
+        return cache.Add(key, t);
     }
 
     void DisposeGilt()
     {
-        Empty(_gilded);
-        Empty(_highlights);
-        Empty(_rules);
-        Empty(_frames);
-        Empty(_arrows);
+        _gilded.Clear();
+        _highlights.Clear();
+        _rules.Clear();
+        _frames.Clear();
+        _arrows.Clear();
     }
 
     /// <summary>Draws a gold picture with its corner at (x, y), each of its pixels one of the render's.</summary>
@@ -589,10 +583,11 @@ public sealed class Ui : IDisposable
         Text.Dispose();
         SmallText.Dispose();
         NameText.Dispose();
+        BoldText.Dispose();
         MenuFont?.Dispose();
         _pixel.Dispose();
-        foreach (var t in _windows.Values) t.Dispose();
-        foreach (var t in _modern.Values) t.Dispose();
+        _windows.Dispose();
+        _modern.Dispose();
         DisposeGilt();
     }
 }

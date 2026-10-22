@@ -1336,6 +1336,7 @@ public sealed class BreezyGame : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        Ui.TextureCaches.Frame++;
         SetScale(_opts.Screenshot is not null ? Math.Clamp(_opts.Scale, 1, MaxScale) : ScaleFor(Destination()));
         // a wipe just started: keep the last frame, which the wipe will take away bit by bit
         if (_fx.SnapshotRequested)

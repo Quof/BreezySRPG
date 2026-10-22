@@ -135,10 +135,11 @@ public sealed class Audio(GameFolder game) : IDisposable
         var path = game.Find("BGM/" + next);
         if (path is null) return;
         // a MIDI file with long silence at its ends plays without most of it (MidiTrim)
-        byte[]? midiBytes = null;
-        if (path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase))
-            try { midiBytes = MidiTrim.Trim(File.ReadAllBytes(path)); } catch (Exception) { }
-        _bgmLengthMs = LengthMs(path, midiBytes);   // also while muted, so scripted runs keep the same timing
+        byte[]? midiBytes = null, fileBytes = null;
+        try { fileBytes = Bytes(path, keep: true); } catch (Exception) { }
+        if (fileBytes is not null && path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase))
+            try { midiBytes = MidiTrim.Trim(fileBytes); } catch (Exception) { }
+        _bgmLengthMs = LengthMs(path, midiBytes ?? fileBytes);   // also while muted, so scripted runs keep the same timing
         _bgmPlayedMs = 0;
         if (Muted) return;
         bool midi = path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase);
@@ -148,7 +149,7 @@ public sealed class Audio(GameFolder game) : IDisposable
             {
                 // with the loop marker option, a track that has an RPG Maker loop marker (controller 111) repeats from
                 // there, as RPG Maker 2000/2003 plays it; otherwise (and as the original does) from its start
-                var bytes = midiBytes ?? File.ReadAllBytes(path);
+                var bytes = midiBytes ?? fileBytes ?? File.ReadAllBytes(path);
                 var loopType = LoopAtMarkers && MidiTrim.LoopStart(bytes) is not null ? MidiFileLoopType.RpgMaker : MidiFileLoopType.None;
                 _sequencer.Play(new MidiFile(new MemoryStream(bytes), loopType), loop: true);
                 _stream = new DynamicSoundEffectInstance(Rate, AudioChannels.Stereo) { Volume = Math.Clamp(_musicVolume, 0, 1) };
@@ -161,7 +162,7 @@ public sealed class Audio(GameFolder game) : IDisposable
         if (!midi)
         {
             // MCI only notices the end when polled, which left a gap before each repeat: a looping sound has none
-            try { _wavBgm = Load(File.ReadAllBytes(path)); } catch (Exception) { _wavBgm = null; }
+            try { _wavBgm = Load(fileBytes ?? File.ReadAllBytes(path)); } catch (Exception) { _wavBgm = null; }
             if (_wavBgm is not null)
             {
                 _wavLoop = _wavBgm.CreateInstance();
@@ -192,14 +193,14 @@ public sealed class Audio(GameFolder game) : IDisposable
         catch (Exception) { return null; }
     }
 
-    /// <summary>A BGM file's playing time: a MIDI file's last event (as trimmed, <paramref name="midi"/>), a WAV's data at its byte rate.</summary>
-    static double LengthMs(string path, byte[]? midi = null)
+    /// <summary>A BGM file's playing time (<paramref name="bytes"/>: the file, a MIDI one as trimmed): a MIDI file's last event, a WAV's data at its byte rate.</summary>
+    static double LengthMs(string path, byte[]? bytes)
     {
         try
         {
-            if (midi is not null) return new MidiFile(new MemoryStream(midi)).Length.TotalMilliseconds;
-            if (path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase)) return new MidiFile(path).Length.TotalMilliseconds;
-            var b = File.ReadAllBytes(path);
+            if (path.EndsWith(".mid", StringComparison.OrdinalIgnoreCase))
+                return (bytes is null ? new MidiFile(path) : new MidiFile(new MemoryStream(bytes))).Length.TotalMilliseconds;
+            var b = bytes ?? File.ReadAllBytes(path);
             int pos = 12, byteRate = 0;
             while (pos + 8 <= b.Length)
             {
@@ -242,24 +243,37 @@ public sealed class Audio(GameFolder game) : IDisposable
 
     // ---------------- sound effects ----------------
 
-    /// <summary>The EFS folder's files read ahead (<see cref="Prepare"/>), by path, until each becomes a sound.</summary>
+    /// <summary>
+    /// The EFS and BGM folders' files read ahead (<see cref="Prepare"/>), by path: a sound's until it becomes one, the
+    /// music's for good (a track comes back, and all of a game's is a few MB).
+    /// </summary>
     readonly ConcurrentDictionary<string, byte[]> _readAhead = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A file's bytes, from the read-ahead if it got there (kept there with <paramref name="keep"/>), else from the disk.</summary>
+    byte[] Bytes(string path, bool keep)
+    {
+        if (keep ? _readAhead.TryGetValue(path, out var b) : _readAhead.TryRemove(path, out b)) return b;
+        b = File.ReadAllBytes(path);
+        if (keep) _readAhead.TryAdd(path, b);
+        return b;
+    }
 
     /// <summary>
     /// Gets the sounds ready before they're needed, as the original does: it starts its sound at start-up and reserves
     /// its four system sounds then (HarmonyInitWave, FUN_00409484), and caches a battle animation's sound before its
-    /// scene (HarmonyCacheSound). Here the audio device and the system sounds now, and the rest of the game's EFS
-    /// folder read into memory in the background (a few MB), so no sound waits on the disk the first time it plays.
+    /// scene (HarmonyCacheSound). Here the audio device and the system sounds now, and the rest of the EFS and BGM folders
+    /// (the game's and the RTP's) read into memory in the background — at most about 25 MB in the games here — so no sound
+    /// or track waits on the disk (a sleeping USB drive's can take seconds) when it first plays.
     /// </summary>
     public void Prepare()
     {
-        if (Muted) return;
-        foreach (var f in new[] { "CLICK.WAV", "CANCEL.WAV", "BUZZER.WAV", "DOWN.WAV", "LEVELUP.WAV" }) Sound(f);
-        if (game.Find("EFS") is not { } dir || !Directory.Exists(dir)) return;
+        var folders = game.Folders("EFS").Concat(game.Folders("BGM")).ToList();   // looked up here: GameFolder isn't thread-safe
+        if (!Muted) foreach (var f in new[] { "CLICK.WAV", "CANCEL.WAV", "BUZZER.WAV", "DOWN.WAV", "LEVELUP.WAV" }) Sound(f);
         Task.Run(() =>
         {
-            foreach (var path in Directory.EnumerateFiles(dir))
-                try { _readAhead.TryAdd(path, File.ReadAllBytes(path)); } catch (Exception) { }   // read when it plays instead
+            foreach (var dir in folders)
+                foreach (var path in Directory.EnumerateFiles(dir))
+                    try { _readAhead.TryAdd(path, File.ReadAllBytes(path)); } catch (Exception) { }   // read when it plays instead
         });
     }
 
@@ -270,7 +284,7 @@ public sealed class Audio(GameFolder game) : IDisposable
         try
         {
             if (game.Find("EFS/" + file) is { } path)
-                se = Load(_readAhead.TryRemove(path, out var bytes) ? bytes : File.ReadAllBytes(path));
+                se = Load(Bytes(path, keep: false));
         }
         catch (Exception) { se = null; }   // a damaged or unusual WAV stays silent
         return _cache[file] = se;

@@ -46,8 +46,8 @@ public sealed class GdiText : IDisposable
     IntPtr _selected;
     /// <summary>The smooth faces made so far, by font and render scale.</summary>
     readonly Dictionary<(UiFont Font, int Scale), Smooth> _smooth = new();
-    /// <summary>Rendered strings, all in one mode: the bitmap font, or one smooth face at one scale.</summary>
-    readonly Dictionary<string, Texture2D> _cache = new();
+    /// <summary>Rendered strings, all in one mode: the bitmap font, or one smooth face at one scale (64 MB of them at most).</summary>
+    readonly TextureCache<string> _cache = new(64L << 20);
     (bool Smooth, int Scale, UiFont Font) _cacheMode = (false, 1, default);
     public string FaceName { get; }
     public int Height { get; }
@@ -232,7 +232,7 @@ public sealed class GdiText : IDisposable
             _cacheMode = (smooth, k, Ui.Font);
         }
         TextImage Image(Texture2D t) => new(t, k, face?.Lift ?? 0, face?.RefHeight ?? 0);
-        if (_cache.TryGetValue(s, out var t)) return Image(t);
+        if (_cache.TryGet(s, out var t)) return Image(t);
         Select(font);
         GetTextExtentPoint32W(_dc, s, s.Length, out var size);
         int w = Math.Max(1, size.cx), h = Math.Max(1, size.cy);
@@ -257,16 +257,10 @@ public sealed class GdiText : IDisposable
         }
         t = new Texture2D(_device, w, h);
         t.SetData(rgba);
-        if (_cache.Count > 2000) ClearCache();
-        _cache[s] = t;
-        return Image(t);
+        return Image(_cache.Add(s, t));
     }
 
-    void ClearCache()
-    {
-        foreach (var x in _cache.Values) x.Dispose();
-        _cache.Clear();
-    }
+    void ClearCache() => _cache.Clear();
 
     public void Dispose()
     {

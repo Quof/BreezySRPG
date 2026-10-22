@@ -16,7 +16,7 @@ public sealed class ExeFont : IDisposable
 {
     readonly GraphicsDevice _device;
     readonly byte[] _glyphs;
-    readonly Dictionary<string, Texture2D> _cache = new();
+    readonly TextureCache<string> _cache = new(32L << 20);
 
     public ExeFont(GraphicsDevice device, byte[] glyphs) => (_device, _glyphs) = (device, glyphs);
 
@@ -57,7 +57,7 @@ public sealed class ExeFont : IDisposable
     public Texture2D? Get(string s)
     {
         if (s.Length == 0) return null;
-        if (_cache.TryGetValue(s, out var t)) return t;
+        if (_cache.TryGet(s, out var t)) return t;
         var layout = Layout(s, out int advance);
         int w = Math.Max(advance, layout.Count > 0 ? layout.Max(g => g.X) + 12 : 0), h = 15;
         if (w == 0) return null;
@@ -74,16 +74,8 @@ public sealed class ExeFont : IDisposable
         }
         t = new Texture2D(_device, w, h);
         t.SetData(px);
-        if (_cache.Count > 2000) ClearCache();
-        _cache[s] = t;
-        return t;
+        return _cache.Add(s, t);
     }
 
-    void ClearCache()
-    {
-        foreach (var x in _cache.Values) x.Dispose();
-        _cache.Clear();
-    }
-
-    public void Dispose() => ClearCache();
+    public void Dispose() => _cache.Dispose();
 }

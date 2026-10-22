@@ -43,6 +43,10 @@ public sealed class GameFolder
         return dir;
     }
 
+    /// <summary>A folder (BGM, EFS…) in the game folder and in the RTP folder, those that exist, the game's first.</summary>
+    public List<string> Folders(string name) =>
+        new[] { FindIn(Root, name), RtpRoot is null ? null : FindIn(RtpRoot, name) }.OfType<string>().Where(Directory.Exists).ToList();
+
     /// <summary>Path of a file in the game folder, else the RTP folder, else null.</summary>
     public string? Find(string relative) => FindIn(Root, relative) ?? (RtpRoot is null ? null : FindIn(RtpRoot, relative));
 

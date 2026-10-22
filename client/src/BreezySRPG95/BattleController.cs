@@ -2344,8 +2344,29 @@ public sealed class BattleController
             Ui.StatusWindow.Draw(sb, _ui, _tex, _db, _s.Field, _statusUnit, shown: _statusItem, mouse: MouseVirtual,
                 page: _statusPage, skill: _statusSkill, top: _statusTop, arrows: true, frame: frame);
         if (_scene is not null) { _scene.Draw(sb); if (_state_ == State.Showing && _panel is not null) DrawPanel(sb, _panel); }
+        WarmProfile(sb, frame);
         // the caption over everything, the screen frame included (FUN_0041421c draws it at y 192 on the whole screen)
         if (_telop is not null && _tex.Get(_telop) is { } t) sb.Draw(t, new Vector2(TelopX(_telopTick), 192), Color.White);
+    }
+
+    // profiles made ahead while the map waits for the player (StatusWindow.Warm): one unit looked at a frame, made again
+    // when anything its window shows has changed, so opening one never stalls on making its text and pictures
+    readonly Dictionary<BattleUnit, int> _warmed = new();
+    int _warmNext;
+
+    void WarmProfile(SpriteBatch sb, int frame)
+    {
+        if (_state_ is not (State.Idle or State.Selected) || _scene is not null) return;
+        var units = _s.Field.Units;
+        if (units.Count == 0) return;
+        var u = units[_warmNext = (_warmNext + 1) % units.Count];
+        if (u.Dead || u.Hidden) return;
+        var sig = HashCode.Combine(HashCode.Combine(u.Hp, u.MaxHp, u.Mp, u.MaxMp, u.Level, u.Exp, u.Weapon, u.Armor),
+            HashCode.Combine(u.Accessory, _s.Field.Stats(u), _s.Field.Class(u).Name, _s.Field.KnownSpells(u).Count()),
+            HashCode.Combine(Ui.Ui.Skin, Ui.Ui.Font, Ui.Ui.RenderScale, Ui.StatusWindow.Orbs, Ui.Lang.Japanese));
+        if (_warmed.TryGetValue(u, out var had) && had == sig) return;
+        _warmed[u] = sig;
+        Ui.StatusWindow.Warm(sb, _ui, _tex, _db, _s.Field, u, frame);
     }
 
     /// <summary>
