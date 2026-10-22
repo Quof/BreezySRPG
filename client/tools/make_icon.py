@@ -1,8 +1,8 @@
-"""EasySRPG95's icon from a face graphic: the head on a dark navy tile with a thin gold rim (the gilded skin's look).
+"""BreezySRPG95's icon from a face graphic: the head on a dark navy tile with a thin gold rim (the gilded skin's look).
 
     python client/tools/make_icon.py "<game folder>/BMP/FACE_003.bmp" [x y size]
 
-x, y, size: the square of the 128 x 128 face to use (default 8 0 112, scaled 2x). Writes client/src/Erumani/Icon.ico
+x, y, size: the square of the 128 x 128 face to use (default 8 0 112, scaled 2x). Writes client/src/BreezySRPG95/Icon.ico
 (16-256 px, the exe's icon) and Icon.bmp (64 px, the window's). The current icon is 昴の騎士's FACE_003.
 """
 import math
@@ -75,6 +75,6 @@ def icon(path, x, y, size):
 if __name__ == '__main__':
     x, y, size = (int(v) for v in sys.argv[2:5]) if len(sys.argv) >= 5 else (8, 0, 112)
     im = icon(sys.argv[1], x, y, size)
-    out = os.path.join(os.path.dirname(__file__), '..', 'src', 'Erumani')
+    out = os.path.join(os.path.dirname(__file__), '..', 'src', 'BreezySRPG95')
     im.save(os.path.join(out, 'Icon.ico'), sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
     im.resize((64, 64), Image.LANCZOS).save(os.path.join(out, 'Icon.bmp'))

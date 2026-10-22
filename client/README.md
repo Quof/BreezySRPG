@@ -1,4 +1,4 @@
-# EasySRPG95
+# BreezySRPG95
 
 A modern replacement client for games made with Sim RPG Maker 95 (シミュレーションRPGツクール95), started for えるまに and checked against ＯtoＺ, 昴の騎士 and 闇鍋企画 as well. It reads the original game folder directly (`SRPGEXEC.EXE`'s data files, BMP graphics, MIDI/WAV audio) and never modifies it. Format documentation lives in [`../re/FORMAT_NOTES.md`](../re/FORMAT_NOTES.md).
 
@@ -21,7 +21,7 @@ Alternatives considered:
 ```
 client/
   src/Srpg95.Data/          format loaders (C# port of re/srpg95_data.py)
-  src/Erumani/              the game (MonoGame)
+  src/BreezySRPG95/              the game (MonoGame)
   tests/Srpg95.Data.Tests/  cross-checks every loader against the Python reference JSON
 ```
 
@@ -30,11 +30,11 @@ client/
 Needs the .NET 8 SDK.
 
 ```bash
-dotnet build client/Erumani.sln
+dotnet build client/BreezySRPG95.sln
 ```
 
 ```bash
-dotnet run --project client/src/Erumani -- --map 1
+dotnet run --project client/src/BreezySRPG95 -- --map 1
 ```
 
 ```bash
@@ -48,7 +48,7 @@ Options:
 - `--screenshot FILE.png`: render one frame at 640×480, save it and exit. It also writes `FILE.txt` with the battle state (units, HP, EXP) and a trace of the scripted input. In this mode the real keyboard and mouse are ignored and the random numbers of battles and of events (variable operations) are seeded, so runs are reproducible.
 - `--scale N`: used with `--screenshot`, renders and saves the frame at N × 640×480, as a window N times the size draws it.
 - `--fast 1`: used with `--screenshot`, runs frames as fast as the machine allows instead of 60 a second. The game advances by frames, so the outcome is the same, only sooner.
-- Scripted runs take their look from the environment instead of the settings: `ERUMANI_SKIN` (original / modern / gilded), `ERUMANI_UIFONT` (NotoSans / NotoSerif / BizUd / YuGothic), `ERUMANI_LANGUAGE` (english / japanese), `ERUMANI_SAVESCREEN` (extended / original), `ERUMANI_COMBATBGM` (`off` turns the combat BGM off).
+- Scripted runs take their look from the environment instead of the settings: `BREEZY_SKIN` (original / modern / gilded), `BREEZY_UIFONT` (NotoSans / NotoSerif / BizUd / YuGothic), `BREEZY_LANGUAGE` (english / japanese), `BREEZY_SAVESCREEN` (extended / original), `BREEZY_COMBATBGM` (`off` turns the combat BGM off).
 - `--frames N`: used with `--screenshot`, captures at frame N at the latest (default 30000), so a run that never settles still ends. A scripted run also appends map, camp, title and game-over lines to `FILE.log` as they happen, and a crash leaves `FILE.error.txt`.
 - `--choose "a,b,..."`: used with `--advance`, the option each character choice takes in turn (0-based, or `last`); `random` picks every choice from then on at random (seeded, so a run repeats).
 - `--advance N`: used with `--screenshot`, auto-confirms N event messages or choices before capturing. `-1` confirms all of them.
@@ -71,7 +71,7 @@ Options:
   Example: select ジュナ on map 1 and move her 3 tiles up:
 
   ```bash
-  dotnet run --project client/src/Erumani -- --map 1 --advance -1 --keys "at:7.12,enter,at:7.9,enter" --screenshot shot.png
+  dotnet run --project client/src/BreezySRPG95 -- --map 1 --advance -1 --keys "at:7.12,enter,at:7.9,enter" --screenshot shot.png
   ```
 - `--event NAME`: run this script on load instead of the first map's `OPENING`, e.g. `--map 4 --event EV000101` (object 1's first event slot). With `--advance -1 --choose random --fast 1 --screenshot` this runs any event of any map by itself.
 - `--load N`: load `SAVEn.DAT` at start (a camp save opens its camp).
@@ -85,17 +85,17 @@ Set `SRPG95_REQUIRE_DATA=1` to make the tests fail instead of silently passing w
 
 ## Playing
 
-Put `EasySRPG95.exe` (one file, from a published build) in the game folder, next to `SRPGEXEC.EXE`, and run it; or run it from anywhere with `--game "<game folder>"`. No .NET install is needed: the runtime, SDL2 and OpenAL are inside the exe (the two native libraries are unpacked to `%TEMP%\.net\EasySRPG95` on the first start). Nothing is written next to the exe: settings live in `%APPDATA%\EasySRPG95\settings.json`, shared by every game, and saves go where the original keeps them (the game folder). A `settings.json` placed beside the exe is used instead, for a setup that keeps its own.
+Put `BreezySRPG95.exe` (one file, from a published build) in the game folder, next to `SRPGEXEC.EXE`, and run it; or run it from anywhere with `--game "<game folder>"`. No .NET install is needed: the runtime, SDL2 and OpenAL are inside the exe (the two native libraries are unpacked to `%TEMP%\.net\BreezySRPG95` on the first start). Nothing is written next to the exe: settings live in `%APPDATA%\BreezySRPG95\settings.json`, shared by every game, and saves go where the original keeps them (the game folder). A `settings.json` placed beside the exe is used instead, for a setup that keeps its own.
 
-Music plays through **GeneralUser GS** (v2.0.3, by S. Christian Collins, [schristiancollins.com](http://www.schristiancollins.com)), a GS SoundFont embedded in the exe, so everyone hears the same soundtrack; its licence ([`src/Erumani/soundfont/GeneralUser-GS-LICENSE.txt`](src/Erumani/soundfont/GeneralUser-GS-LICENSE.txt)) allows bundling it. Under Options you can switch to another `.sf2` put in a `soundfonts` folder next to the exe or in the game folder, or to Windows MIDI as in the original. A MIDI track plays without the silence before its first note and after its last one, so no repeat waits: ＯtoＺ's `legend.mid` ended in 26 s of silence. The first build downloads the SoundFont from the author's repository (hash-checked); it isn't kept in git.
+Music plays through **GeneralUser GS** (v2.0.3, by S. Christian Collins, [schristiancollins.com](http://www.schristiancollins.com)), a GS SoundFont embedded in the exe, so everyone hears the same soundtrack; its licence ([`src/BreezySRPG95/soundfont/GeneralUser-GS-LICENSE.txt`](src/BreezySRPG95/soundfont/GeneralUser-GS-LICENSE.txt)) allows bundling it. Under Options you can switch to another `.sf2` put in a `soundfonts` folder next to the exe or in the game folder, or to Windows MIDI as in the original. A MIDI track plays without the silence before its first note and after its last one, so no repeat waits: ＯtoＺ's `legend.mid` ended in 26 s of silence. The first build downloads the SoundFont from the author's repository (hash-checked); it isn't kept in git.
 
 ```bash
-dotnet publish client/src/Erumani -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o client/publish
+dotnet publish client/src/BreezySRPG95 -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o client/publish
 ```
 
-The icon is 昴の騎士's face graphic FACE_003 (its author released the face graphics for reuse), made into `src/Erumani/Icon.ico` by `client/tools/make_icon.py`.
+The icon is 昴の騎士's face graphic FACE_003 (its author released the face graphics for reuse), made into `src/BreezySRPG95/Icon.ico` by `client/tools/make_icon.py`.
 
-The project keeps its working name (`src/Erumani`, namespace `Erumani`); only the program is called EasySRPG95.
+The project, its folder (`src/BreezySRPG95`) and its namespace are all called BreezySRPG95 (it was EasySRPG95 before, and Erumani while it played only えるまに); settings and save notes from the earlier names carry over.
 
 ## Controls
 
@@ -125,26 +125,26 @@ F1 opens them anywhere; the title screen, the camp menu and a map's turn menu li
 
 | Section | Settings |
 |---|---|
-| Display | interface style (original / gilded / modern); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI, MS Gothic — the face the original draws its messages in); language of EasySRPG95's own menus and messages (日本語 by default, or English — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
+| Display | interface style (original / gilded / modern); font of the modern and gilded styles (Noto Serif JP by default, Noto Sans JP, BIZ UDPGothic, Yu Gothic UI, MS Gothic — the face the original draws its messages in); language of BreezySRPG95's own menus and messages (日本語 by default, or English — the game's text is the game's); window size (4:3 sizes that fit the screen, whole multiples marked, then fullscreen, borderless); scaling (pixel-perfect whole multiples / fit 4:3 / stretch); filter (sharp / smooth); save / load screen (extended: 100 files / original: 8) |
 | Audio | BGM and SE volume (bars: click or drag along them, ← / → or the wheel in steps of 10), loop at loop markers (off at first; see below), MIDI playback (SoundFont via MeltySynth, or Windows MIDI like the original), SoundFont file, combat BGM (off: a fight plays the turn's own music, which goes on uninterrupted; music an event put on still ends with the next fight, as the original's battle music ends it), confirm sound (the CLICK "thunk": on, gameplay only — everywhere but clicking a message away — or off; saving and loading play it even when it's off) |
 | Gameplay | unit movement speed on the battle map (×1 the original's, ×2 at first, ×4; event moves keep the original pace), weakness orbs on the unit status portrait (off, on, or colour-blind with the attribute's letter: A red, B yellow, C green, D blue, E white, F black, A at the top), end the turn by itself once every unit of yours has acted (off at first), battle animations (戦闘演出): on, player units only (allies, guests and neutral units: an enemy's attack or spell shows just its result) or simple (results only), skip enemy turn, fast-forward key (hold / toggle), mouse input (off: keyboard only — no clicks, wheel, pointer or hover; F1 still opens the options), hold left click or the confirm key to fast-forward (after 0.4 s in battle, 1 s in a cutscene, so a slow click on a message doesn't skip the next; a press still confirms), scroll with the pointer at the edge (on the screen frame; only when the original lets a held click scroll there), action menu starts on its first entry or 行動終了 (the original), speed (×2–×8, ×2 at first), fast-forward skips battle scenes (off at first), fast-forward advances text |
 | Controls | rebind every action; reset to defaults |
 
 The frame is drawn at the window's resolution: the pixel art is scaled up whole, and the modern and gilded styles' text and gold are drawn at the window's own pixels, so they stay crisp at any size. The filter only matters when the window isn't a whole multiple of 640×480.
 
-Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font License 1.1, [`src/Erumani/fonts/OFL.txt`](src/Erumani/fonts/OFL.txt)); the build copies them from Windows' fonts folder (Windows 11 has them) and they aren't kept in git. BIZ UDPGothic, Yu Gothic UI and MS Gothic are Windows' own (MS Gothic's licence doesn't let it be bundled); a font that isn't there falls back to Yu Gothic UI. Each font is drawn a little smaller than Yu Gothic UI and placed where Yu Gothic UI's glyphs were, so every layout keeps its lines. The modern and gilded message boxes fit the font: as wide as a full line in it (20 full-width characters, the editor's limit; a longer line in a game widens it again), narrowed on the side away from the face, centred when there is none.
+Fonts: Noto Sans JP and Noto Serif JP travel inside the exe (SIL Open Font License 1.1, [`src/BreezySRPG95/fonts/OFL.txt`](src/BreezySRPG95/fonts/OFL.txt)); the build copies them from Windows' fonts folder (Windows 11 has them) and they aren't kept in git. BIZ UDPGothic, Yu Gothic UI and MS Gothic are Windows' own (MS Gothic's licence doesn't let it be bundled); a font that isn't there falls back to Yu Gothic UI. Each font is drawn a little smaller than Yu Gothic UI and placed where Yu Gothic UI's glyphs were, so every layout keeps its lines. The modern and gilded message boxes fit the font: as wide as a full line in it (20 full-width characters, the editor's limit; a longer line in a game widens it again), narrowed on the side away from the face, centred when there is none.
 
 ### The extended save / load screen
 
 100 files: `SAVE1.DAT`–`SAVE100.DAT` beside the game, in the original's format (the original game sees files 1–8). The list on the left shows each file's name (the game's own 「ファイル１」 naming), キャンプ or the turn, the play time, the map's number and when it was saved; the right shows a picture of the screen when it was saved and the details. Map names are left out: the game's `MAPNAME.DAT` holds the author's working names, not ones meant for players. Saving over a file or loading one asks first. ↑ ↓ move, ← → page through five files at a time, the mouse wheel scrolls the list a file at a time (the file that comes under the pointer is the one chosen), a click picks.
 
-SRPG Maker 95 keeps no play time and no picture, so EasySRPG95 notes them itself in an `EasySRPG95` folder beside the saves (`SAVEn.png`, `saves.json`), tied to each save file's contents: a save the original game wrote shows `--:--:--` and no picture, and so does a game continued from one. Play time counts while a map or camp is up and the window is in front.
+SRPG Maker 95 keeps no play time and no picture, so BreezySRPG95 notes them itself in an `BreezySRPG95` folder beside the saves (`SAVEn.png`, `saves.json`), tied to each save file's contents: a save the original game wrote shows `--:--:--` and no picture, and so does a game continued from one. Play time counts while a map or camp is up and the window is in front.
 
 ### Saving in the middle of an event
 
-The original saves only from the turn menu and the camp, between events, and a right click does nothing while an event runs. In EasySRPG95 a right click during an event (a cutscene, a choice, a battle's opening words) opens セーブ / ロード / 環境設定 (Save / Load / Options) at the pointer; the event waits meanwhile.
+The original saves only from the turn menu and the camp, between events, and a right click does nothing while an event runs. In BreezySRPG95 a right click during an event (a cutscene, a choice, a battle's opening words) opens セーブ / ロード / 環境設定 (Save / Load / Options) at the pointer; the event waits meanwhile.
 
-- **Save** opens the extended save screen (whatever the "Save / load screen" option says) and writes the map as it stands into `SAVEn.DAT` as an ordinary battle save; the rest — where the event stands (its script, the block and command it's at, the message or choice up, a wait's time left), the pictures, the screen's brightness, the music, the camera, the fight a "before" event holds up (as rolled), what follows the event (the first turn after an opening, the rest of a fight's "after" events, the enemy phase) — goes into the save's note in `saves.json`. A fade, a pan or a unit's move still under way jumps to its end first, and the event goes on from there. The picture keeps the event's message and choice. The list marks such a save "Turn n (event)" / 「ターン n（イベント中）」. It can go in any file, but only EasySRPG95 carries on with the event: the original game, loading one from files 1–8, starts that battle at the turn menu, and the rest of the event is lost.
+- **Save** opens the extended save screen (whatever the "Save / load screen" option says) and writes the map as it stands into `SAVEn.DAT` as an ordinary battle save; the rest — where the event stands (its script, the block and command it's at, the message or choice up, a wait's time left), the pictures, the screen's brightness, the music, the camera, the fight a "before" event holds up (as rolled), what follows the event (the first turn after an opening, the rest of a fight's "after" events, the enemy phase) — goes into the save's note in `saves.json`. A fade, a pan or a unit's move still under way jumps to its end first, and the event goes on from there. The picture keeps the event's message and choice. The list marks such a save "Turn n (event)" / 「ターン n（イベント中）」. It can go in any file, but only BreezySRPG95 carries on with the event: the original game, loading one from files 1–8, starts that battle at the turn menu, and the rest of the event is lost.
 - **Load** leaves the event for any file (a save made in an event carries on with that event, from the turn menu, the camp or the title too).
 - **Options** opens the options.
 
@@ -207,6 +207,6 @@ Should the save file change (the original game saving over it), its note no long
 
 ### Pinned (decided later)
 
-- **RPG Maker loop markers in MIDIs.** Much of these games' music comes from RPG Maker 2000/2003 and carries a loop marker (controller 111): ＯtoＺ's `2003繰り返される戦い.mid` loops from 13.9 s there, `001-Battle01.mid` from 0.9 s, `戦闘.MID` from 0.1 s (about two thirds of the five games' MIDIs have one). SRPG Maker 95 ignores the marker and plays such a file again from its very start, and so does EasySRPG95 by default. Options > Audio > "Loop at loop markers" repeats such a track from its marker instead, as RPG Maker 2000/2003 does (the SoundFont synthesizer only; Windows MIDI can't loop from a point). A marker at or after a track's last note, as some fanfares have, loops nothing and is ignored.
+- **RPG Maker loop markers in MIDIs.** Much of these games' music comes from RPG Maker 2000/2003 and carries a loop marker (controller 111): ＯtoＺ's `2003繰り返される戦い.mid` loops from 13.9 s there, `001-Battle01.mid` from 0.9 s, `戦闘.MID` from 0.1 s (about two thirds of the five games' MIDIs have one). SRPG Maker 95 ignores the marker and plays such a file again from its very start, and so does BreezySRPG95 by default. Options > Audio > "Loop at loop markers" repeats such a track from its marker instead, as RPG Maker 2000/2003 does (the SoundFont synthesizer only; Windows MIDI can't loop from a point). A marker at or after a track's last note, as some fanfares have, loops nothing and is ignored.
 
 Faithfulness rule: replicate the original's behaviour, including its bugs (see FORMAT_NOTES §11.4), by default. Any fixes are opt-in.

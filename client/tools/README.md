@@ -51,7 +51,7 @@ menus without playing up to them.
 ## loads.ps1: every way of loading, every kind of save
 
 This one checks the client rather than the game. It finds the game's first camp save, battle save, and save made
-in the middle of an event (read from the save files and the EasySRPG95 notes beside them). It then loads each of
+in the middle of an event (read from the save files and the BreezySRPG95 notes beside them). It then loads each of
 them every way there is:
 
 - `--load`;

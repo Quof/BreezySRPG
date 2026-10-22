@@ -26,6 +26,8 @@ obj/
 
 recordings/
 client/publish/
-client/src/Erumani/soundfont/*.sf2
-client/src/Erumani/fonts/*.ttf
+client/src/BreezySRPG95/soundfont/*.sf2
+client/src/BreezySRPG95/fonts/*.ttf
+# the folder's name before the rename, should a copy of it still be around
+/client/src/Erumani/
 re/exe/

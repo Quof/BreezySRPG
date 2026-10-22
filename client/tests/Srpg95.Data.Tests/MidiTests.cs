@@ -2,7 +2,7 @@ using MeltySynth;
 
 namespace Srpg95.Data.Tests;
 
-/// <summary>SoundFont MIDI: every BGM file parses, and one renders sound (needs ERUMANI_TEST_SF2 = a .sf2 path).</summary>
+/// <summary>SoundFont MIDI: every BGM file parses, and one renders sound (needs BREEZY_TEST_SF2 = a .sf2 path).</summary>
 public class MidiTests
 {
     static string? Game()
@@ -20,7 +20,7 @@ public class MidiTests
         Assert.NotEmpty(mids);
         foreach (var m in mids) Assert.True(new MidiFile(m).Length > TimeSpan.Zero, m);
 
-        if (Environment.GetEnvironmentVariable("ERUMANI_TEST_SF2") is not { } sf2 || !File.Exists(sf2)) return;
+        if (Environment.GetEnvironmentVariable("BREEZY_TEST_SF2") is not { } sf2 || !File.Exists(sf2)) return;
         var seq = new MidiFileSequencer(new Synthesizer(sf2, 44100));
         seq.Play(new MidiFile(mids[0]), loop: true);
         var l = new float[44100 * 3];
@@ -33,7 +33,7 @@ public class MidiTests
     public void Built_in_SoundFont_renders_the_soundtrack()
     {
         if (Game() is not { } g) return;
-        using var s = typeof(Erumani.Runtime.Audio).Assembly.GetManifestResourceStream("GeneralUser-GS.sf2");
+        using var s = typeof(BreezySRPG95.Runtime.Audio).Assembly.GetManifestResourceStream("GeneralUser-GS.sf2");
         Assert.NotNull(s);
         var seq = new MidiFileSequencer(new Synthesizer(new SoundFont(s!), 44100));
         foreach (var mid in Directory.GetFiles(Path.Combine(g, "BGM"), "*.mid").Take(5))

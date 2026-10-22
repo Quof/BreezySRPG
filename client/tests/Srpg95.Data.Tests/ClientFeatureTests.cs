@@ -1,9 +1,9 @@
-using Erumani.Config;
-using Erumani.Runtime;
+using BreezySRPG95.Config;
+using BreezySRPG95.Runtime;
 
 namespace Srpg95.Data.Tests;
 
-/// <summary>EasySRPG95's own additions around saves and settings: the notes beside the saves, play time, window sizes, the camera.</summary>
+/// <summary>BreezySRPG95's own additions around saves and settings: the notes beside the saves, play time, window sizes, the camera.</summary>
 public class ClientFeatureTests
 {
     static string? Folder(string name)
@@ -16,7 +16,7 @@ public class ClientFeatureTests
     [Fact]
     public void A_note_belongs_to_the_save_it_was_written_with()
     {
-        var root = Directory.CreateTempSubdirectory("easysrpg95-notes").FullName;
+        var root = Directory.CreateTempSubdirectory("breezysrpg95-notes").FullName;
         try
         {
             var g = new GameFolder(root);
@@ -43,9 +43,9 @@ public class ClientFeatureTests
     [Fact]
     public void Play_time_reads_as_hours_minutes_seconds()
     {
-        Assert.Equal("02:08:32", Erumani.Ui.Lang.PlayTime(2 * 3600 + 8 * 60 + 32.9));
-        Assert.Equal("123:00:05", Erumani.Ui.Lang.PlayTime(123 * 3600 + 5));
-        Assert.Equal("--:--:--", Erumani.Ui.Lang.PlayTime(null));
+        Assert.Equal("02:08:32", BreezySRPG95.Ui.Lang.PlayTime(2 * 3600 + 8 * 60 + 32.9));
+        Assert.Equal("123:00:05", BreezySRPG95.Ui.Lang.PlayTime(123 * 3600 + 5));
+        Assert.Equal("--:--:--", BreezySRPG95.Ui.Lang.PlayTime(null));
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class ClientFeatureTests
     }
 
     [Fact]
-    public void EasySRPG95_speaks_Japanese_until_told_otherwise()
+    public void BreezySRPG95_speaks_Japanese_until_told_otherwise()
     {
         Assert.Equal(UiLanguage.Japanese, new Settings().Language);   // a first start, whatever the system's language
         var kept = System.Text.Json.JsonSerializer.Deserialize<Settings>("{\"Language\":\"English\"}",
@@ -142,7 +142,7 @@ public class ClientFeatureTests
     [Fact]
     public void A_save_made_in_an_event_keeps_the_event_in_its_note()
     {
-        var root = Directory.CreateTempSubdirectory("easysrpg95-scene").FullName;
+        var root = Directory.CreateTempSubdirectory("breezysrpg95-scene").FullName;
         try
         {
             var g = new GameFolder(root);
@@ -179,11 +179,11 @@ public class ClientFeatureTests
     [Fact]
     public void A_condition_label_is_no_speaker()
     {
-        Assert.Equal("ジュナ", Erumani.Ui.Ui.SplitSpeaker(new[] { "ジュナ：", "ぁゃ・・・・", "カミーラ：", "もうっ！！" }).Name);
-        var (name, text) = Erumani.Ui.Ui.SplitSpeaker(new[] { "勝利条件：", "　　敵の全滅", "敗北条件：", "　　チャコの死亡" });
+        Assert.Equal("ジュナ", BreezySRPG95.Ui.Ui.SplitSpeaker(new[] { "ジュナ：", "ぁゃ・・・・", "カミーラ：", "もうっ！！" }).Name);
+        var (name, text) = BreezySRPG95.Ui.Ui.SplitSpeaker(new[] { "勝利条件：", "　　敵の全滅", "敗北条件：", "　　チャコの死亡" });
         Assert.Null(name);
         Assert.Equal(4, text.Count);
-        Assert.Null(Erumani.Ui.Ui.SplitSpeaker(new[] { "ルビィが仲間になる条件：", "…" }).Name);
+        Assert.Null(BreezySRPG95.Ui.Ui.SplitSpeaker(new[] { "ルビィが仲間になる条件：", "…" }).Name);
     }
 
     [Fact]
@@ -212,13 +212,13 @@ public class ClientFeatureTests
     public void A_computer_units_turn_brings_what_it_is_after_into_view()
     {
         // FUN_00416fb0 (a neutral unit's turn): the unit into the middle box, columns 6–12 and rows 5–8 of the 19 × 14 view
-        Assert.Equal((0, 0), Erumani.MapSession.ViewFor((0, 0), (10, 7), null, 40, 30));
-        Assert.Equal((8, 0), Erumani.MapSession.ViewFor((0, 0), (20, 7), null, 40, 30));
+        Assert.Equal((0, 0), BreezySRPG95.MapSession.ViewFor((0, 0), (10, 7), null, 40, 30));
+        Assert.Equal((8, 0), BreezySRPG95.MapSession.ViewFor((0, 0), (20, 7), null, 40, 30));
         // FUN_004170a0 (an enemy's): then what it's after into the view, at its edge
-        Assert.Equal((7, 0), Erumani.MapSession.ViewFor((0, 0), (10, 7), (25, 7), 40, 30));
-        Assert.Equal((5, 0), Erumani.MapSession.ViewFor((10, 0), (17, 7), (5, 7), 40, 30));
-        Assert.Equal((0, 7), Erumani.MapSession.ViewFor((0, 0), (10, 7), (10, 20), 40, 30));
+        Assert.Equal((7, 0), BreezySRPG95.MapSession.ViewFor((0, 0), (10, 7), (25, 7), 40, 30));
+        Assert.Equal((5, 0), BreezySRPG95.MapSession.ViewFor((10, 0), (17, 7), (5, 7), 40, 30));
+        Assert.Equal((0, 7), BreezySRPG95.MapSession.ViewFor((0, 0), (10, 7), (10, 20), 40, 30));
         // never past the map's edges
-        Assert.Equal((21, 16), Erumani.MapSession.ViewFor((0, 0), (39, 29), (39, 29), 40, 30));
+        Assert.Equal((21, 16), BreezySRPG95.MapSession.ViewFor((0, 0), (39, 29), (39, 29), 40, 30));
     }
 }

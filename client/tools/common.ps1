@@ -1,8 +1,8 @@
 # Shared by smoke.ps1, events.ps1 and loads.ps1: the client (Debug build) and the scanner, built on first use.
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$client = Join-Path $repo "client\src\Erumani\bin\Debug\net8.0\EasySRPG95.exe"
+$client = Join-Path $repo "client\src\BreezySRPG95\bin\Debug\net8.0\BreezySRPG95.exe"
 $scanner = Join-Path $PSScriptRoot "Srpg95Scan\bin\Release\net8.0\Srpg95Scan.exe"
-if (-not (Test-Path $client)) { dotnet build (Join-Path $repo "client\src\Erumani") -c Debug -v q --nologo | Out-Null }
+if (-not (Test-Path $client)) { dotnet build (Join-Path $repo "client\src\BreezySRPG95") -c Debug -v q --nologo | Out-Null }
 if (-not (Test-Path $scanner)) { dotnet build (Join-Path $PSScriptRoot "Srpg95Scan") -c Release -v q --nologo | Out-Null }
 
 # Runs jobs (hashtables with Args, Png, Key, and optionally Env: environment variables for that run) through the

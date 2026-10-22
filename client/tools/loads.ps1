@@ -11,9 +11,9 @@ if (-not $Saves) { $Saves = $Game }
 New-Item -ItemType Directory -Force $Out | Out-Null
 
 # the saves, by kind: a camp save (header 0x000 = 1), a battle save, or one made in an event (a battle save whose
-# EasySRPG95 note, for this very file, holds the event); and the map each is on (header 0x004, 0-based)
+# BreezySRPG95 note, for this very file, holds the event); and the map each is on (header 0x004, 0-based)
 $notes = $null
-$index = Join-Path $Saves "EasySRPG95\saves.json"
+$index = Join-Path $Saves "BreezySRPG95\saves.json"
 if (Test-Path -LiteralPath $index) { $notes = Get-Content -LiteralPath $index -Raw -Encoding utf8 | ConvertFrom-Json }
 $found = foreach ($n in 1..100) {
     $f = Join-Path $Saves "SAVE$n.DAT"
@@ -63,11 +63,11 @@ foreach ($target in @($first.Values | Where-Object { $_ } | Sort-Object Slot)) {
             Copy-Item -LiteralPath (Join-Path $Saves "SAVE$($s.Slot).DAT") $copy
             (Get-Item -LiteralPath $copy).LastWriteTime = [datetime]"2000-01-01"
         }
-        if (Test-Path -LiteralPath (Join-Path $Saves "EasySRPG95")) { Copy-Item -LiteralPath (Join-Path $Saves "EasySRPG95") $dir -Recurse }
+        if (Test-Path -LiteralPath (Join-Path $Saves "BreezySRPG95")) { Copy-Item -LiteralPath (Join-Path $Saves "BreezySRPG95") $dir -Recurse }
         (Get-Item -LiteralPath (Join-Path $dir "SAVE$($target.Slot).DAT")).LastWriteTime = Get-Date
         $load = if ($w.Name -eq "direct") { $target.Slot } elseif ($w.From) { $first[$w.From].Slot } else { $null }
         $jobs.Add(@{ Key = $key; Png = Join-Path $dir "end.png"; Way = $w.Name; Target = $target; Dir = $dir
-            Env = @{ ERUMANI_SAVESCREEN = $w.Screen }
+            Env = @{ BREEZY_SAVESCREEN = $w.Screen }
             Args = @('--game', "`"$Game`"", '--saves', "`"$dir`"", '--fast', '1', '--keys', (& $w.Keys $target.Slot)) +
                    $(if ($load) { @('--load', "$load") } else { @() }) })
     }

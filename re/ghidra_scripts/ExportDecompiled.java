@@ -1,6 +1,6 @@
 // Decompiles every function of the current program into one C file (arg 0 = output path).
 // Run headless: analyzeHeadless <proj dir> <proj name> -import EXE -postScript ExportDecompiled.java OUT.c
-// @category Erumani
+// @category BreezySRPG95
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.script.GhidraScript;

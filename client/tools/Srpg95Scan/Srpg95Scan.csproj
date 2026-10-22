@@ -8,6 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Srpg95.Data\Srpg95.Data.csproj" />
-    <ProjectReference Include="..\..\src\Erumani\Erumani.csproj" />
+    <ProjectReference Include="..\..\src\BreezySRPG95\BreezySRPG95.csproj" />
   </ItemGroup>
 </Project>
