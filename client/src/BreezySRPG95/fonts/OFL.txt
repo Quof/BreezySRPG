@@ -6,8 +6,18 @@ Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Sour
 Noto Serif JP (NotoSerifJP-VF.ttf)
 Copyright 2017-2023 Adobe (http://www.adobe.com/).
 
-Both are licensed under the SIL Open Font License, Version 1.1, copied below and also
-available with a FAQ at: https://openfontlicense.org
+DotGothic16 (DotGothic16-Regular.ttf), by Fontworks
+Copyright 2020 The DotGothic16 Project Authors (https://github.com/fontworks-fonts/DotGothic16/)
+
+KH Dot Kodenmachou 12 and 16 (KH-Dot-Kodenmachou-12.ttf, KH-Dot-Kodenmachou-16.ttf),
+from the KH Dot Font by 自家製フォント工房 (http://jikasei.me/font/kh-dotfont/)
+Copyright (c) 平木敬太郎 (Keitarou Hiraki), Font Silo. 1990-2015
+
+All of them are licensed under the SIL Open Font License, Version 1.1, copied below and
+also available with a FAQ at: https://openfontlicense.org
+
+(PixelMplus12, the other pixel font inside, is under the M+ FONT LICENSE: see
+MPLUS-LICENSE.txt.)
 
 -----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007

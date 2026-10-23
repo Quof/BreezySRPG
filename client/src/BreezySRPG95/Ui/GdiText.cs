@@ -114,6 +114,20 @@ public sealed class GdiText : IDisposable
         _ => (new[] { "Yu Gothic UI" }, strong ? 600 : 400, 1f),
     };
 
+    /// <summary>
+    /// A pixel font's face for a text of <paramref name="height"/> px and the size it's drawn at — the size its dots were
+    /// designed for, so each lands on one pixel: 16 for the messages and names (16 px and up), 12 for the menus and the
+    /// status window's class (a 16-px face would tower over the 12-px line it shares). Its English and Japanese family names (GDI reports the one for the system's language). Null for a smooth font.
+    /// </summary>
+    static (string[] Faces, int Px)? Pixel(UiFont f, int height) => (f, height >= 16) switch
+    {
+        (UiFont.PixelDot, true) => (new[] { "DotGothic16", "ドットゴシック16" }, 16),
+        (UiFont.PixelDot, false) => (new[] { "PixelMplus12" }, 12),
+        (UiFont.KhDot, true) => (new[] { "KH Dot Kodenmachou 16", "KHドット小伝馬町16" }, 16),
+        (UiFont.KhDot, false) => (new[] { "KH Dot Kodenmachou 12", "KHドット小伝馬町12" }, 12),
+        _ => null,
+    };
+
     static readonly Dictionary<UiFont, bool> Present = new();
 
     /// <summary>Whether one of a font's faces is there — Windows' or the executable's own — for the options to say so.</summary>
@@ -124,7 +138,7 @@ public sealed class GdiText : IDisposable
         var dc = CreateCompatibleDC(IntPtr.Zero);
         try
         {
-            foreach (var face in Spec(f, false).Faces)
+            bool Has(string[] faces) => faces.Any(face =>
             {
                 var font = CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 4, 0, face);
                 var old = SelectObject(dc, font);
@@ -132,9 +146,10 @@ public sealed class GdiText : IDisposable
                 GetTextFaceW(dc, got.Capacity, got);
                 SelectObject(dc, old);
                 DeleteObject(font);
-                if (got.ToString() == face) return Present[f] = true;
-            }
-            return Present[f] = false;
+                return faces.Contains(got.ToString());
+            });
+            // a pixel font needs both its faces, the small text's and the large's
+            return Present[f] = Pixel(f, 12) is { } small && Pixel(f, 16) is { } large ? Has(small.Faces) && Has(large.Faces) : Has(Spec(f, false).Faces);
         }
         finally { DeleteDC(dc); }
     }
@@ -142,21 +157,22 @@ public sealed class GdiText : IDisposable
     /// <summary>What a face that isn't there falls back to (Yu Gothic UI and Meiryo ship with every Windows 10/11).</summary>
     static readonly string[] Fallback = { "Yu Gothic UI", "Meiryo UI", "Meiryo" };
 
-    /// <summary>A smooth (anti-aliased) face, the first of <paramref name="faces"/> that GDI has.</summary>
-    (IntPtr Font, string Face) Create(IEnumerable<string> faces, int weight, int px)
+    /// <summary>A smooth (anti-aliased) face, the first of <paramref name="faces"/> that GDI has; with <paramref name="sharp"/>, without anti-aliasing (a pixel font).</summary>
+    (IntPtr Font, string Face) Create(IEnumerable<string> faces, int weight, int px, bool sharp = false)
     {
+        uint quality = sharp ? 3u /*NONANTIALIASED_QUALITY*/ : 4u /*ANTIALIASED_QUALITY*/;
         string last = "";
         foreach (var face in faces)
         {
             last = face;
-            var f = CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, 1 /*DEFAULT_CHARSET*/, 0, 0, 4 /*ANTIALIASED_QUALITY*/, 0, face);
+            var f = CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, 1 /*DEFAULT_CHARSET*/, 0, 0, quality, 0, face);
             if (f == IntPtr.Zero) continue;
             Select(f);
             if (FaceOf() == face) return (f, face);
             Select(_font);
             DeleteObject(f);
         }
-        var any = CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 4, 0, last);   // whatever GDI makes of it
+        var any = CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, quality, 0, last);   // whatever GDI makes of it
         Select(any);
         return (any, FaceOf());
     }
@@ -175,6 +191,7 @@ public sealed class GdiText : IDisposable
     /// </summary>
     Smooth MakeSmooth(UiFont f, int k)
     {
+        if (Pixel(f, Height) is { } pixel) return MakePixel(pixel.Faces, pixel.Px);
         var (faces, weight, size) = Spec(f, _strong);
         int px = Math.Max(1, (int)MathF.Round(Height * size * k)), refPx = Height * k;
         var (font, face) = Create(faces.Concat(Fallback), weight, px);
@@ -187,18 +204,36 @@ public sealed class GdiText : IDisposable
         return new Smooth(font, face, lift, refHeight / (float)k);
     }
 
-    /// <summary>The font strings are rendered in now, and at what scale.</summary>
+    /// <summary>
+    /// A pixel font at the size its dots were designed for, without anti-aliasing, at the 640 × 480 screen's own size (the
+    /// frame enlarges it nearest-neighbour, a dot to a square of the window's pixels); centred like a smooth face, on a
+    /// whole pixel. Regular weight even for bold text: a thickened pixel font smears.
+    /// </summary>
+    Smooth MakePixel(string[] faces, int px)
+    {
+        var (font, face) = Create(faces.Concat(Fallback), 400, px, sharp: true);
+        var (refFont, _) = Create(Fallback, Spec(UiFont.YuGothic, _strong).Weight, Height);
+        var (ascent, _) = Metrics(font);
+        var (refAscent, refHeight) = Metrics(refFont);
+        Select(_font);
+        DeleteObject(refFont);
+        float lift = MathF.Round(ascent - 0.38f * px - (refAscent - 0.38f * Height));
+        return new Smooth(font, face, lift, refHeight);
+    }
+
+    /// <summary>The font strings are rendered in now, whether anti-aliased, and at what scale.</summary>
     (IntPtr Font, bool Smooth, int Scale, Smooth? Face) Current()
     {
         if (!Ui.Restyled) return (_font, false, 1, null);
-        int k = Math.Max(1, Ui.RenderScale);
+        bool pixel = Pixel(Ui.Font, Height) is not null;
+        int k = pixel ? 1 : Math.Max(1, Ui.RenderScale);
         var key = (Ui.Font, k);
         if (!_smooth.TryGetValue(key, out var s))
         {
             if (_smooth.Count >= 6) DropSmooth();
             _smooth[key] = s = MakeSmooth(Ui.Font, k);
         }
-        return (s.Font, true, k, s);
+        return (s.Font, !pixel, k, s);
     }
 
     void DropSmooth()
@@ -208,7 +243,7 @@ public sealed class GdiText : IDisposable
         _smooth.Clear();
     }
 
-    /// <summary>The face smooth text is in now (null with the original skin).</summary>
+    /// <summary>The face the restyled skins' text is in now (null with the original skin).</summary>
     public string? SmoothFace => Current().Face?.Face;
 
     /// <summary>A string's width in 640 × 480 pixels.</summary>
@@ -311,8 +346,9 @@ public sealed class GdiText : IDisposable
 }
 
 /// <summary>
-/// The fonts BreezySRPG95 carries inside the executable — Noto Sans JP and Noto Serif JP (SIL Open Font License 1.1, see
-/// fonts/OFL.txt) — handed to GDI for this process only, so the restyled skins look the same on every PC.
+/// The fonts BreezySRPG95 carries inside the executable — Noto Sans JP, Noto Serif JP, DotGothic16 and the KH Dot font's
+/// 小伝馬町 12 and 16 (SIL Open Font License 1.1, see fonts/OFL.txt) and PixelMplus12 (M+ FONT LICENSE,
+/// fonts/MPLUS-LICENSE.txt) — handed to GDI for this process only, so the restyled skins look the same on every PC.
 /// </summary>
 static class PrivateFonts
 {

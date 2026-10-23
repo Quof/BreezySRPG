@@ -15,8 +15,11 @@ public enum GameAction
 public enum Scaling { Integer, Fit, Stretch }
 /// <summary>The interface's look: the original's, the modern dark one, or the gilded one (gold-framed dark boxes).</summary>
 public enum UiSkin { Original, Gilded, Modern }   // the options list them in this order (settings.json keeps the names)
-/// <summary>The restyled skins' smooth font (the original skin keeps the original's bitmap fonts).</summary>
-public enum UiFont { NotoSans, NotoSerif, BizUd, YuGothic, MsGothic }
+/// <summary>
+/// The restyled skins' font (the original skin keeps the original's bitmap fonts): a smooth face, or one of two pixel
+/// fonts drawn dot for dot — DotGothic16 with PixelMplus12 for the small text, or the KH Dot font's 小伝馬町 16 and 12.
+/// </summary>
+public enum UiFont { NotoSans, NotoSerif, BizUd, YuGothic, MsGothic, PixelDot, KhDot }
 /// <summary>The language of BreezySRPG95's own menus and messages (the game's text is the game's).</summary>
 public enum UiLanguage { English, Japanese }
 /// <summary>The save and load screens: the extended one (100 files with pictures) or the original's list of 8.</summary>
