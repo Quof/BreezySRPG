@@ -6,7 +6,8 @@ Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Sour
 Noto Serif JP (NotoSerifJP-VF.ttf)
 Copyright 2017-2023 Adobe (http://www.adobe.com/).
 
-DotGothic16 (DotGothic16-Regular.ttf), by Fontworks
+DotGothic16 Pixel (DotGothic16Pixel.ttf): DotGothic16 by Fontworks, modified — drawn at 16 px
+and rebuilt with a square per dot (client/tools/make_pixel_font.py)
 Copyright 2020 The DotGothic16 Project Authors (https://github.com/fontworks-fonts/DotGothic16/)
 
 KH Dot Kodenmachou 12 and 16 (KH-Dot-Kodenmachou-12.ttf, KH-Dot-Kodenmachou-16.ttf),

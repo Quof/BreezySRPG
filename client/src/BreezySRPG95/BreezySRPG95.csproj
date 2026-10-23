@@ -57,7 +57,7 @@
   <!--
     The restyled skins' Noto Sans JP and Noto Serif JP (SIL OFL 1.1, fonts/OFL.txt), embedded so every PC has them. They
     aren't kept in git: the build copies them from Windows' own fonts folder (Windows 11 ships them) and leaves them out
-    when they aren't there (the Font option then falls back to Yu Gothic UI). The pixel fonts — DotGothic16, PixelMplus12
+    when they aren't there (the Font option then falls back to Yu Gothic UI). The pixel fonts — DotGothic16Pixel.ttf (made by tools/make_pixel_font.py), PixelMplus12
     (M+ FONT LICENSE, fonts/MPLUS-LICENSE.txt) and the KH Dot font's KH-Dot-Kodenmachou-12/16 — aren't Windows' and
     aren't in git either: put their .ttf files in fonts\ (client/README.md says where to get them) and they're embedded too.
   -->

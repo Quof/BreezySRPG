@@ -117,11 +117,14 @@ public sealed class GdiText : IDisposable
     /// <summary>
     /// A pixel font's face for a text of <paramref name="height"/> px and the size it's drawn at — the size its dots were
     /// designed for, so each lands on one pixel: 16 for the messages and names (16 px and up), 12 for the menus and the
-    /// status window's class (a 16-px face would tower over the 12-px line it shares). Its English and Japanese family names (GDI reports the one for the system's language). Null for a smooth font.
+    /// status window's class (a 16-px face would tower over the 12-px line it shares). Its English and Japanese family
+    /// names (GDI reports the one for the system's language). Null for a smooth font. DotGothic16 itself draws each dot as
+    /// its own square with gaps between them, and GDI without anti-aliasing fills the gaps in dense kanji (魔's top half a
+    /// solid block): it's carried rebuilt, every dot a whole pixel's square.
     /// </summary>
     static (string[] Faces, int Px)? Pixel(UiFont f, int height) => (f, height >= 16) switch
     {
-        (UiFont.PixelDot, true) => (new[] { "DotGothic16", "ドットゴシック16" }, 16),
+        (UiFont.PixelDot, true) => (new[] { "DotGothic16 Pixel" }, 16),   // DotGothic16 rebuilt dot for dot (tools/make_pixel_font.py)
         (UiFont.PixelDot, false) => (new[] { "PixelMplus12" }, 12),
         (UiFont.KhDot, true) => (new[] { "KH Dot Kodenmachou 16", "KHドット小伝馬町16" }, 16),
         (UiFont.KhDot, false) => (new[] { "KH Dot Kodenmachou 12", "KHドット小伝馬町12" }, 12),
@@ -346,7 +349,7 @@ public sealed class GdiText : IDisposable
 }
 
 /// <summary>
-/// The fonts BreezySRPG95 carries inside the executable — Noto Sans JP, Noto Serif JP, DotGothic16 and the KH Dot font's
+/// The fonts BreezySRPG95 carries inside the executable — Noto Sans JP, Noto Serif JP, DotGothic16 (rebuilt) and the KH Dot font's
 /// 小伝馬町 12 and 16 (SIL Open Font License 1.1, see fonts/OFL.txt) and PixelMplus12 (M+ FONT LICENSE,
 /// fonts/MPLUS-LICENSE.txt) — handed to GDI for this process only, so the restyled skins look the same on every PC.
 /// </summary>
